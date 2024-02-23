@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	gobig "math/big"
+	"strconv"
+	//gobig "math/big"
 	"time"
 
 	"github.com/filecoin-project/go-address"
@@ -23,6 +24,7 @@ import (
 	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/cidgravity"
 )
 
 const DealProtocolv120 = "/fil/storage/mk/1.2.0"
@@ -103,14 +105,60 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		verified = true
 	}
 
-	provs, err := r.db.SelectDealProviders(id, dealInfo.PieceSize, verified, maxToPay)
+	pieceCid, err := commcid.PieceCommitmentV1ToCID(dealInfo.CommP)
+	if err != nil {
+		return fmt.Errorf("failed to convert commP to cid: %w", err)
+	}
+
+	// Gather more data for CIDGravity get-best-providers first
+	var providerCollateral abi.TokenAmount
+
+	bounds, err := gw.StateDealProviderCollateralBounds(ctx, abi.PaddedPieceSize(dealInfo.PieceSize), verified, ctypes.EmptyTSK)
+	if err != nil {
+		return fmt.Errorf("node error getting collateral bounds: %w", err)
+	}
+	providerCollateral = big.Div(big.Mul(bounds.Min, big.NewInt(6)), big.NewInt(5)) // add 20%
+
+	head, err := gw.ChainHead(ctx)
+	if err != nil {
+		return fmt.Errorf("getting chain head: %w", err)
+	}
+
+	startEpoch := head.Height() + dealStartTime
+
+	duration := 530 * builtin.EpochsInDay
+
+	// XXX: price?
+	price := big.Zero()
+
+	transfer := types.Transfer{
+		Type:   "libp2p",
+		Size:   uint64(dealInfo.CarSize),
+	}
+	removeUnsealed := false
+
+	provsIds, err := cidgravity.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
+                PieceCid:             pieceCid.String(),
+                StartEpoch:           uint64(startEpoch),
+                Duration:             uint64(duration),
+                StoragePricePerEpoch: json.Number(price.String()),
+                ProviderCollateral:   json.Number(providerCollateral.String()),
+                VerifiedDeal:         &verified,
+                TransferSize:         transfer.Size,
+                TransferType:         transfer.Type,
+                RemoveUnsealedCopy:   &removeUnsealed,
+	})
 	if err != nil {
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
 
-	pieceCid, err := commcid.PieceCommitmentV1ToCID(dealInfo.CommP)
-	if err != nil {
-		return fmt.Errorf("failed to convert commP to cid: %w", err)
+        provs := []dealProvider{}
+        for _, prov := range provsIds {
+		provid, err := strconv.Atoi(prov[2:])
+		if err != nil {
+			return xerrors.Errorf("invalid selected provider: %s: %w", prov, err)
+		}
+		provs = append(provs, dealProvider{id: int64(provid)})
 	}
 
 	makeDealWith := func(prov dealProvider) error {
@@ -125,33 +173,9 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("get addr info: %w", err)
 		}
 
-		var providerCollateral abi.TokenAmount
-
-		bounds, err := gw.StateDealProviderCollateralBounds(ctx, abi.PaddedPieceSize(dealInfo.PieceSize), verified, ctypes.EmptyTSK)
-		if err != nil {
-			return fmt.Errorf("node error getting collateral bounds: %w", err)
-		}
-		providerCollateral = big.Div(big.Mul(bounds.Min, big.NewInt(6)), big.NewInt(5)) // add 20%
-
-		head, err := gw.ChainHead(ctx)
-		if err != nil {
-			return fmt.Errorf("getting chain head: %w", err)
-		}
-
-		startEpoch := head.Height() + dealStartTime
 
 		// generate proposal
 		dealUuid := uuid.New()
-
-		duration := 530 * builtin.EpochsInDay
-
-		pricef := gobig.NewFloat(prov.ask_price)
-		if verified {
-			pricef = gobig.NewFloat(prov.ask_verif_price)
-		}
-
-		price := big.Zero()
-		pricef.Int(price.Int)
 
 		dealProposal, err := dealProposal(ctx, w, walletAddr, dealInfo.Root, abi.PaddedPieceSize(dealInfo.PieceSize), pieceCid, maddr, startEpoch, duration, verified, providerCollateral, price)
 		if err != nil {
