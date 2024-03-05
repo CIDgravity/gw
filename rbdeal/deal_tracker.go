@@ -307,6 +307,13 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 			} else {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "uploads", upStat[gid].ActiveRequests)
 			}
+		} else if gs.TotalDeals-gs.FailedDeals-gs.Unretrievable < int64(targetReplicaCount) {
+			go func(gid ribs2.GroupKey) {
+				err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet)
+				if err != nil {
+					log.Errorf("starting new deals: %s", err)
+				}
+			}(gid)
 		}
 	}
 
