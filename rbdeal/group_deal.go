@@ -27,7 +27,7 @@ import (
 	"github.com/lotus-web3/ribs/cidgravity"
 )
 
-const DealProtocolv120 = "/fil/storage/mk/1.2.0"
+const DealProtocolv121 = "/fil/storage/mk/1.2.1"
 
 type ErrRejected struct {
 	Reason string
@@ -199,6 +199,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			DealDataRoot:       dealInfo.Root,
 			IsOffline:          false,
 			Transfer:           transfer,
+			RemoveUnsealedCopy: false,
+			SkipIPNIAnnounce:   false,
 		}
 
 		di := dbDealInfo{
@@ -238,7 +240,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("connect to miner: %w", err)
 		}
 
-		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv120)
+		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv121)
 		if err != nil {
 			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
 			if err != nil {
@@ -260,7 +262,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 
 		// MAKE THE DEAL
 
-		s, err := r.host.NewStream(ctx, addrInfo.ID, DealProtocolv120)
+		s, err := r.host.NewStream(ctx, addrInfo.ID, DealProtocolv121)
 		if err != nil {
 			err = r.db.StoreRejectedDeal(di.DealUUID, xerrors.Errorf("opening deal proposal stream: %w", err).Error(), 0)
 			if err != nil {
