@@ -152,6 +152,14 @@ create table if not exists offloads_s3
         constraint offloads_s3_pk
             primary key
 );
+create table if not exists external_path
+(
+    group_id integer not null
+        constraint offloads_s3_pk
+            primary key,
+    module text,
+    path text
+);
 
 create table if not exists repairs
 (
@@ -1730,6 +1738,47 @@ func (r *ribsDB) DropS3Offload(group iface.GroupKey) error {
 	_, err := r.db.Exec(`delete from offloads_s3 where group_id = ?`, group)
 	if err != nil {
 		return xerrors.Errorf("exec: %w", err)
+	}
+
+	return nil
+}
+
+func (r *ribsDB) NeedExternalModule() (*string, error) {
+	var module string
+	err := r.db.QueryRow(`select module from external_path limit 1`).Scan(&module)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, xerrors.Errorf("XYZ: query: %w", err)
+	}
+
+	return &module, nil
+}
+func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error) {
+	var module, path string
+	err := r.db.QueryRow(`select module, path from external_path where group_id = ?`, group).Scan(&module, &path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, xerrors.Errorf("XYZ: query: %w", err)
+	}
+
+	return &module, &path, nil
+}
+func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path string) error {
+	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values (?, ?, ?)`, group, module, path)
+	if err != nil {
+		return xerrors.Errorf("XYZ: exec: %w", err)
+	}
+
+	return nil
+}
+func (r *ribsDB) DropExternalPath(group iface.GroupKey) error {
+	_, err := r.db.Exec(`delete from external_path where group_id = ?`, group)
+	if err != nil {
+		return xerrors.Errorf("XYZ: exec: %w", err)
 	}
 
 	return nil

@@ -123,6 +123,9 @@ type ribs struct {
 
 	s3UploadBytes, s3UploadStarted, s3UploadDone, s3UploadErr, s3Redirects, s3ReadReqs, s3ReadBytes atomic.Int64
 
+	/* external modules */
+	externalOffloader *ExternalOffloader
+
 	/* dealmaking */
 	dealsLk        sync.Mutex
 	moreDealsLocks map[iface.GroupKey]struct{}
@@ -274,6 +277,10 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 
 	if err := r.maybeInitS3Offload(); err != nil {
 		return nil, xerrors.Errorf("trying to initialize S3 offload: %w", err)
+	}
+
+	if err := r.maybeInitExternal(); err != nil {
+		return nil, xerrors.Errorf("XYZ: trying to initialize external offload: %w", err)
 	}
 
 	r.RBS.ExternalStorage().InstallProvider(rp)

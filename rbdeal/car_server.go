@@ -437,6 +437,23 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// external offload
+	extu, err := r.maybeGetExternalURL(reqToken.Group)
+	if err != nil {
+		log.Errorw("XYZ: car request: external url", "error", err, "url", req.URL)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if extu != nil {
+		// in s3, redirect
+		log.Errorw("XYZ: car request: redir to external url", "error", err, "url", *extu)
+
+		//r.s3Redirects.Add(1)
+
+		http.Redirect(w, req, *extu, http.StatusFound)
+		return
+	}
+
 	// this is a local transfer, track stats
 
 	r.uploadStatsLk.Lock()

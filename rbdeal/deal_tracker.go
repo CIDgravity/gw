@@ -304,6 +304,9 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 				if err := r.cleanupS3Offload(gid); err != nil {
 					return xerrors.Errorf("cleaning up S3 offload: %w", err)
 				}
+				if err := r.cleanupExternalOffload(gid); err != nil {
+					return xerrors.Errorf("XYZ: cleaning up external offload: %w", err)
+				}
 			} else {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "uploads", upStat[gid].ActiveRequests)
 			}
