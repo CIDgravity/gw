@@ -28,6 +28,7 @@ import (
 	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
 	"github.com/lotus-web3/ribs/integrations/web"
 	"github.com/lotus-web3/ribs/rbdeal"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
@@ -92,11 +93,6 @@ type ribsIn struct {
 	H  host.Host `optional:"true"`
 }
 
-var (
-	defaultDataDir = "~/.ribsdata"
-	dataEnv        = "RIBS_DATA"
-)
-
 func makeRibs(ri ribsIn) (ribs.RIBS, error) {
 	var opts []rbdeal.OpenOption
 	if ri.H != nil {
@@ -105,11 +101,8 @@ func makeRibs(ri ribsIn) (ribs.RIBS, error) {
 		}))
 	}
 
-	dataDir := os.Getenv(dataEnv)
-	if dataDir == "" {
-		dataDir = defaultDataDir
-	}
-	dataDir, err := homedir.Expand(dataDir)
+	cfg := configuration.GetConfig()
+	dataDir, err := homedir.Expand(cfg.Ribs.DataDir)
 	if err != nil {
 		return nil, xerrors.Errorf("expand data dir: %w", err)
 	}

@@ -16,9 +16,9 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/lib/must"
 	"golang.org/x/xerrors"
-	"os"
 	"strings"
 	"time"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 func (r *ribs) claimChecker() {
@@ -197,7 +197,8 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 		totalGas += m.GasLimit
 		totalFee = types.BigAdd(totalFee, m.RequiredFunds())
 
-		if os.Getenv("RIBS_SEND_EXTENDS") == "1" {
+		cfg := configuration.GetConfig()
+		if cfg.Ribs.SendExtends {
 			sig, err := r.wallet.WalletSign(ctx, clkey, m.Cid().Bytes(), api.MsgMeta{
 				Type: api.MTChainMsg,
 			})

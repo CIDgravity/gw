@@ -1,30 +1,15 @@
 package rbdeal
 
 import (
-	//	"bufio"
-	//	"bytes"
 	"context"
 	"fmt"
-	//	"io"
-	//	"math"
-	//	"net/url"
-	"os"
-	"path"
-	//	"sort"
-	//	"sync"
-	//	"time"
-
-	//	pool "github.com/libp2p/go-buffer-pool"
-	//	"go.uber.org/multierr"
-
-	//	"github.com/aws/aws-sdk-go/aws"
-	//	"github.com/aws/aws-sdk-go/aws/credentials"
-	//	"github.com/aws/aws-sdk-go/aws/session"
-	//	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
 	"golang.org/x/xerrors"
+	"os"
+	"path"
 
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 type ExternalOffloader interface {
@@ -120,10 +105,12 @@ func (r *ribs) cleanupExternalOffload(gid iface.GroupKey) error {
 }
 
 func getLocalWebPath() string {
-	return os.Getenv("EXTERNAL_LOCALWEB_PATH")
+	cfg := configuration.GetConfig()
+	return cfg.External.Localweb.Path
 }
 func getLocalWebUrl() string {
-	return os.Getenv("EXTERNAL_LOCALWEB_URL")
+	cfg := configuration.GetConfig()
+	return cfg.External.Localweb.Url
 }
 
 func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {

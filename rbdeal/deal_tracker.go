@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	ribs2 "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/ributil"
+	"github.com/lotus-web3/ribs/configuration"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
 )
@@ -279,19 +280,13 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 		return xerrors.Errorf("getting storage groups: %w", err)
 	}
 
+	cfg := configuration.GetConfig()
 	for gid, gs := range gs {
 		if gs.State != ribs2.GroupStateLocalReadyForDeals {
 			continue
 		}
 
-		if gs.TotalDeals-gs.FailedDeals-gs.Unretrievable < int64(targetReplicaCount) {
-			go func(gid ribs2.GroupKey) {
-				err := r.makeMoreDeals(context.TODO(), gid, r.wallet)
-				if err != nil {
-					log.Errorf("starting new deals: %s", err)
-				}
-			}(gid)
-		} else if gs.Retrievable >= int64(minimumReplicaCount) {
+		if gs.Retrievable >= int64(cfg.Ribs.MinimumReplicaCount) {
 			upStat := r.CarUploadStats().ByGroup
 			if upStat[gid] == nil {
 				log.Infow("OFFLOAD GROUP", "group", gid)
@@ -310,7 +305,7 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 			} else {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "uploads", upStat[gid].ActiveRequests)
 			}
-		} else if gs.TotalDeals-gs.FailedDeals-gs.Unretrievable < int64(targetReplicaCount) {
+		} else if gs.TotalDeals-gs.FailedDeals-gs.Unretrievable < int64(cfg.Ribs.TargetReplicaCount) {
 			go func(gid ribs2.GroupKey) {
 				err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet)
 				if err != nil {

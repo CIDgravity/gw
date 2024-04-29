@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"time"
-	"os"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 type CIDgravityGetBestAvailableProvidersRequest struct {
@@ -35,11 +35,12 @@ type CIDgravityAPIResponse struct {
 }
 
 func GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {
+	cfg := configuration.GetConfig()
 
 	// Define params
 	method := "POST"
-	authToken := os.Getenv("CIDGRAVITY_API_TOKEN")
-	endpoint := "https://service.cidgravity.com/private/v1/get-best-available-providers"
+	authToken := cfg.CidGravity.ApiToken
+	endpoint := cfg.CidGravity.ApiEndpointGetProviders
 
 	// Parse params for request body
 	var requestBody = new(bytes.Buffer)

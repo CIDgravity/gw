@@ -25,6 +25,7 @@ import (
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
 	"github.com/lotus-web3/ribs/cidgravity"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 const DealProtocolv121 = "/fil/storage/mk/1.2.1"
@@ -72,7 +73,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("getting non-failed deal count: %w", err)
 	}
 
-	if notFailed >= targetReplicaCount {
+	cfg := configuration.GetConfig()
+	if notFailed >= cfg.Ribs.TargetReplicaCount {
 		// occasionally in some racy cases we can end up here
 		return nil
 	}
@@ -124,9 +126,9 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return fmt.Errorf("getting chain head: %w", err)
 	}
 
-	startEpoch := head.Height() + dealStartTime
+	startEpoch := head.Height() + abi.ChainEpoch(cfg.Deal.StartTime * builtin.EpochsInDay / 24)
 
-	duration := 530 * builtin.EpochsInDay
+	duration := cfg.Deal.Duration * builtin.EpochsInDay
 
 	// XXX: price?
 	price := big.Zero()
@@ -135,7 +137,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		Type:   "libp2p",
 		Size:   uint64(dealInfo.CarSize),
 	}
-	removeUnsealed := false
+	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
 	provsIds, err := cidgravity.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
                 PieceCid:             pieceCid.String(),
@@ -199,8 +201,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			DealDataRoot:       dealInfo.Root,
 			IsOffline:          false,
 			Transfer:           transfer,
-			RemoveUnsealedCopy: false,
-			SkipIPNIAnnounce:   false,
+			RemoveUnsealedCopy: removeUnsealed,
+			SkipIPNIAnnounce:   cfg.Deal.SkipIPNIAnnounce,
 		}
 
 		di := dbDealInfo{
@@ -307,7 +309,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		if err == nil {
 			notFailed++
 
-			if notFailed >= targetReplicaCount {
+			if notFailed >= cfg.Ribs.TargetReplicaCount {
 				// enough
 				break
 			}

@@ -21,6 +21,7 @@ import (
 	"github.com/lotus-web3/ribs/rbstor"
 	"github.com/lotus-web3/ribs/ributil"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 var log = logging.Logger("ribs")
@@ -156,15 +157,12 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		return nil, xerrors.Errorf("make root dir: %w", err)
 	}
 
+	cfg := configuration.GetConfig()
 	opt := &openOptions{
 		hostGetter:          libp2p.New,
 		localWalletOpener:   ributil.OpenWallet,
 		localWalletPath:     "~/.ribswallet",
-		fileCoinAPIEndpoint: "https://api.chain.love/rpc/v1",
-	}
-
-	if os.Getenv("RIBS_FILECOIN_API_ENDPOINT") != "" {
-		opt.fileCoinAPIEndpoint = os.Getenv("RIBS_FILECOIN_API_ENDPOINT")
+		fileCoinAPIEndpoint: cfg.Ribs.FilecoinApiEndpoint,
 	}
 
 	for _, o := range opts {
@@ -330,7 +328,8 @@ func (r *ribs) onSub(group iface.GroupKey, from, to iface.GroupState) {
 			return
 		}
 
-		if c >= targetReplicaCount {
+		cfg := configuration.GetConfig()
+		if c >= cfg.Ribs.TargetReplicaCount {
 			return
 		}
 

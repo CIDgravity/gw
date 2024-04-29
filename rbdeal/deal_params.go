@@ -34,11 +34,6 @@ var ParallelDealChecks = 10
 
 var minDatacap = types.NewInt(192 << 30)
 
-var (
-	minimumReplicaCount = 5
-	targetReplicaCount  = 10
-)
-
 // market wallet management
 var walletUpgradeInterval = time.Minute
 
