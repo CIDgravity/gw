@@ -322,14 +322,15 @@ func (r *ribs) subGroupChanges() {
 
 func (r *ribs) onSub(group iface.GroupKey, from, to iface.GroupState) {
 	if to == iface.GroupStateLocalReadyForDeals {
-		c, err := r.db.GetNonFailedDealCount(group)
+		c, _, err := r.db.GetNonFailedDealCount(group)
 		if err != nil {
 			log.Errorf("getting non-failed deal count: %s", err)
 			return
 		}
 
 		cfg := configuration.GetConfig()
-		if c >= cfg.Ribs.TargetReplicaCount {
+		// lose check, will go in loop and check it out later anyway if needed
+		if c >= cfg.Ribs.MinimumRetrievableCount {
 			return
 		}
 

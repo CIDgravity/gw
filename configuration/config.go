@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/kelseyhightower/envconfig"
+	"golang.org/x/xerrors"
 )
 
 type LocalwebConfig struct {
@@ -29,11 +30,13 @@ type CidGravityConfig struct {
 	ApiEndpointGetProviders string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
 }
 type RibsConfig struct {
-	DataDir             string `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
-	SendExtends         bool   `envconfig:"RIBS_SEND_EXTENDS"`
-	FilecoinApiEndpoint string `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
-	MinimumReplicaCount int    `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
-	TargetReplicaCount  int    `envconfig:"RIBS_TARGET_REPLICA_COUNT" default:"10"`
+	DataDir                    string `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
+	SendExtends                bool   `envconfig:"RIBS_SEND_EXTENDS"`
+	FilecoinApiEndpoint        string `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
+	MinimumRetrievableCount    int    `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"5"`
+	MinimumReplicaCount        int    `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
+	MaximumReplicaCount        int    `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
+	RetrievableRepairThreshold int    `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
@@ -66,6 +69,19 @@ func GetConfig() *Config {
 func LoadConfig() error {
 	if err := envconfig.Process("", &config); err != nil {
 		return err
+	}
+	rcfg := config.Ribs
+	if rcfg.MinimumRetrievableCount > rcfg.MinimumReplicaCount {
+		return xerrors.Errorf("MinimunRetriveable count greater than MinimumReplica: %d > %d\n", rcfg.MinimumRetrievableCount, rcfg.MinimumReplicaCount)
+	}
+	if rcfg.MinimumReplicaCount > rcfg.MaximumReplicaCount {
+		return xerrors.Errorf("MinimunReplica count greater than MaximumReplica: %d > %d\n", rcfg.MinimumReplicaCount, rcfg.MaximumReplicaCount)
+	}
+	if rcfg.RetrievableRepairThreshold > rcfg.MinimumReplicaCount {
+		return xerrors.Errorf("RetrievableRepairThreshold greater than MinimumReplicaCount: %d > %d\n", rcfg.RetrievableRepairThreshold, rcfg.MinimumRetrievableCount)
+	}
+	if rcfg.RetrievableRepairThreshold < 0 {
+		return xerrors.Errorf("RetrievableRepairThreshold negative: %d < 0\n", rcfg.RetrievableRepairThreshold)
 	}
 	config.Loaded = true
 	return nil

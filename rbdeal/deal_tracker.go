@@ -285,8 +285,9 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 		if gs.State != ribs2.GroupStateLocalReadyForDeals {
 			continue
 		}
+		notFailedDeal := gs.TotalDeals - gs.FailedDeals
 
-		if gs.Retrievable >= int64(cfg.Ribs.MinimumReplicaCount) {
+		if gs.Retrievable >= int64(cfg.Ribs.MinimumRetrievableCount) && gs.SealedDeals >= int64(cfg.Ribs.MinimumReplicaCount) {
 			upStat := r.CarUploadStats().ByGroup
 			if upStat[gid] == nil {
 				log.Infow("OFFLOAD GROUP", "group", gid)
@@ -305,13 +306,15 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 			} else {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "uploads", upStat[gid].ActiveRequests)
 			}
-		} else if gs.TotalDeals-gs.FailedDeals-gs.Unretrievable < int64(cfg.Ribs.TargetReplicaCount) {
+		} else if (notFailedDeal < int64(cfg.Ribs.MinimumReplicaCount)) || (notFailedDeal - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) && notFailedDeal < int64(cfg.Ribs.MaximumReplicaCount)) {
 			go func(gid ribs2.GroupKey) {
 				err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet)
 				if err != nil {
 					log.Errorf("starting new deals: %s", err)
 				}
 			}(gid)
+		} else if gs.SealedDeals >= int64(cfg.Ribs.MaximumReplicaCount) && int64(cfg.Ribs.MaximumReplicaCount) - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) {
+			return xerrors.Errorf("Group %d has too many copies, and too many untrievable copies. Not offloading\n", gid)
 		}
 	}
 

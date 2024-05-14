@@ -67,14 +67,29 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("get deal params: %w", err)
 	}
 
-	notFailed, err := r.db.GetNonFailedDealCount(id)
+	notFailed, unretrievable, err := r.db.GetNonFailedDealCount(id)
 	if err != nil {
 		log.Errorf("getting non-failed deal count: %s", err)
 		return xerrors.Errorf("getting non-failed deal count: %w", err)
 	}
 
 	cfg := configuration.GetConfig()
-	if notFailed >= cfg.Ribs.TargetReplicaCount {
+	max := func(a, b int) (int) {
+		if a > b {
+			return a
+		}
+		return b
+	}
+	min := func(a, b int) (int) {
+		if a < b {
+			return a
+		}
+		return b
+	}
+	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount - notFailed)
+	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount - (notFailed - unretrievable))
+	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount - notFailed)
+	if copiesRequired <= 0 {
 		// occasionally in some racy cases we can end up here
 		return nil
 	}
@@ -307,9 +322,9 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	for _, prov := range provs {
 		err := makeDealWith(prov)
 		if err == nil {
-			notFailed++
+			copiesRequired--
 
-			if notFailed >= cfg.Ribs.TargetReplicaCount {
+			if copiesRequired <= 0 {
 				// enough
 				break
 			}

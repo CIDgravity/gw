@@ -20,6 +20,7 @@ import (
 	iface "github.com/lotus-web3/ribs"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 type ribsDB struct {
@@ -751,14 +752,15 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 	return out, nil
 }
 
-func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, error) {
+func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, int, error) {
 	var count int
-	err := r.db.QueryRow(`select count(*) from deals where group_id = ? and failed = 0 and case when last_retrieval_check > 0 then last_retrieval_check < (last_retrieval_check_success + 3600*24) else 1 end = 1`, group).Scan(&count)
+	var unretrievable int
+	err := r.db.QueryRow(`select count(*), COALESCE(sum(last_retrieval_check > (last_retrieval_check_success + 3600*24) and retrieval_probes_fail > 10), 0) from deals where group_id = ? and failed = 0`, group).Scan(&count, &unretrievable)
 	if err != nil {
-		return 0, xerrors.Errorf("querying deal count: %w", err)
+		return 0, 0, xerrors.Errorf("querying deal count: %w", err)
 	}
 
-	return count, nil
+	return count, unretrievable, nil
 }
 
 type dbDealInfo struct {
@@ -1894,6 +1896,7 @@ ORDER BY
 }
 
 func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
+	cfg := configuration.GetConfig()
 	query := `
         INSERT INTO repairs (group_id, retrievable_deals)
 			SELECT
@@ -1906,11 +1909,11 @@ func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
 			GROUP BY
 				all_groups.group_id
 			HAVING
-				COALESCE(COUNT(d.group_id), 0) < 3
+				COALESCE(COUNT(d.group_id), 0) < ?
 		ON CONFLICT (group_id) DO UPDATE
 		SET retrievable_deals = EXCLUDED.retrievable_deals;
     `
-	_, err := r.db.Exec(query)
+	_, err := r.db.Exec(query, cfg.Ribs.RetrievableRepairThreshold)
 	return err
 }
 
