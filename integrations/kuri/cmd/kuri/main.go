@@ -22,6 +22,8 @@ func mainRet() (exitCode int) {
 
 	if err := configuration.LoadConfig(); err != nil {
 		fmt.Fprintln(os.Stderr, "Configuration load failed: %w\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "Configuration loaded\n")
 	}
 	return kubo.Start(kubo.BuildEnv(func(loader *loader.PluginLoader) error {
 		return loader.Load(kuboribs.Plugin)

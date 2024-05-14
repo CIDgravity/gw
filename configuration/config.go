@@ -3,9 +3,12 @@ package configuration
 import (
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
 )
+
+var log = logging.Logger("config")
 
 type LocalwebConfig struct {
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
@@ -84,6 +87,8 @@ func LoadConfig() error {
 		return xerrors.Errorf("RetrievableRepairThreshold negative: %d < 0\n", rcfg.RetrievableRepairThreshold)
 	}
 	config.Loaded = true
+	sconfig := spew.Sdump(config)
+	log.Errorf("Config: %s", sconfig)
 	return nil
 }
 

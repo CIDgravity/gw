@@ -8,6 +8,7 @@ import (
 	//gobig "math/big"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	commcid "github.com/filecoin-project/go-fil-commcid"
@@ -168,6 +169,9 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	if err != nil {
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
+
+	provs_list := spew.Sdump(provsIds)
+	log.Errorf("Making more deals: grp %d, providers: %s", id, provs_list)
 
         provs := []dealProvider{}
         for _, prov := range provsIds {
