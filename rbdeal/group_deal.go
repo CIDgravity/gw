@@ -3,6 +3,8 @@ package rbdeal
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	//gobig "math/big"
@@ -39,7 +41,12 @@ func (e ErrRejected) Error() string {
 	return fmt.Sprintf("deal proposal rejected: %s", e.Reason)
 }
 
-func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.LocalWallet) error {
+func makeTraceToken(prov dealProvider) (string) {
+	auth := fmt.Sprintf("f0%d-%s:password", prov, time.Now().Format("20060102150405"))
+	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
+}
+
+func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host, w *ributil.LocalWallet) error {
 	r.dealsLk.Lock()
 	if _, ok := r.moreDealsLocks[id]; ok {
 		r.dealsLk.Unlock()
@@ -153,6 +160,14 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		Type:   "libp2p",
 		Size:   uint64(dealInfo.CarSize),
 	}
+	url, err := r.maybeGetExternalURL(id)
+	if err != nil {
+		return fmt.Errorf("Failed to get External URL: %w", err)
+	}
+	if url != nil {
+		transfer.Type = "http"
+	}
+
 	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
 	provsIds, err := cidgravity.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
