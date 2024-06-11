@@ -97,6 +97,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount - notFailed)
 	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount - (notFailed - unretrievable))
 	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount - notFailed)
+	log.Errorf("XXX group %d: %d copiesRequired: %d notFailed, %d unretrievable", id, copiesRequired, notFailed, unretrievable)
 	if copiesRequired <= 0 {
 		// occasionally in some racy cases we can end up here
 		return nil
