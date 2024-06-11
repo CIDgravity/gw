@@ -42,7 +42,7 @@ func (e ErrRejected) Error() string {
 }
 
 func makeTraceToken(prov dealProvider) (string) {
-	auth := fmt.Sprintf("f0%d-%s:password", prov, time.Now().Format("20060102150405"))
+	auth := fmt.Sprintf("f0%d-%s:password", prov.id, time.Now().Format("20060102150405"))
 	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
 }
 
