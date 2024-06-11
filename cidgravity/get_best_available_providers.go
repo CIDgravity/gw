@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"time"
 	"github.com/lotus-web3/ribs/configuration"
@@ -102,30 +101,4 @@ func GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest
 	}
 
 	return result.Result, nil
-}
-
-func main() {
-	isVerifiedDeal := true
-	removeUnsealedCopy := false
-
-	params := CIDgravityGetBestAvailableProvidersRequest{
-		PieceCid:             "baga6ea4seaqfyiicys4rxe6pncl3np4g4eeavhh5qrq2lvqluhufkdk5iuvgyli",
-		StartEpoch:           3700038,
-		Duration:             1051200,
-		StoragePricePerEpoch: "0",
-		ProviderCollateral:   "0",
-		VerifiedDeal:         &isVerifiedDeal,
-		TransferSize:         30059738368,
-		TransferType:         "http",
-		RemoveUnsealedCopy:   &removeUnsealedCopy,
-	}
-
-	response, err := GetBestAvailableProviders(params)
-
-	if err != nil {
-		log.Fatal(err, response)
-	}
-
-	// Print available providers
-	log.Println(response)
 }
