@@ -6,9 +6,8 @@ import (
 
 	iface "github.com/lotus-web3/ribs"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/configuration"
 )
-
-const MaxLocalGroupCount = 64 // todo user config
 
 func (r *rbs) createGroup(ctx context.Context) (iface.GroupKey, *Group, error) {
 	if err := r.ensureSpaceForGroup(ctx); err != nil {
@@ -136,7 +135,8 @@ func (r *rbs) ensureSpaceForGroup(ctx context.Context) error {
 		return xerrors.Errorf("counting non-offloaded groups: %w", err)
 	}
 
-	if localCount < MaxLocalGroupCount {
+	cfg := configuration.GetConfig()
+	if localCount < cfg.Ribs.MaxLocalGroupCount {
 		return nil
 	}
 

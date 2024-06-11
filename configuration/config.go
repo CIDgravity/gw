@@ -40,6 +40,7 @@ type RibsConfig struct {
 	MinimumReplicaCount        int    `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
 	MaximumReplicaCount        int    `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
 	RetrievableRepairThreshold int    `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
+	MaxLocalGroupCount         int    `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
