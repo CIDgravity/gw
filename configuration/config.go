@@ -32,6 +32,7 @@ type S3Config struct {
 type CidGravityConfig struct {
 	ApiToken                string `envconfig:"CIDGRAVITY_API_TOKEN"`
 	ApiEndpointGetProviders string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
+	ApiEndpointGetDeals     string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
 }
 type RibsConfig struct {
 	DataDir                    string        `envconfig:"RIBS_DATA" default:"~/.ribsdata"`

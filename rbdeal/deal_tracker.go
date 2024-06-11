@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	ribs2 "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/ributil"
+	"github.com/lotus-web3/ribs/cidgravity"
 	"github.com/lotus-web3/ribs/configuration"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
@@ -62,7 +63,7 @@ func (r *ribs) dealTracker(ctx context.Context) {
 	}
 }
 
-func (r *ribs) runDealCheckLoop(ctx context.Context) error {
+func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 	gw, closer, err := client.NewGatewayRPCV1(ctx, r.lotusRPCAddr, nil)
 	if err != nil {
 		return xerrors.Errorf("creating gateway rpc client: %w", err)
@@ -273,9 +274,11 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 			}
 		}
 	}
+	return nil
+}
 
+func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 	/* deal count checks */
-
 	gs, err := r.db.GetGroupDealStats() // todo swap for GetNonFailedDealCount?
 	if err != nil {
 		return xerrors.Errorf("getting storage groups: %w", err)
@@ -321,6 +324,93 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 
 	return nil
 }
+func (r *ribs) findUnpublishedDeal(deals map[abi.DealID]cidgravity.CIDgravityDealStatus, proposal []byte) (*abi.DealID, error) {
+	var dprop market.ClientDealProposal
+	if err := dprop.UnmarshalCBOR(bytes.NewReader(proposal)); err != nil {
+		return nil, xerrors.Errorf("unmarshaling proposal: %w", err)
+	}
+	dp := dprop.Proposal
+	for dealId, deal := range deals {
+		cdp := deal.Proposal
+		if cdp.Provider == dp.Provider.String() && cdp.StartEpoch == dp.StartEpoch && cdp.PieceCid.Root == dp.PieceCID.String() {
+			return &dealId, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
+	deals, err := cidgravity.GetDealStates(ctx)
+	if err != nil {
+		return err
+	}
+	// unpublished, need to find deal by proposal content
+	{
+		unpublishedDeals, err := r.db.AllUnpublishedDeals()
+		if err != nil {
+			return err
+		}
+		for _, deal := range unpublishedDeals {
+			dealId, err := r.findUnpublishedDeal(deals, deal.Proposal)
+			if err != nil {
+				return err
+			}
+			if dealId != nil {
+				r.db.UpdatePublishedDealLight(deal.DealUUID, *dealId)
+			}
+		}
+	}
+	// published, need to check by DealID if the current state changed
+	{
+		publishedDeals, err := r.db.AllPublishedUnsealedDeals()
+		if err != nil {
+			return err
+		}
+		for _, deal := range publishedDeals {
+			ds, ok := deals[deal.DealID]
+			if !ok {
+				log.Errorf("Deal %d not found in CIDGravity report", deal.DealID)
+			} else if ds.State.OnChainStartEpoch > 0 {
+				r.db.UpdateActivatedDeal(deal.DealUUID, ds.State.OnChainStartEpoch)
+			}
+		}
+	}
+	// active, need to check by DealID if the current state changed 
+	{
+		activeDeals, err := r.db.AllActiveDeals()
+		if err != nil {
+			return err
+		}
+		for _, deal := range activeDeals {
+			ds, ok := deals[deal.DealID]
+			if !ok {
+				log.Errorf("Deal %d not found in CIDGravity report", deal.DealID)
+			} else if ds.State.OnChainStartEpoch > 0 {
+				r.db.UpdateExpiredDeal(deal.DealUUID)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *ribs) runDealCheckLoop(ctx context.Context) error {
+	cfg := configuration.GetConfig()
+	if cfg.CidGravity.ApiToken != "" {
+		if err := r.runCidGravityDealCheckLoop(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := r.runSPDealCheckLoop(ctx); err != nil {
+			return err
+		}
+	}
+	
+	if err := r.runDealCheckCleanupLoop(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 
 func (r *ribs) runDealCheckQuery(ctx context.Context, gw api.Gateway, walletAddr address.Address, deal inactiveDealMeta) error {
 	maddr, err := address.NewIDAddress(uint64(deal.ProviderAddr))
