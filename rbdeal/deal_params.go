@@ -29,7 +29,6 @@ var (
 const clientReadDeadline = 10 * time.Second
 const clientWriteDeadline = 10 * time.Second
 
-var DealCheckInterval = 10 * time.Second
 var ParallelDealChecks = 10
 
 var minDatacap = types.NewInt(192 << 30)

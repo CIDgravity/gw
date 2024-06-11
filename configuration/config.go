@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"time"
 	"github.com/davecgh/go-spew/spew"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
@@ -33,14 +34,15 @@ type CidGravityConfig struct {
 	ApiEndpointGetProviders string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
 }
 type RibsConfig struct {
-	DataDir                    string `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
-	SendExtends                bool   `envconfig:"RIBS_SEND_EXTENDS"`
-	FilecoinApiEndpoint        string `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
-	MinimumRetrievableCount    int    `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"5"`
-	MinimumReplicaCount        int    `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
-	MaximumReplicaCount        int    `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
-	RetrievableRepairThreshold int    `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
-	MaxLocalGroupCount         int    `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
+	DataDir                    string        `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
+	SendExtends                bool          `envconfig:"RIBS_SEND_EXTENDS"`
+	FilecoinApiEndpoint        string        `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
+	MinimumRetrievableCount    int           `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"5"`
+	MinimumReplicaCount        int           `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
+	MaximumReplicaCount        int           `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
+	RetrievableRepairThreshold int           `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
+	MaxLocalGroupCount         int           `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
+	DealCheckInterval          time.Duration `envconfig:"RIBS_DEAL_CHECK_INTERVAL" default:"30s"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours

@@ -34,6 +34,7 @@ import (
 const DealStatusV12ProtocolID = "/fil/storage/status/1.2.0"
 
 func (r *ribs) dealTracker(ctx context.Context) {
+	cfg := configuration.GetConfig()
 	for {
 		checkStart := time.Now()
 		select {
@@ -51,11 +52,11 @@ func (r *ribs) dealTracker(ctx context.Context) {
 
 		log.Infow("deal check loop finished", "duration", checkDuration)
 
-		if checkDuration < DealCheckInterval {
+		if checkDuration < cfg.Ribs.DealCheckInterval {
 			select {
 			case <-r.close:
 				return
-			case <-time.After(DealCheckInterval - checkDuration):
+			case <-time.After(cfg.Ribs.DealCheckInterval - checkDuration):
 			}
 		}
 	}
