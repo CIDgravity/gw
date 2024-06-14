@@ -837,15 +837,12 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 	} else if stresp.DealStatus == nil {
 		errMsg := fmt.Sprintf("DealStatus is nil (resp err: '%s')", stresp.Error)
 
-		failed := true
-
 		_, err := r.db.Exec(`update deals set
-                 failed = ?,
                  sp_status = ?,
                  error_msg = ?,
                  last_state_query_error = ?,
                  last_state_query = ?
-             where uuid = ?`, failed, "Aborted", errMsg, errMsg, now, id)
+             where uuid = ?`, "Aborted", errMsg, errMsg, now, id)
 		if err != nil {
 			return xerrors.Errorf("update sp tracker: %w", err)
 		}
@@ -937,7 +934,7 @@ func (r *ribsDB) PublishingDeals() ([]publishingDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllUnpublishedDeals() ([]publishingDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, sp_pub_msg_cid from deals where published = 0 and failed = 0`)
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, "") from deals where published = 0 and failed = 0`)
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -985,7 +982,7 @@ type publishedDealMeta struct {
 }
 
 func (r *ribsDB) PublishedDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, sp_pub_msg_cid, deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -1006,7 +1003,7 @@ func (r *ribsDB) PublishedDeals() ([]publishedDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllPublishedUnsealedDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, sp_pub_msg_cid, deal_id from deals where published = 1 and sealed = 0 and failed = 0`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -1027,7 +1024,7 @@ func (r *ribsDB) AllPublishedUnsealedDeals() ([]publishedDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllActiveDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, sp_pub_msg_cid, deal_id from deals where published = 1 and sealed = 1 and failed = 0`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 1 and failed = 0`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}

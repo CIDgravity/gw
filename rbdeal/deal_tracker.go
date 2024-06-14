@@ -385,7 +385,7 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 			ds, ok := deals[deal.DealID]
 			if !ok {
 				log.Errorf("Deal %d not found in CIDGravity report", deal.DealID)
-			} else if ds.State.OnChainStartEpoch > 0 {
+			} else if ds.State.OnChainEndEpoch > 0 {
 				r.db.UpdateExpiredDeal(deal.DealUUID)
 			}
 		}
@@ -399,12 +399,11 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 		if err := r.runCidGravityDealCheckLoop(ctx); err != nil {
 			return err
 		}
-	} else {
-		if err := r.runSPDealCheckLoop(ctx); err != nil {
-			return err
-		}
 	}
-	
+	if err := r.runSPDealCheckLoop(ctx); err != nil {
+		return err
+	}
+
 	if err := r.runDealCheckCleanupLoop(ctx); err != nil {
 		return err
 	}
