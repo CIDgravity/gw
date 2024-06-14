@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/lotus-web3/ribs/cidgravity"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/rbstor"
 	"github.com/lotus-web3/ribs/ributil"
@@ -112,6 +113,7 @@ type ribs struct {
 	rateCounters *ributil.RateCounters[peer.ID]
 
 	/* car upload offload (S3) */
+	cidg cidgravity.CIDGravity
 
 	s3          *s3.S3
 	s3Bucket    string

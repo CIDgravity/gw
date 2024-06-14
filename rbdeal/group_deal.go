@@ -171,7 +171,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 
 	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
-	provsIds, err := cidgravity.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
+	provsIds, err := r.cidg.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
                 PieceCid:             pieceCid.String(),
                 StartEpoch:           uint64(startEpoch),
                 Duration:             uint64(duration),

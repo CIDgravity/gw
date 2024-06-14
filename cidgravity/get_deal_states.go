@@ -48,7 +48,9 @@ type CIDgravityDealStatusRequest struct {
 	Next json.Number `json:"next"`
 }
 
-func GetDealStates(cxt context.Context) (map[abi.DealID]CIDgravityDealStatus, error) {
+func (cidg *CIDGravity) GetDealStates(ctx context.Context) (map[abi.DealID]CIDgravityDealStatus, error) {
+	cidg.init()
+
 	ret := map[abi.DealID]CIDgravityDealStatus{}
 
 	cfg := configuration.GetConfig()
@@ -59,6 +61,19 @@ func GetDealStates(cxt context.Context) (map[abi.DealID]CIDgravityDealStatus, er
 
 	requestParams := CIDgravityDealStatusRequest{}
 
+	if err := cidg.sem.Acquire(ctx, 1); err != nil {
+		return nil, fmt.Errorf("Failed to acquire semaphore: %w", err)
+	}
+	defer cidg.sem.Release(1)
+
+	// Create HTTP client
+	// This will also define the request timeout to 30 seconds
+	client := http.Client{
+		Transport: &http.Transport{
+			MaxIdleConnsPerHost: 1,
+		},
+		Timeout: 30 * time.Second,
+	}
 	for {
 		// Parse params for request body
 		var requestBody = new(bytes.Buffer)
@@ -78,15 +93,6 @@ func GetDealStates(cxt context.Context) (map[abi.DealID]CIDgravityDealStatus, er
 		// Add authorization header
 		req.Header.Set("X-API-KEY", authToken)
 
-		// Create HTTP client
-		// This will also define the request timeout to 30 seconds
-		client := http.Client{
-			Transport: &http.Transport{
-				DisableKeepAlives:   true,
-				MaxIdleConnsPerHost: -1,
-			},
-			Timeout: 30 * time.Second,
-		}
 
 		// Send the request
 		resp, err := client.Do(req)

@@ -2,6 +2,7 @@ package cidgravity
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -33,7 +34,9 @@ type CIDgravityAPIResponse struct {
 	Result []string           `json:"result"`
 }
 
-func GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {
+func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {
+	cidg.init()
+
 	cfg := configuration.GetConfig()
 
 	// Define params
@@ -69,8 +72,12 @@ func GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest
 		Timeout: 30 * time.Second,
 	}
 
+	if err := cidg.sem.Acquire(context.TODO(), 1); err != nil {
+		return nil, fmt.Errorf("Failed to acquire semaphore: %w", err)
+	}
 	// Send the request
 	resp, err := client.Do(req)
+	cidg.sem.Release(1)
 
 	if err != nil {
 		return nil, err

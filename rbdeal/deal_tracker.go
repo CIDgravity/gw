@@ -356,7 +356,7 @@ func (r *ribs) findUnpublishedDeal(deals map[abi.DealID]cidgravity.CIDgravityDea
 
 func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 	log.Errorw("cidg DealCheck: getting states")
-	deals, err := cidgravity.GetDealStates(ctx)
+	deals, err := r.cidg.GetDealStates(ctx)
 	if err != nil {
 		return err
 	}
