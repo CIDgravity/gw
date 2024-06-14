@@ -4,7 +4,10 @@ import (
 	"sync"
 	"github.com/lotus-web3/ribs/configuration"
 	"golang.org/x/sync/semaphore"
+	logging "github.com/ipfs/go-log/v2"
 )
+
+var log = logging.Logger("cidg")
 
 type CIDGravity struct {
 	lk sync.Mutex
