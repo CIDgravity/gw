@@ -34,6 +34,8 @@ import (
 
 const DealStatusV12ProtocolID = "/fil/storage/status/1.2.0"
 
+const DEBUG_LOOP_COUNT = 10000
+
 func (r *ribs) dealTracker(ctx context.Context) {
 	cfg := configuration.GetConfig()
 	for {
@@ -79,7 +81,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 			return xerrors.Errorf("get inactive published deals: %w", err)
 		}
 
-		for _, deal := range toCheck {
+		for n, deal := range toCheck {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("SPDealCheckLoop: published", "count", len(toCheck), "n", n)
+			}
 			dealInfo, err := gw.StateMarketStorageDeal(ctx, deal.DealID, types2.EmptyTSK)
 			if err != nil {
 				log.Warnw("get deal info", "error", err, "dealid", deal.DealID, "deal", deal.DealUUID)
@@ -127,7 +132,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 			return xerrors.Errorf("get chain head: %w", err)
 		}
 
-		for _, deal := range toCheck {
+		for n, deal := range toCheck {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("SPDealCheckLoop: publishing", "count", len(toCheck), "n", n)
+			}
 			var dprop market.ClientDealProposal
 			if err := dprop.UnmarshalCBOR(bytes.NewReader(deal.Proposal)); err != nil {
 				return xerrors.Errorf("unmarshaling proposal: %w", err)
@@ -182,7 +190,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 
 		sem := make(chan struct{}, ParallelDealChecks)
 
-		for _, deal := range toCheck {
+		for n, deal := range toCheck {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("SPDealCheckLoop: inactives", "count", len(toCheck), "n", n)
+			}
 			sem <- struct{}{}
 			go func(deal inactiveDealMeta) {
 				defer func() {
@@ -211,6 +222,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 
 	// Inactive, expired deal cleanup
 	{
+		log.Errorw("SPDealCheckLoop: expiration")
 		head, err := gw.ChainHead(ctx) // todo lookback
 		if err != nil {
 			return xerrors.Errorf("get chain head: %w", err)
@@ -234,7 +246,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 
 		store := adt.WrapStore(ctx, cbor.NewCborStore(blockstore.NewAPIBlockstore(gw)))
 
-		for _, deal := range toFill {
+		for n, deal := range toFill {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("SPDealCheckLoop: filling sector numbers", "count", len(toFill), "n", n)
+			}
 			if abi.ActorID(deal.Provider) != curProvider {
 				// TODO post v13 actors sector numbers are in market deal state
 
@@ -340,6 +355,7 @@ func (r *ribs) findUnpublishedDeal(deals map[abi.DealID]cidgravity.CIDgravityDea
 }
 
 func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
+	log.Errorw("cidg DealCheck: getting states")
 	deals, err := cidgravity.GetDealStates(ctx)
 	if err != nil {
 		return err
@@ -350,7 +366,10 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, deal := range unpublishedDeals {
+		for n, deal := range unpublishedDeals {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("cidg DealCheck: unpublished", "count", len(unpublishedDeals), "n", n)
+			}
 			dealId, err := r.findUnpublishedDeal(deals, deal.Proposal)
 			if err != nil {
 				return err
@@ -366,7 +385,10 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, deal := range publishedDeals {
+		for n, deal := range publishedDeals {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("cidg DealCheck: publishedDeals", "count", len(publishedDeals), "n", n)
+			}
 			ds, ok := deals[deal.DealID]
 			if !ok {
 				log.Errorf("Deal %d not found in CIDGravity report", deal.DealID)
@@ -381,7 +403,10 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, deal := range activeDeals {
+		for n, deal := range activeDeals {
+			if n % DEBUG_LOOP_COUNT == 0 {
+				log.Errorw("cidg DealCheck: activeDeals", "count", len(activeDeals), "n", n)
+			}
 			ds, ok := deals[deal.DealID]
 			if !ok {
 				log.Errorf("Deal %d not found in CIDGravity report", deal.DealID)
@@ -396,14 +421,17 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 	cfg := configuration.GetConfig()
 	if cfg.CidGravity.ApiToken != "" {
+		log.Errorw("Starting deal check loop cidg check")
 		if err := r.runCidGravityDealCheckLoop(ctx); err != nil {
 			return err
 		}
 	}
+	log.Errorw("Starting deal check loop SP")
 	if err := r.runSPDealCheckLoop(ctx); err != nil {
 		return err
 	}
 
+	log.Errorw("Starting deal check loop Cleanup")
 	if err := r.runDealCheckCleanupLoop(ctx); err != nil {
 		return err
 	}
