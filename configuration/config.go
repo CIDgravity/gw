@@ -2,15 +2,14 @@ package configuration
 
 import (
 	"os"
-	"fmt"
+	"strings"
 	"time"
-	"github.com/davecgh/go-spew/spew"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
 )
 
-var log = logging.Logger("config")
+var log = logging.Logger("ribs:config")
 
 type LocalwebConfig struct {
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
@@ -63,6 +62,7 @@ type Config struct {
 	CidGravity CidGravityConfig
 	Ribs       RibsConfig
 	Deal       DealConfig
+	LogLevel   string           `envconfig:"RIBS_LOGLEVEL"`
 }
 
 var config Config
@@ -102,17 +102,24 @@ func LoadConfig() error {
 		}
 		config.CidGravity.AltTokens[client] = token
 	}
-	config.Loaded = true
-	sconfig := spew.Sdump(config)
-	log.Errorf("Config: %s", sconfig)
-	return nil
-}
+        if config.LogLevel != "" {
+                for _, kvs := range strings.Split(config.LogLevel, ",") {
+                        kv := strings.SplitN(kvs, "=", 2)
+                        lvl := kv[len(kv)-1]
+                        switch len(kv) {
+                        case 1:
+				if err := logging.SetLogLevelRegex("ribs:.*", lvl); err != nil {
+					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
+				}
+                        case 2:
+				if err := logging.SetLogLevelRegex("ribs:" + kv[0], lvl); err != nil {
+					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
+				}
+                        }
+                }
+        }
 
-func main() {
-	err := LoadConfig()
-	if err != nil {
-		fmt.Printf("Error load config: %+#v\n", err)
-	}
-	cfg := GetConfig()
-	spew.Dump(cfg)
+	config.Loaded = true
+	log.Debugw("Loaded config", "config", config)
+	return nil
 }

@@ -7,7 +7,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 )
 
-var log = logging.Logger("cidg")
+var log = logging.Logger("ribs:cidg")
 
 type CIDGravity struct {
 	lk sync.Mutex

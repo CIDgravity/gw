@@ -34,7 +34,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-var log = logging.Logger("ribsplugin")
+var log = logging.Logger("ribs:plugin")
 
 var Plugin plugin.Plugin = &ribsPlugin{}
 
@@ -197,7 +197,7 @@ func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag for
 			return xerrors.Errorf("ribs flush: %w", err)
 		}
 
-		log.Errorw("new files root", "cid", c.String())
+		log.Infow("new files root", "cid", c.String())
 
 		if err := rootDS.Put(ctx, dsk, c.Bytes()); err != nil {
 			return err

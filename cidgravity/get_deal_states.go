@@ -125,6 +125,8 @@ func (cidg *CIDGravity) GetDealStates(ctx context.Context) (map[abi.DealID]CIDgr
 
 	authToken := cfg.CidGravity.ApiToken
 
+	log.Debug("getDealStates")
+
 	if err := cidg.sem.Acquire(ctx, 1); err != nil {
 		return nil, fmt.Errorf("Failed to acquire semaphore: %w", err)
 	}
@@ -146,5 +148,6 @@ func (cidg *CIDGravity) GetDealStates(ctx context.Context) (map[abi.DealID]CIDgr
 			return nil, err
 		}
 	}
+	log.Debug("getDealStates", "states", len(states))
 	return states, nil
 }

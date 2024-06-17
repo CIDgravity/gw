@@ -25,7 +25,7 @@ import (
 	"github.com/lotus-web3/ribs/configuration"
 )
 
-var log = logging.Logger("ribs")
+var log = logging.Logger("ribs:rbdeal")
 
 type openOptions struct {
 	hostGetter          func(...libp2p.Option) (host.Host, error)

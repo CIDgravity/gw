@@ -31,7 +31,11 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root) {
 		LockSystem: webdav.NewMemLS(),
 
 		Logger: func(r *http.Request, err error) {
-			log.Errorw("dav", "err", err, "req", r.URL, "method", r.Method)
+			if err != nil {	
+				log.Errorw("dav", "err", err, "req", r.URL, "method", r.Method)
+			} else {
+				log.Infow("dav", "req", r.URL, "method", r.Method)
+			}
 		},
 	}
 
@@ -318,7 +322,7 @@ var v1CidPrefix = cid.Prefix{
 }
 
 func (m *mfsDavFs) RemoveAll(ctx context.Context, name string) error {
-	log.Errorw("REMOVE ALL", "name", name)
+	log.Debugw("REMOVE ALL", "name", name)
 	arg := name
 
 	path, err := checkPath(arg)
@@ -416,7 +420,7 @@ func getParentDir(root *mfs.Root, dir string) (*mfs.Directory, error) {
 }
 
 func (m *mfsDavFs) Rename(ctx context.Context, oldName, newName string) error {
-	log.Errorw("RENAME", "oldName", oldName, "newName", newName)
+	log.Debugw("RENAME", "oldName", oldName, "newName", newName)
 	src, err := checkPath(oldName)
 	if err != nil {
 		return err
@@ -435,7 +439,7 @@ func (m *mfsDavFs) Rename(ctx context.Context, oldName, newName string) error {
 }
 
 func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	log.Errorw("STAT", "name", name)
+	log.Debugw("STAT", "name", name)
 	path, err := checkPath(name)
 	if err != nil {
 		return nil, err

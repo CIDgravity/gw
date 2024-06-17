@@ -39,7 +39,7 @@ func (r *ribs) maybeInitExternal() error {
 			return err
 		}
 		if found {
-			log.Infof("XYZ: External module %s configured.", module.GetModuleName())
+			log.Infow("XYZ: External module configured", "name", module.GetModuleName())
 			(*r).externalOffloader = &module
 			return nil
 		}

@@ -26,7 +26,7 @@ func StartMfsNFSFs(lc fx.Lifecycle, mr *mfs.Root, ng format.DAGService) error {
 		return xerrors.Errorf("failed to listen: %w", err)
 	}
 
-	log.Errorw("starting mfs nfs server", "addr", listener.Addr())
+	log.Infow("starting mfs nfs server", "addr", listener.Addr())
 
 	handler := &AuthHandler{&mfsNfsFs{mr, ng}}
 	cacheHelper := nfshelper.NewCachingHandler(handler, 1024)
@@ -125,7 +125,7 @@ func (m *mfsNfsFs) Open(filename string) (billy.File, error) {
 }
 
 func (m *mfsNfsFs) OpenFile(name string, flag int, perm os.FileMode) (billy.File, error) {
-	log.Errorw("OPEN FILE", "name", name, "flag", flag, "perm", perm)
+	log.Debugw("OPEN FILE", "name", name, "flag", flag, "perm", perm)
 
 	path, err := checkPath(name)
 	if err != nil {
@@ -321,7 +321,7 @@ func (m *mfsNfsFs) Stat(filename string) (os.FileInfo, error) {
 }
 
 func (m *mfsNfsFs) Rename(oldName, newName string) error {
-	log.Errorw("RENAME", "oldName", oldName, "newName", newName)
+	log.Debugw("RENAME", "oldName", oldName, "newName", newName)
 	src, err := checkPath(oldName)
 	if err != nil {
 		return err
@@ -340,7 +340,7 @@ func (m *mfsNfsFs) Rename(oldName, newName string) error {
 }
 
 func (m *mfsNfsFs) Remove(name string) error {
-	log.Errorw("REMOVE", "name", name)
+	log.Debugw("REMOVE", "name", name)
 
 	path, err := checkPath(name)
 	if err != nil {
@@ -401,7 +401,7 @@ func (m *mfsNfsFs) TempFile(dir, prefix string) (billy.File, error) {
 }
 
 func (m *mfsNfsFs) ReadDir(path string) ([]os.FileInfo, error) {
-	log.Errorw("READ DIR", "path", path)
+	log.Debugw("READ DIR", "path", path)
 
 	var out []os.FileInfo
 
@@ -429,7 +429,7 @@ func (m *mfsNfsFs) ReadDir(path string) ([]os.FileInfo, error) {
 					if err != nil {
 						log.Errorw("failed to preload directory link", "err", err, "cid", l.Cid, "name", l.Name)
 					}
-					log.Errorw("readdir node preload ok", "cid", l.Cid, "name", l.Name)
+					log.Debugw("readdir node preload ok", "cid", l.Cid, "name", l.Name)
 				}(*l)
 			}
 		}()
@@ -461,12 +461,12 @@ func (m *mfsNfsFs) ReadDir(path string) ([]os.FileInfo, error) {
 }
 
 func (m *mfsNfsFs) MkdirAll(filename string, perm os.FileMode) error {
-	log.Errorw("MKDIR ALL", "filename", filename, "perm", perm)
+	log.Debugw("MKDIR ALL", "filename", filename, "perm", perm)
 	return mfs.Mkdir(m.mr, filename, mfs.MkdirOpts{Mkparents: true})
 }
 
 func (m *mfsNfsFs) Lstat(name string) (os.FileInfo, error) {
-	log.Errorw("LSTAT", "filename", name)
+	log.Debugw("LSTAT", "filename", name)
 
 	path, err := checkPath(name)
 	if err != nil {

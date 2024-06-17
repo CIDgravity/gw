@@ -10,7 +10,6 @@ import (
 	//gobig "math/big"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	commcid "github.com/filecoin-project/go-fil-commcid"
@@ -77,7 +76,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 
 	notFailed, unretrievable, err := r.db.GetNonFailedDealCount(id)
 	if err != nil {
-		log.Errorf("getting non-failed deal count: %s", err)
+		log.Errorw("getting non-failed deal count", "error", err)
 		return xerrors.Errorf("getting non-failed deal count: %w", err)
 	}
 
@@ -97,7 +96,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount - notFailed)
 	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount - (notFailed - unretrievable))
 	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount - notFailed)
-	log.Errorf("XXX group %d: %d copiesRequired: %d notFailed, %d unretrievable", id, copiesRequired, notFailed, unretrievable)
+	log.Debugw("makeMoreDeals", "group", id, "copiesRequired", copiesRequired, "notFailed", notFailed, "unretrievable", unretrievable)
 	if copiesRequired <= 0 {
 		// occasionally in some racy cases we can end up here
 		return nil
@@ -186,8 +185,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
 
-	provs_list := spew.Sdump(provsIds)
-	log.Errorf("Making more deals: grp %d, providers: %s", id, provs_list)
+	log.Debugw("making more deal", "group", id, "providers", provsIds)
 
         provs := []dealProvider{}
         for _, prov := range provsIds {
@@ -333,7 +331,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 			return xerrors.Errorf("marking deal as successfully proposed: %w", err)
 		}
 
-		log.Warnf("Deal %s with %s accepted for group %d!!!", dealUuid, maddr, id)
+		log.Infof("Deal %s with %s accepted for group %d!!!", dealUuid, maddr, id)
 
 		return nil
 	}

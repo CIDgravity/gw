@@ -125,7 +125,7 @@ func (r *ribs) watchMarket(ctx context.Context) {
 				goto cooldown
 			}
 
-			log.Errorw("AUTO-ADDED MARKET FUNDS", "amount", types.FIL(toAdd), "msg", c)
+			log.Infow("AUTO-ADDED MARKET FUNDS", "amount", types.FIL(toAdd), "msg", c)
 		}
 
 	cooldown:

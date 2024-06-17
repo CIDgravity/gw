@@ -35,6 +35,7 @@ type CIDgravityAPIResponse struct {
 }
 
 func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {
+	log.Debugw("GetBestAvailableProviders", "params", params)
 	cidg.init()
 
 	cfg := configuration.GetConfig()
@@ -107,5 +108,6 @@ func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvaila
 		return []string{result.Error.Code, result.Error.Message}, fmt.Errorf("status code is not 200")
 	}
 
+	log.Debugw("GetBestAvailableProviders", "result", result.Result)
 	return result.Result, nil
 }

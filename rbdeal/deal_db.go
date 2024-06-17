@@ -1075,7 +1075,7 @@ func (r *ribsDB) MarkExpiredDeals(currentEpoch int64) error {
 		return fmt.Errorf("error getting affected rows: %w", err)
 	}
 
-	log.Warnw("Marked expired deals", "affectedRows", affectedRows)
+	log.Infow("Marked expired deals", "affectedRows", affectedRows)
 
 	return nil
 }
