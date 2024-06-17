@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"os"
 	"fmt"
 	"time"
 	"github.com/davecgh/go-spew/spew"
@@ -30,10 +31,12 @@ type S3Config struct {
 	BucketUrl string `envconfig:"S3_BUCKET_URL"`
 }
 type CidGravityConfig struct {
-	ApiToken                string `envconfig:"CIDGRAVITY_API_TOKEN"`
-	ApiEndpointGetProviders string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
-	ApiEndpointGetDeals     string `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
-	MaxConns                int64  `envconfig:"CIDGRAVITY_MAX_CONNECTIONS" default:"4"`
+	ApiToken                string            `envconfig:"CIDGRAVITY_API_TOKEN"`
+	ApiEndpointGetProviders string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
+	ApiEndpointGetDeals     string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
+	MaxConns                int64             `envconfig:"CIDGRAVITY_MAX_CONNECTIONS" default:"4"`
+	AltClients              []string          `envconfig:"CIDGRAVITY_ALT_CLIENTS"`
+	AltTokens               map[string]string
 }
 type RibsConfig struct {
 	DataDir                    string        `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
@@ -90,6 +93,14 @@ func LoadConfig() error {
 	}
 	if rcfg.RetrievableRepairThreshold < 0 {
 		return xerrors.Errorf("RetrievableRepairThreshold negative: %d < 0\n", rcfg.RetrievableRepairThreshold)
+	}
+	config.CidGravity.AltTokens = make(map[string]string)
+	for _, client := range config.CidGravity.AltClients {
+		token := os.Getenv("CIDGRAVITY_API_TOKEN_" + client)
+		if token == "" {
+			return xerrors.Errorf("AltClients %s token not provided\n", client)
+		}
+		config.CidGravity.AltTokens[client] = token
 	}
 	config.Loaded = true
 	sconfig := spew.Sdump(config)
