@@ -853,10 +853,7 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 			pubCid = &s
 		}
 
-		failed := stresp.DealStatus.Error != ""
-
 		_, err := r.db.Exec(`update deals set
-        failed = ?,
         sp_status = ?,
         error_msg = ?,
         sp_sealing_status = ?,
@@ -866,7 +863,7 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
         sp_txsize = ?,
         last_state_query = ?,
         last_state_query_error = ?
-        where uuid = ?`, failed, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
+        where uuid = ?`, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
 			stresp.DealStatus.SignedProposalCid.String(), pubCid,
 			stresp.NBytesReceived, stresp.NBytesReceived, stresp.TransferSize, now, lastError, id)
 		if err != nil {
