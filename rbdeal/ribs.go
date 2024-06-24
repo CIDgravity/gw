@@ -114,6 +114,8 @@ type ribs struct {
 
 	/* car upload offload (S3) */
 	cidg cidgravity.CIDGravity
+	canSendDealLastCheck  time.Time
+	canSendDealLastResult bool
 
 	s3          *s3.S3
 	s3Bucket    string

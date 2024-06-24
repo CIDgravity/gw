@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os/exec"
 	"fmt"
 	"strconv"
 	//gobig "math/big"
@@ -45,22 +46,51 @@ func makeTraceToken(prov dealProvider) (string) {
 	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
 }
 
+func (r *ribs) canSendMoreDeals(since time.Time) bool {
+	log.Debugw("CanSendDeal?")
+	cfg := configuration.GetConfig()
+	if cfg.Ribs.DealCanSendCommand == "" {
+		return true
+	}
+	if since.Before(r.canSendDealLastCheck) {
+		log.Debugw("CanSendDeal: cached", "result", r.canSendDealLastResult, r.canSendDealLastCheck, "since", since)
+		return r.canSendDealLastResult
+	}
+	log.Debugw("CanSendDeal? running command")
+	cmd := exec.Command(cfg.Ribs.DealCanSendCommand)
+	err := cmd.Run()
+	r.canSendDealLastResult = err == nil
+	r.canSendDealLastCheck = time.Now()
+	log.Debugw("CanSendDeal: command called", "result", r.canSendDealLastResult, "ts", r.canSendDealLastCheck, "err", err)
+	return r.canSendDealLastResult
+}
+
 func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host, w *ributil.LocalWallet) error {
+	check_start := time.Now()
+	log.Debugw("makeMoreDeals", "id", id, "time", check_start)
+
 	r.dealsLk.Lock()
+	defer r.dealsLk.Unlock()
+	log.Debugw("makeMoreDeals: lock acquired", "id", id)
+	// Only try to send a single deal at once
+	if !r.canSendMoreDeals(check_start) {
+		return nil
+	}
+	/* // only sending 1 deal at once overall anyway
 	if _, ok := r.moreDealsLocks[id]; ok {
-		r.dealsLk.Unlock()
+		// r.dealsLk.Unlock()
 
 		// another goroutine is already making deals for this group
 		return nil
 	}
 	r.moreDealsLocks[id] = struct{}{}
-	r.dealsLk.Unlock()
-
+	// r.dealsLk.Unlock()
 	defer func() {
-		r.dealsLk.Lock()
+		// r.dealsLk.Lock()
 		delete(r.moreDealsLocks, id)
-		r.dealsLk.Unlock()
+		// r.dealsLk.Unlock()
 	}()
+	*/
 
 	if err := r.maybeEnsureS3Offload(id); err != nil {
 		return xerrors.Errorf("attempting s3 offload: %w", err)
@@ -342,9 +372,14 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 		if err == nil {
 			copiesRequired--
 
+			// reselt last check to clear cache
+			r.canSendDealLastCheck = time.Unix(0, 0)
 			if copiesRequired <= 0 {
 				// enough
 				break
+			}
+			if !r.canSendMoreDeals(time.Now()) {
+				return nil
 			}
 
 			// deal made
