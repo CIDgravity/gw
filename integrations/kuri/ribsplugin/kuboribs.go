@@ -28,6 +28,7 @@ import (
 	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
 	"github.com/lotus-web3/ribs/integrations/web"
 	"github.com/lotus-web3/ribs/rbdeal"
+	"github.com/lotus-web3/ribs/rbmeta"
 	"github.com/lotus-web3/ribs/configuration"
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
@@ -61,6 +62,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 	opts = append(opts,
 		fx.Provide(makeRibs),
 		fx.Provide(ribsBlockstore),
+		fx.Provide(ribsMetadata),
 
 		fx.Decorate(func(rbs *ribsbstore.Blockstore) node.BaseBlocks {
 			return rbs
@@ -80,6 +82,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 
 		fx.Invoke(StartMfsDav),
 		fx.Invoke(StartMfsNFSFs),
+		fx.Invoke(StartMeta),
 	)
 	return opts, nil
 }
@@ -145,6 +148,19 @@ func ribsBlockstore(r ribs.RIBS, lc fx.Lifecycle) *ribsbstore.Blockstore {
 	return rbs
 }
 
+func ribsMetadata(r ribs.RIBS /*, lc fx.Lifecycle */) rbmeta.MetadataDB {
+	rbmeta := r.MetaDB()
+
+	/*
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			return rbmeta.Close()
+		},
+	})*/
+
+	return rbmeta
+}
+
 // Adder Durability
 
 type flushingGCLocker struct {
@@ -182,7 +198,7 @@ var _ blockstore.GCLocker = (*flushingGCLocker)(nil)
 
 // MFS Durability
 
-func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag format.DAGService, rbs *ribsbstore.Blockstore) (*mfs.Root, error) {
+func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag format.DAGService, rbs *ribsbstore.Blockstore, mdb rbmeta.MetadataDB) (*mfs.Root, error) {
 	dsk := datastore.NewKey("/local/filesroot")
 	pf := func(ctx context.Context, c cid.Cid) error {
 		rootDS := repo.Datastore()
@@ -192,16 +208,19 @@ func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag for
 		if err := rootDS.Sync(ctx, filestore.FilestorePrefix); err != nil {
 			return err
 		}*/
+		log.Infow("new files root", "cid", c.String())
 
 		if err := rbs.Flush(ctx); err != nil {
 			return xerrors.Errorf("ribs flush: %w", err)
 		}
 
-		log.Infow("new files root", "cid", c.String())
-
 		if err := rootDS.Put(ctx, dsk, c.Bytes()); err != nil {
 			return err
 		}
+		if err := mdb.WriteDir("/", c.String()); err != nil {
+			log.Errorw("Metadata: failed to write new root", "error", err)
+		}
+
 		return rootDS.Sync(ctx, dsk)
 	}
 
@@ -248,6 +267,10 @@ func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag for
 			return root.Close()
 		},
 	})
+
+	if err := mdb.WriteDir("/", nd.Cid().String()); err != nil {
+		log.Errorw("Metadata: failed to write base root", "error", err)
+	}
 
 	return root, err
 }

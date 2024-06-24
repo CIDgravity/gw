@@ -9,6 +9,7 @@ import (
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/ipfs/go-cid"
+        "github.com/lotus-web3/ribs/rbmeta"
 )
 
 type RIBS interface {
@@ -16,6 +17,8 @@ type RIBS interface {
 
 	Wallet() Wallet
 	DealDiag() RIBSDiag
+
+	MetaDB() rbmeta.MetadataDB
 
 	io.Closer
 }

@@ -48,6 +48,7 @@ type RibsConfig struct {
 	MaxLocalGroupCount         int           `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
 	DealCheckInterval          time.Duration `envconfig:"RIBS_DEAL_CHECK_INTERVAL" default:"30s"`
 	DealCanSendCommand         string        `envconfig:"RIBS_DEAL_CAN_SEND_COMMAND" default:""`
+	MongoDBUri                 string        `envconfig:"RIBS_MONGODB_URI"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours

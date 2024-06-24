@@ -20,6 +20,7 @@ import (
 	"github.com/lotus-web3/ribs/cidgravity"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/rbstor"
+	"github.com/lotus-web3/ribs/rbmeta"
 	"github.com/lotus-web3/ribs/ributil"
 	"golang.org/x/xerrors"
 	"github.com/lotus-web3/ribs/configuration"
@@ -75,6 +76,7 @@ func WithFileCoinApiEndpoint(wp string) OpenOption {
 type ribs struct {
 	iface.RBS
 	db *ribsDB
+	mdb rbmeta.MetadataDB
 
 	host   host.Host
 	wallet *ributil.LocalWallet
@@ -151,6 +153,11 @@ type ribs struct {
 
 	repairFetchCounters *ributil.RateCounters[iface.GroupKey]
 }
+
+func (r *ribs) MetaDB() rbmeta.MetadataDB {
+	return r.mdb
+}
+
 
 func (r *ribs) Wallet() iface.Wallet {
 	return r
@@ -290,6 +297,11 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 	if err := r.RBS.Start(); err != nil {
 		return nil, xerrors.Errorf("start storage: %w", err)
 	}
+	mdb, err := rbmeta.Open()
+	if err != nil {
+		return nil, xerrors.Errorf("Initializing MetaDatabase: %w", err)
+	}
+	r.mdb = mdb
 
 	go r.spCrawler()
 	go r.dealTracker(context.TODO())
