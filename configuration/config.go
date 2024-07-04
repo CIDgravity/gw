@@ -7,6 +7,8 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
+	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/filecoin-project/go-state-types/big"
 )
 
 var log = logging.Logger("ribs:config")
@@ -56,6 +58,11 @@ type DealConfig struct {
 	RemoveUnsealedCopy bool `envconfig:"RIBS_DEAL_REMOVE_UNSEALED" default:false`
 	SkipIPNIAnnounce   bool `envconfig:"RIBS_DEAL_SKIP_IPNI_ANNOUNCE" default:false`
 }
+type WalletConfig struct {
+	MinMarketBalance    big.Int  `envconfig:"RIBS_WALLET_MIN_BALANCE" default:"100_000_000_000_000_000"` // 100 mFil
+	AutoMarketBalance   big.Int  `envconfig:"RIBS_WALLET_AUTO_BALANCE" default:"1_000_000_000_000_000_000"` // 1 Fil
+	UpgradeInterval     time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
+}
 
 type Config struct {
 	Loaded     bool
@@ -63,6 +70,7 @@ type Config struct {
 	External   ExternalConfig
 	CidGravity CidGravityConfig
 	Ribs       RibsConfig
+	Wallet     WalletConfig
 	Deal       DealConfig
 	LogLevel   string           `envconfig:"RIBS_LOGLEVEL"`
 }
@@ -80,6 +88,9 @@ func GetConfig() *Config {
 }
 
 func LoadConfig() error {
+	// neew to initialize those types so they are not nil
+	config.Wallet.MinMarketBalance = types.NewInt(0)
+	config.Wallet.AutoMarketBalance = types.NewInt(0)
 	if err := envconfig.Process("", &config); err != nil {
 		return err
 	}
@@ -120,6 +131,13 @@ func LoadConfig() error {
                         }
                 }
         }
+	if !config.Wallet.AutoMarketBalance.GreaterThan(config.Wallet.MinMarketBalance) {
+		// auto > min
+		// allow auto == min == 0
+		if config.Wallet.MinMarketBalance.GreaterThan(types.NewInt(0)) {
+			return xerrors.Errorf("AutoMarketBalance must be greater than MinMarketBalance\n")
+		}
+	}
 
 	config.Loaded = true
 	log.Debugw("Loaded config", "config", config)
