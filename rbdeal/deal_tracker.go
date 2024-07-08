@@ -307,8 +307,7 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 		notFailedDeal := gs.TotalDeals - gs.FailedDeals
 
 		if gs.Retrievable >= int64(cfg.Ribs.MinimumRetrievableCount) && gs.SealedDeals >= int64(cfg.Ribs.MinimumReplicaCount) {
-			upStat := r.CarUploadStats().ByGroup
-			if upStat[gid] == nil {
+			if gs.SealedDeals == notFailedDeal {
 				log.Infow("OFFLOAD GROUP", "group", gid)
 
 				if err := r.Storage().Offload(ctx, gid); err != nil {
@@ -323,7 +322,7 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 					return xerrors.Errorf("XYZ: cleaning up external offload: %w", err)
 				}
 			} else {
-				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "uploads", upStat[gid].ActiveRequests)
+				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "inprogress", notFailedDeal - gs.SealedDeals)
 			}
 		} else if (notFailedDeal < int64(cfg.Ribs.MinimumReplicaCount)) || (notFailedDeal - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) && notFailedDeal < int64(cfg.Ribs.MaximumReplicaCount)) {
 			go func(gid ribs2.GroupKey) {
