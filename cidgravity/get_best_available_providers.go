@@ -12,16 +12,16 @@ import (
 )
 
 type CIDgravityGetBestAvailableProvidersRequest struct {
-	PieceCid             string      `json:"pieceCid"`
-	Provider             string      `json:"provider"`
-	StartEpoch           uint64       `json:"startEpoch"`
-	Duration             uint64       `json:"duration"`
-	StoragePricePerEpoch json.Number `json:"storagePricePerEpoch"`
-	ProviderCollateral   json.Number `json:"providerCollateral"`
-	VerifiedDeal         *bool       `json:"verifiedDeal"`
-	TransferSize         uint64       `json:"transferSize"`
-	TransferType         string      `json:"transferType"`
-	RemoveUnsealedCopy   *bool       `json:"removeUnsealedCopy"`
+	PieceCid             string  `json:"pieceCid"`
+	Provider             string  `json:"provider"`
+	StartEpoch           uint64  `json:"startEpoch"`
+	Duration             uint64  `json:"duration"`
+	StoragePricePerEpoch string  `json:"storagePricePerEpoch"`
+	ProviderCollateral   string  `json:"providerCollateral"`
+	VerifiedDeal         *bool   `json:"verifiedDeal"`
+	TransferSize         uint64  `json:"transferSize"`
+	TransferType         string  `json:"transferType"`
+	RemoveUnsealedCopy   *bool   `json:"removeUnsealedCopy"`
 }
 
 type CIDgravityAPIError struct {
@@ -29,9 +29,14 @@ type CIDgravityAPIError struct {
 	Message string `json:"message"`
 }
 
+type CIDgravityAPIResult struct {
+	Reason    *string  `json:"reason"`
+	Providers []string `json:"providers"`
+}
+
 type CIDgravityAPIResponse struct {
-	Error  CIDgravityAPIError `json:"error"`
-	Result []string           `json:"result"`
+	Error  CIDgravityAPIError    `json:"error"`
+	Result *CIDgravityAPIResult  `json:"result"`
 }
 
 func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {
@@ -105,9 +110,13 @@ func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvaila
 	// result object can contain both response message or error depending on request status code
 	// If status code is not 200, return the object, but with an error that can be checked in main function
 	if resp.StatusCode != 200 {
+		log.Errorw("GetBestAvailableProviders", "code", resp.StatusCode, "result", result)
 		return []string{result.Error.Code, result.Error.Message}, fmt.Errorf("status code is not 200")
 	}
 
 	log.Debugw("GetBestAvailableProviders", "result", result.Result)
-	return result.Result, nil
+	if result.Result == nil {
+		return nil, fmt.Errorf("Failed to parse cidgravity providers")
+	}
+	return result.Result.Providers, nil
 }

@@ -35,17 +35,18 @@ type CIDgravityDealProposalState struct {
 	OnChainEndEpoch   abi.ChainEpoch `json:"onChainEndEpoch"`
 }
 type CIDgravityDealStatus struct {
-	Proposal	CIDgravityDealProposalStatus `json:"proposal"`
-	State	CIDgravityDealProposalState `json:"state"`
-	LastUpdate float64 `json:"lastUpdate"`
+	Proposal   CIDgravityDealProposalStatus `json:"proposal"`
+	State	   CIDgravityDealProposalState  `json:"state"`
+	LastUpdate float64                      `json:"lastUpdate"`
 }
 type CIDgravityDealStatesAPIResponse struct {
-	Error CIDgravityAPIError `json:"error"`
-	Next *json.Number `json:"next"`
+	Error  CIDgravityAPIError                  `json:"error"`
+	Next   *string                             `json:"next"`
 	Result map[abi.DealID]CIDgravityDealStatus `json:"result"`
 }
 type CIDgravityDealStatusRequest struct {
-	Next json.Number `json:"next"`
+	Next   *string `json:"next"`
+	SortBy *string `json:"sortBy"`
 }
 
 func (cidg *CIDGravity) getDealStates(client *http.Client, token string, states *map[abi.DealID]CIDgravityDealStatus) error {
@@ -111,7 +112,7 @@ func (cidg *CIDGravity) getDealStates(client *http.Client, token string, states 
 		if result.Next == nil {
 			break
 		}
-		requestParams.Next = *result.Next
+		requestParams.Next = result.Next
 	}
 	return nil
 }
@@ -125,7 +126,7 @@ func (cidg *CIDGravity) GetDealStates(ctx context.Context) (map[abi.DealID]CIDgr
 
 	authToken := cfg.CidGravity.ApiToken
 
-	log.Debug("getDealStates")
+	log.Debugw("getDealStates")
 
 	if err := cidg.sem.Acquire(ctx, 1); err != nil {
 		return nil, fmt.Errorf("Failed to acquire semaphore: %w", err)
@@ -148,6 +149,6 @@ func (cidg *CIDGravity) GetDealStates(ctx context.Context) (map[abi.DealID]CIDgr
 			return nil, err
 		}
 	}
-	log.Debug("getDealStates", "states", len(states))
+	log.Debugw("getDealStates", "states", len(states))
 	return states, nil
 }
