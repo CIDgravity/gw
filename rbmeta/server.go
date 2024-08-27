@@ -7,8 +7,8 @@ import (
 
 
 type reqBody struct {
-	FilePath  string `json:"filePath"`
-	FileOwner string `json:"fileOwner"`
+	Filepath  string `json:"filepath"`
+	User string `json:"User"`
 }
 type resFileInfoDetail struct {
 	CID     string `json:"cid"`
@@ -17,9 +17,12 @@ type resFileInfoErr struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
 }
+type resFileResult struct {
+	File resFileInfoDetail `json:"file"`
+}
 type resFileInfo struct {
-	Success bool              `json:"success"`
-	Info    resFileInfoDetail `json:"file"`
+	Success bool          `json:"success"`
+	Result  resFileResult `json:"result"`
 }
 
 func getFileInfoHandler(mdb *metaDB) (func (w http.ResponseWriter, r *http.Request)) {
@@ -30,19 +33,21 @@ func getFileInfoHandler(mdb *metaDB) (func (w http.ResponseWriter, r *http.Reque
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-	
+
 		log.Debugw("Received", "Req", req)
-		user, parent, name, err := SplitFilePath(req.FilePath)
+		user, parent, name, err := SplitFilePath(req.Filepath)
+		/* XXX: user not linked to ribs user
 		if user != req.FileOwner {
 			log.Warnw("Inconsistent fileowner, but ignored", "user", user, "provided-owner", req.FileOwner)
 		}
+		*/
 		filemeta, err := mdb.GetFileInfo(user, parent, name)
 		if err != nil {
 			log.Errorw("handleFileInfo GetFileInfo", "error", err)
 			http.Error(w, "Error retrieving fileinfo", http.StatusBadRequest)
 			return
 		}
-	
+
 		w.Header().Set("Content-Type", "application/json")
 		if filemeta == nil {
 			respBody := resFileInfoErr{
@@ -54,8 +59,10 @@ func getFileInfoHandler(mdb *metaDB) (func (w http.ResponseWriter, r *http.Reque
 		}
 		respBody := resFileInfo{
 			Success: true,
-			Info: resFileInfoDetail{
-				CID: *filemeta.Cid,
+			Result: resFileResult{
+				File: resFileInfoDetail{
+					CID: *filemeta.Cid,
+				},
 			},
 		}
 		json.NewEncoder(w).Encode(respBody)

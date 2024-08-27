@@ -621,11 +621,13 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 			}
 			if changes {
 				log.Debugw("XXX child computed info[2]", "user", user, "parent", parent, "name", name)
+				n := name
+				st := *fi.StartTime
 				ret = append(ret, FileMetadata{
 					User: &user,
 					ParentPath: &parent,
-					Filename: &name,
-					StartTime: &*fi.StartTime,
+					Filename: &n,
+					StartTime: &st,
 				})
 				log.Debugw("XXX Appended new child[1]", "info", ret[len(ret)-1])
 			}
@@ -637,17 +639,19 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 				return nil, err
 			}
 			if changes {
+				n := name
+				st := *fi.StartTime
 				ret = append(ret, FileMetadata{
 					User: &user,
 					ParentPath: &parent,
-					Filename: &name,
-					StartTime: &*fi.StartTime,
+					Filename: &n,
+					StartTime: &st,
 				})
 				log.Debugw("XXX Appended new child[2]", "info", ret[len(ret)-1])
 			}
 		}
 	}
- 	for name, info := range(oldChilds) {
+	for name, info := range(oldChilds) {
 		_, found := childs[name]
 		if found {
 			continue
@@ -655,7 +659,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 		user := *fi.User
 		parent := gopath.Join(*fi.ParentPath, *fi.Filename)
 		if user == "" {
-			user = *fi.Filename
+			user = name
 		}
 		changes, err := mdb.forceEndTimeByName(ctx, user, parent, name, info.Cid, *prev.StartTime, *fi.StartTime)
 		if err != nil {
@@ -663,11 +667,13 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 			return nil, err
 		}
 		if changes {
+			n := name
+			st := *fi.StartTime
 			ret = append(ret, FileMetadata{
 				User: &user,
 				ParentPath: &parent,
-				Filename: &name,
-				StartTime: &*fi.StartTime,
+				Filename: &n,
+				StartTime: &st,
 			})
 			log.Debugw("XXX Appended old child[3]", "info", ret[len(ret)-1])
 		}
