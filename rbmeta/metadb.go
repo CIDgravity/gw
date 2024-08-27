@@ -447,6 +447,7 @@ func (mdb *metaDB) runCleanup(e Explorer) error {
 			todo = todo[1:]
 			if others != nil && len(others) > 0 {
 				log.Debugw("Prepend with # entries", "count", len(others))
+				log.Debugw("XXX Prepend details", "info", others)
 				todo = append(others, todo...)
 			}
 		}
@@ -518,6 +519,7 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 						}
 					}
 					if !found {
+						log.Debugw("XXX: appending child [1]", "info", child)
 						ret = append(ret, child)
 					}
 				}
@@ -533,6 +535,7 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 	if len(ret) == 0 {
 		ret = nil
 	} else {
+		log.Debugw("XXX: appending self", "info", fi)
 		ret = append(ret, fi)
 	}
 	return ret, nil
@@ -602,12 +605,14 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 		return nil, err
 	}
 	for name, info := range(childs) {
+		log.Debugw("XXX ensureChildList...", "name", name, "child", info)
 		oldInfo, hasOld := oldChilds[name]
 		user := *fi.User
 		parent := gopath.Join(*fi.ParentPath, *fi.Filename)
 		if user == "" && parent == "/" {
 			user = name
 		}
+		log.Debugw("XXX child computed info", "user", user, "parent", parent, "name", name)
 		if !(hasOld && oldInfo.Cid == info.Cid) {
 			changes, err := mdb.insertChild(ctx, user, parent, name, info, *fi.StartTime)
 			if err != nil {
@@ -615,12 +620,14 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 				return nil, err
 			}
 			if changes {
+				log.Debugw("XXX child computed info[2]", "user", user, "parent", parent, "name", name)
 				ret = append(ret, FileMetadata{
 					User: &user,
 					ParentPath: &parent,
 					Filename: &name,
 					StartTime: &*fi.StartTime,
 				})
+				log.Debugw("XXX Appended new child[1]", "info", ret[len(ret)-1])
 			}
 		}
 		if propagateEndTime {
@@ -636,6 +643,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 					Filename: &name,
 					StartTime: &*fi.StartTime,
 				})
+				log.Debugw("XXX Appended new child[2]", "info", ret[len(ret)-1])
 			}
 		}
 	}
@@ -661,8 +669,10 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 				Filename: &name,
 				StartTime: &*fi.StartTime,
 			})
+			log.Debugw("XXX Appended old child[3]", "info", ret[len(ret)-1])
 		}
 	}
+	log.Debugw("XXX ensureChildList ret", "info", ret)
 	return ret, nil
 }
 func (mdb *metaDB) forceEndTime(ctx context.Context, fi *FileMetadata, endtime int64) error {
