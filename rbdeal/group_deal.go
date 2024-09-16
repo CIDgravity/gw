@@ -65,18 +65,19 @@ func (r *ribs) canSendMoreDeals(since time.Time) bool {
 	return r.canSendDealLastResult
 }
 
-func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host, w *ributil.LocalWallet) error {
+func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host, w *ributil.LocalWallet, checks_start *time.Time) error {
 	check_start := time.Now()
+	if checks_start != nil {
+		check_start = *checks_start
+	}
 	log.Debugw("makeMoreDeals", "id", id, "time", check_start)
 
 	r.dealsLk.Lock()
 	defer r.dealsLk.Unlock()
 	log.Debugw("makeMoreDeals: lock acquired", "id", id)
-	// Only try to send a single deal at once
-	if !r.canSendMoreDeals(check_start) {
-		return nil
-	}
-	/* // only sending 1 deal at once overall anyway
+
+	// XXX: will have to review locks if we get blocked, and could have
+	// partial work in progress and return for now
 	if _, ok := r.moreDealsLocks[id]; ok {
 		// r.dealsLk.Unlock()
 
@@ -90,13 +91,18 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host
 		delete(r.moreDealsLocks, id)
 		// r.dealsLk.Unlock()
 	}()
-	*/
+
 
 	if err := r.maybeEnsureS3Offload(id); err != nil {
 		return xerrors.Errorf("attempting s3 offload: %w", err)
 	}
 	if err := r.maybeEnsureEnsureExternalPush(id); err != nil {
 		return xerrors.Errorf("XYZ: attempting external offload: %w", err)
+	}
+
+	// now that offload is handled, check if we are allowed to send a deal now
+	if !r.canSendMoreDeals(check_start) {
+		return nil
 	}
 
 	dealInfo, err := r.db.GetDealParams(ctx, id)

@@ -300,7 +300,12 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 	}
 
 	cfg := configuration.GetConfig()
+	check_loop_start := time.Now()
+
+	// sort gids to handle them in order
+	makeMoreDealsGids := make([]int64, 0)
 	for gid, gs := range gs {
+		log.Debugw("XXX runDealCheckCleanupLoop", "gid", gid)
 		if gs.State != ribs2.GroupStateLocalReadyForDeals {
 			continue
 		}
@@ -325,17 +330,18 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "inprogress", notFailedDeal - gs.SealedDeals)
 			}
 		} else if (notFailedDeal < int64(cfg.Ribs.MinimumReplicaCount)) || (notFailedDeal - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) && notFailedDeal < int64(cfg.Ribs.MaximumReplicaCount)) {
-			go func(gid ribs2.GroupKey) {
-				err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet)
-				if err != nil {
-					log.Errorw("starting new deals", "error", err)
-				}
-			}(gid)
+			makeMoreDealsGids = append(makeMoreDealsGids, gid)
 		} else if gs.SealedDeals >= int64(cfg.Ribs.MaximumReplicaCount) && int64(cfg.Ribs.MaximumReplicaCount) - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) {
 			return xerrors.Errorf("Group %d has too many copies, and too many untrievable copies. Not offloading\n", gid)
 		}
 	}
-
+	sort.Slice(makeMoreDealsGids, func(i, j int) bool { return makeMoreDealsGids[i] < makeMoreDealsGids[j] })
+	for _, gid := range makeMoreDealsGids {
+		err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet, &check_loop_start)
+		if err != nil {
+			log.Errorw("starting new deals", "error", err)
+		}
+	}
 	return nil
 }
 func (r *ribs) findUnpublishedDeal(deals map[abi.DealID]cidgravity.CIDgravityDealStatus, proposal []byte) (*abi.DealID, error) {
