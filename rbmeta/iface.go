@@ -26,7 +26,6 @@ type ChildMetadata struct {
 	Id     *primitive.ObjectID  `bson:"_id"`
 	Cid    *string              `bson:"cid"`
 	Childs map[string]ChildInfo `bson:"childs"`
-	Groups []int64              `bson:"groups"`
 }
 type DirectoryItem struct {
 	Filename string
@@ -50,5 +49,5 @@ type MetadataDB interface {
 
 	/* Query Functions */
 	ListFiles(user string, path string) ([]DirectoryItem, error)
-	GetFileInfo(user string, parent string, name string) (*FileMetadata, error)
+	GetFileInfo(user string, parent string, name string, ts *int64) (*FileMetadata, error)
 }

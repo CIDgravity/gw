@@ -38,6 +38,7 @@ func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 	return pbnd, nil
 }
 func (e ExplorerInfo) ListChilds(c string) (map[string]rbmeta.ChildInfo, error) {
+	log.Debugw("ListChilds", "cid", c)
 	node, err := e.getNode(c)
 	if err != nil {
 		log.Errorw("Failed to decode CID", "cid", c)
@@ -66,6 +67,7 @@ func (e ExplorerInfo) addGroups(c cid.Cid, grps map[int64]bool) (map[int64]bool,
 	return grps, nil
 }
 func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
+	log.Debugw("ListGroups", "cid", c)
 	node, err := e.getNode(c)
 	if err != nil {
 		log.Errorw("Failed to decode CID", "cid", c)

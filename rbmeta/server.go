@@ -41,7 +41,7 @@ func getFileInfoHandler(mdb *metaDB) (func (w http.ResponseWriter, r *http.Reque
 			log.Warnw("Inconsistent fileowner, but ignored", "user", user, "provided-owner", req.FileOwner)
 		}
 		*/
-		filemeta, err := mdb.GetFileInfo(user, parent, name)
+		filemeta, err := mdb.GetFileInfo(user, parent, name, nil)
 		if err != nil {
 			log.Errorw("handleFileInfo GetFileInfo", "error", err)
 			http.Error(w, "Error retrieving fileinfo", http.StatusBadRequest)

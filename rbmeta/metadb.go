@@ -6,6 +6,7 @@ import (
 	gopath "path"
 	"strings"
 	"sync"
+	"sort"
 	"time"
 	//        "github.com/ipfs/go-cid"
 
@@ -482,12 +483,12 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 	}
 	// ensure child list set, with adequate info
 	for n, entry := range(history) {
-		if entry.CleanupRequired == nil || !*entry.CleanupRequired {
+		if entry.Groups != nil && (entry.CleanupRequired == nil || !*entry.CleanupRequired) {
 			continue
 		}
 		// first update child list
 		if entry.File == nil || !*entry.File {
-			// (might be?) a directory
+			// (might be?) a directory - as in not known to be a file
 			var prev *FileMetadata
 			propagateEndTime := false
 			if n > 0 {
@@ -527,6 +528,36 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 				continue
 			}
 		}
+		if entry.Groups == nil {
+			groups, needUpdate, err := mdb.getGroups(ctx, e, entry)
+			if err != nil {
+				log.Errorw("XXX: list groups failed", "entry", entry, "err", err)
+				return nil, err
+			}
+			if needUpdate != nil && len(needUpdate) > 0 {
+				found := false
+				for _, child := range(needUpdate) {
+					for _, known := range(ret) {
+						if *child.ParentPath == *known.ParentPath && *child.Filename == *known.Filename {
+							found = true
+							break
+						}
+					}
+					if !found {
+						log.Debugw("XXX: appending child [1]", "info", child)
+						ret = append(ret, child)
+					}
+				}
+				continue
+			}
+			// Note: setGroups also mark it clean
+			err = mdb.setGroups(ctx, entry, groups)
+			if err != nil {
+				log.Errorw("SetGroups failed", "err", err)
+				return nil, err
+			}
+			continue
+		}
 		// now that we do have child info, get the rest done...
 		// XXX: TODO: update groups
 		mdb.markCleaned(ctx, entry)
@@ -539,6 +570,21 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 		ret = append(ret, fi)
 	}
 	return ret, nil
+}
+func (mdb *metaDB) setGroups(ctx context.Context, fi FileMetadata, groups []int64) error {
+	col := mdb.cMetaFile
+	log.Debugw("setGroups", "id", fi.Id, "groups", groups)
+	ufilter := bson.M{"_id": *fi.Id}
+	// also cremove cleanup required as it is the last action we do
+	update := bson.M{"$unset": bson.M{"cleanup_required": false}, "$set": bson.M{"groups": groups}}
+	count, err := col.UpdateOne(ctx, ufilter, update)
+	if err != nil {
+		log.Errorw("Marked cleaned", "error", err)
+		return err
+	}
+	log.Debugw("Marked cleaned", "res", count)
+	return nil
+
 }
 func (mdb *metaDB) markCleaned(ctx context.Context, fi FileMetadata) error {
 	col := mdb.cMetaFile
@@ -583,6 +629,65 @@ func (mdb *metaDB) listChilds(ctx context.Context, e Explorer, c string) (map[st
 		return nil, err
 	}
 	return childs, nil
+}
+
+func (mdb *metaDB) getGroups(ctx context.Context, e Explorer, fi FileMetadata) (groups []int64, needUpdate []FileMetadata, err error) {
+	log.Debugw("getGroups", "file", fi)
+	needUpdate = make([]FileMetadata, 0)
+        grps := make(map[int64]bool)
+	childs, err := mdb.listChilds(ctx, e, *fi.Cid)
+	if err != nil {
+		log.Errorw("getGroups listchilds()", "file", fi, "error", err)
+		return nil, nil, err
+	}
+	for name, info := range(childs) {
+		user := *fi.User
+		parent := gopath.Join(*fi.ParentPath, *fi.Filename)
+		if user == "" && parent == "/" {
+			user = name
+		}
+		log.Debugw("XXX child computed info", "user", user, "parent", parent, "name", name)
+		cfi, err := mdb.GetFileInfo(user, parent, name, fi.StartTime)
+		if err != nil {
+			log.Errorw("getGroups child GetFileInfo", "file", fi, "child", name, "error", err)
+			return nil, nil, err
+		}
+		if *cfi.Cid != info.Cid {
+			log.Errorw("getGroups mismatch CID", "file", fi, "child", name, "expected-cid", info.Cid, "found", *cfi.Cid)
+			return nil, nil, xerrors.Errorf("getGroups: mismatch CID")
+		}
+		if cfi.Groups == nil {
+			fname := name
+			needUpdate = append(needUpdate, FileMetadata{
+				User: &user,
+				ParentPath: &parent,
+				Filename: &fname,
+				StartTime: fi.StartTime,
+			})
+		} else {
+			for _, grp := range *cfi.Groups {
+				grps[grp] = true
+			}
+		}
+	}
+	if len(needUpdate) != 0 {
+		log.Debugw("getGroups", "needUpdate", needUpdate)
+		return nil, needUpdate, nil
+	}
+	// here len(needUpdate) == 0
+	ngrps, err := e.ListGroups(*fi.Cid)
+	if err != nil {
+		log.Errorw("getChildGroups ListGroups error", "file", fi, "error", err)
+		return nil, nil, err
+	}
+	for _, grp := range ngrps {
+		grps[grp] = true
+	}
+        for grp := range grps {
+                groups = append(groups, grp)
+        }
+        sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+        return groups, nil, nil
 }
 
 func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetadata, prev *FileMetadata, propagateEndTime bool) ([]FileMetadata, error) {
@@ -828,11 +933,14 @@ func (mdb *metaDB) LaunchCleanupLoop(e Explorer) error {
 func (mdb *metaDB) ListFiles(user string, path string) ([]DirectoryItem, error) {
 	return nil, errors.New("api not implemented")
 }
-func (mdb *metaDB) GetFileInfo(user string, parent string, name string) (*FileMetadata, error) {
+func (mdb *metaDB) GetFileInfo(user string, parent string, name string, ts *int64) (*FileMetadata, error) {
 	log.Debugw("GetFileInfo", "user", user, "parent", parent, "name", name)
 	ctx := context.TODO()
 	col := mdb.cMetaFile
 	filter := bson.M{"user": user, "parent": parent, "name": name}
+	if ts != nil {
+		filter["start_ts"] = bson.M{"$lte": *ts}
+	}
 	opts := options.Find()
 
 	opts.SetSort(bson.D{{Key: "start_ts", Value: -1}})
