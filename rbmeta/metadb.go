@@ -18,6 +18,7 @@ import (
 	"github.com/lotus-web3/ribs/configuration"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
 	"golang.org/x/xerrors"
 )
 
@@ -44,11 +45,15 @@ func Open(r iface.RIBS) (*metaDB, error) {
 	if uri == "" {
 		return nil, xerrors.Errorf("Mongo URI not provided")
 	}
+	cs, err := connstring.ParseAndValidate(uri)
+	if err != nil {
+		return nil, err
+	}
 	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, err
 	}
-	db := client.Database("ribs")
+	db := client.Database(cs.Database)
 	cMetaFile := db.Collection("metaFiles")
 	cChilds := db.Collection("childs")
 
