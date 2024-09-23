@@ -34,7 +34,7 @@ type verboseGrpDetailResult struct {
 	isFullyOffloaded     bool
 }
 type verboseDetailResult struct {
-	Groups            []verboseGrpDetailResult `json:"blocks"`
+	Groups            []verboseGrpDetailResult `json:"groups"`
 	State             string                   `json:"state"`
 	RetrievableCopies int64                    `json:"retrievableCopies"`
 }
@@ -158,7 +158,7 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 				grpDetails.isPartiallyOffloaded = true
 				endEpoch := deal.EndEpoch
 				dealDetails.EndEpoch = &endEpoch
-				dealDetails.IsRetrievable = !deal.NoRecentSuccess
+				dealDetails.IsRetrievable = deal.RetrSuccess > 0 && !deal.NoRecentSuccess
 				dealDetails.State = DealStateActive
 				if dealDetails.IsRetrievable {
 					grpDetails.RetrievableCopies += 1
