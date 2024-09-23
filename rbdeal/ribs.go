@@ -76,7 +76,7 @@ func WithFileCoinApiEndpoint(wp string) OpenOption {
 type ribs struct {
 	iface.RBS
 	db *ribsDB
-	mdb rbmeta.MetadataDB
+	mdb iface.MetadataDB
 
 	host   host.Host
 	wallet *ributil.LocalWallet
@@ -154,7 +154,7 @@ type ribs struct {
 	repairFetchCounters *ributil.RateCounters[iface.GroupKey]
 }
 
-func (r *ribs) MetaDB() rbmeta.MetadataDB {
+func (r *ribs) MetaDB() iface.MetadataDB {
 	return r.mdb
 }
 
@@ -297,7 +297,7 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 	if err := r.RBS.Start(); err != nil {
 		return nil, xerrors.Errorf("start storage: %w", err)
 	}
-	mdb, err := rbmeta.Open()
+	mdb, err := rbmeta.Open(r)
 	if err != nil {
 		return nil, xerrors.Errorf("Initializing MetaDatabase: %w", err)
 	}

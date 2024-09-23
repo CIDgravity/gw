@@ -10,7 +10,6 @@ import (
 	"github.com/ipfs/boxo/ipld/merkledag"
 
 	"github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/rbmeta"
 	//"golang.org/x/xerrors"
 )
 
@@ -37,17 +36,17 @@ func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 	}
 	return pbnd, nil
 }
-func (e ExplorerInfo) ListChilds(c string) (map[string]rbmeta.ChildInfo, error) {
+func (e ExplorerInfo) ListChilds(c string) (map[string]ribs.ChildInfo, error) {
 	log.Debugw("ListChilds", "cid", c)
 	node, err := e.getNode(c)
 	if err != nil {
 		log.Errorw("Failed to decode CID", "cid", c)
 		return nil, err
 	}
-	ret := make(map[string]rbmeta.ChildInfo)
+	ret := make(map[string]ribs.ChildInfo)
 	for _, child := range node.Links() {
 		if child.Name != "" {
-			ret[child.Name] = rbmeta.ChildInfo{
+			ret[child.Name] = ribs.ChildInfo{
 				Cid: child.Cid.String(),
 				Size: child.Size,
 			}
@@ -94,7 +93,7 @@ func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
 	return ret, nil
 }
 
-func StartMeta(/* lc fx.Lifecycle, */mdb rbmeta.MetadataDB, r ribs.RIBS, dag format.DAGService) {
+func StartMeta(/* lc fx.Lifecycle, */mdb ribs.MetadataDB, r ribs.RIBS, dag format.DAGService) {
 	explorer := ExplorerInfo{
 		dag: dag,
 		rbs: r.Storage(),

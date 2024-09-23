@@ -28,7 +28,6 @@ import (
 	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
 	"github.com/lotus-web3/ribs/integrations/web"
 	"github.com/lotus-web3/ribs/rbdeal"
-	"github.com/lotus-web3/ribs/rbmeta"
 	"github.com/lotus-web3/ribs/configuration"
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
@@ -148,13 +147,13 @@ func ribsBlockstore(r ribs.RIBS, lc fx.Lifecycle) *ribsbstore.Blockstore {
 	return rbs
 }
 
-func ribsMetadata(r ribs.RIBS /*, lc fx.Lifecycle */) rbmeta.MetadataDB {
+func ribsMetadata(r ribs.RIBS /*, lc fx.Lifecycle */) ribs.MetadataDB {
 	rbmeta := r.MetaDB()
 
 	/*
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
-			return rbmeta.Close()
+			return ribs.Close()
 		},
 	})*/
 
@@ -198,7 +197,7 @@ var _ blockstore.GCLocker = (*flushingGCLocker)(nil)
 
 // MFS Durability
 
-func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag format.DAGService, rbs *ribsbstore.Blockstore, mdb rbmeta.MetadataDB) (*mfs.Root, error) {
+func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag format.DAGService, rbs *ribsbstore.Blockstore, mdb ribs.MetadataDB) (*mfs.Root, error) {
 	dsk := datastore.NewKey("/local/filesroot")
 	pf := func(ctx context.Context, c cid.Cid) error {
 		rootDS := repo.Datastore()

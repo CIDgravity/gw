@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	logging "github.com/ipfs/go-log/v2"
+        iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/configuration"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -25,6 +26,7 @@ const maxPathByUpdate = 10
 var log = logging.Logger("ribs:rbmeta")
 
 type metaDB struct {
+	ribs        iface.RIBS
 	conn        *mongo.Client
 	db          *mongo.Database
 	cMetaFile   *mongo.Collection
@@ -34,7 +36,7 @@ type metaDB struct {
 	wakeup      *chan struct{}
 }
 
-func Open() (*metaDB, error) {
+func Open(r iface.RIBS) (*metaDB, error) {
 	log.Debugw("Opening mongoDB")
 	cfg := configuration.GetConfig()
 	uri := cfg.Ribs.MongoDBUri
@@ -51,6 +53,7 @@ func Open() (*metaDB, error) {
 	cChilds := db.Collection("childs")
 
 	ret := &metaDB{
+		ribs:        r,
 		conn:        client,
 		db:          db,
 		cMetaFile:   cMetaFile,
@@ -180,7 +183,7 @@ func (mdb *metaDB) updateCid(user, parent, name string, c string, size *uint64, 
 	mdb.askCleanup()
 	return nil
 }
-func (mdb *metaDB) insertChild(ctx context.Context, user, parent, name string, c ChildInfo, startTime int64) (bool, error) {
+func (mdb *metaDB) insertChild(ctx context.Context, user, parent, name string, c iface.ChildInfo, startTime int64) (bool, error) {
 	log.Debugw("insertChild", "user", user, "parent", parent, "name", name, "info", c, "startTime", startTime)
 	uptodate, err := mdb.alreadyHasCid(user, parent, name, c.Cid, &startTime)
 	if err != nil {
@@ -308,7 +311,7 @@ func (mdb *metaDB) Rename(oldName, newName string) error {
 	col := mdb.cMetaFile
 
 	nowts := time.Now().UnixNano()
-	res := make([]FileMetadata, 1)
+	res := make([]iface.FileMetadata, 1)
 	// find existing file info first
 	{
 		user, parent, name, err := SplitFilePath(oldName)
@@ -425,7 +428,7 @@ Search: path + cleanup_required
   * missing size?
 	- dir: sum childs
 */
-func (mdb *metaDB) runCleanup(e Explorer) error {
+func (mdb *metaDB) runCleanup(e iface.MetaExplorer) error {
 	log.Debugw("Running cleanup...")
 	ctx := context.TODO()
 	for {
@@ -454,7 +457,7 @@ func (mdb *metaDB) runCleanup(e Explorer) error {
 		}
 	}
 }
-func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata) ([]FileMetadata, error) {
+func (mdb *metaDB) cleanupPath(ctx context.Context, e iface.MetaExplorer, fi iface.FileMetadata) ([]iface.FileMetadata, error) {
 	log.Debugw("cleanupPath", "user", *fi.User, "parent", *fi.ParentPath, "name", *fi.Filename)
 	history, err := mdb.getPathHistory(ctx, *fi.User, *fi.ParentPath, *fi.Filename, *fi.StartTime)
 	if err != nil {
@@ -465,7 +468,7 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 		log.Errorw("Failed to gather cleanup info", "fileinfo", fi)
 		return nil, xerrors.Errorf("Failed to find any cleanup info: %s/%s", *fi.ParentPath, *fi.Filename)
 	}
-	ret := make([]FileMetadata, 0)
+	ret := make([]iface.FileMetadata, 0)
 	log.Debugw("cleanup history", "user", *fi.User, "parent", *fi.ParentPath, "name", *fi.Filename, "history", len(history))
 	for n, entry := range(history[:len(history)-1]) {
 		if entry.EndTime != nil && *entry.EndTime > *history[n + 1].StartTime {
@@ -489,7 +492,7 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 		// first update child list
 		if entry.File == nil || !*entry.File {
 			// (might be?) a directory - as in not known to be a file
-			var prev *FileMetadata
+			var prev *iface.FileMetadata
 			propagateEndTime := false
 			if n > 0 {
 				le := history[n-1]
@@ -571,7 +574,7 @@ func (mdb *metaDB) cleanupPath(ctx context.Context, e Explorer, fi FileMetadata)
 	}
 	return ret, nil
 }
-func (mdb *metaDB) setGroups(ctx context.Context, fi FileMetadata, groups []int64) error {
+func (mdb *metaDB) setGroups(ctx context.Context, fi iface.FileMetadata, groups []int64) error {
 	col := mdb.cMetaFile
 	log.Debugw("setGroups", "id", fi.Id, "groups", groups)
 	ufilter := bson.M{"_id": *fi.Id}
@@ -586,7 +589,7 @@ func (mdb *metaDB) setGroups(ctx context.Context, fi FileMetadata, groups []int6
 	return nil
 
 }
-func (mdb *metaDB) markCleaned(ctx context.Context, fi FileMetadata) error {
+func (mdb *metaDB) markCleaned(ctx context.Context, fi iface.FileMetadata) error {
 	col := mdb.cMetaFile
 	log.Debugw("Making cleaned", "id", fi.Id)
 	ufilter := bson.M{"_id": *fi.Id}
@@ -599,7 +602,7 @@ func (mdb *metaDB) markCleaned(ctx context.Context, fi FileMetadata) error {
 	log.Debugw("Marked cleaned", "res", count)
 	return nil
 }
-func (mdb *metaDB) listChilds(ctx context.Context, e Explorer, c string) (map[string]ChildInfo, error) {
+func (mdb *metaDB) listChilds(ctx context.Context, e iface.MetaExplorer, c string) (map[string]iface.ChildInfo, error) {
 	log.Debugw("listChilds", "cid", c)
 	col := mdb.cChilds
 	cursor, err := col.Find(ctx, bson.M{"cid": c}, options.Find())
@@ -607,7 +610,7 @@ func (mdb *metaDB) listChilds(ctx context.Context, e Explorer, c string) (map[st
 		log.Errorw("listChilds Find", "cid", c, "error", err)
 		return nil, err
 	}
-	res := make([]ChildMetadata, 1)
+	res := make([]iface.ChildMetadata, 1)
 	if err := cursor.All(ctx, &res); err != nil {
 		log.Errorw("listChilds Find.All", "cid", c, "error", err)
 		return nil, err
@@ -631,9 +634,9 @@ func (mdb *metaDB) listChilds(ctx context.Context, e Explorer, c string) (map[st
 	return childs, nil
 }
 
-func (mdb *metaDB) getGroups(ctx context.Context, e Explorer, fi FileMetadata) (groups []int64, needUpdate []FileMetadata, err error) {
+func (mdb *metaDB) getGroups(ctx context.Context, e iface.MetaExplorer, fi iface.FileMetadata) (groups []int64, needUpdate []iface.FileMetadata, err error) {
 	log.Debugw("getGroups", "file", fi)
-	needUpdate = make([]FileMetadata, 0)
+	needUpdate = make([]iface.FileMetadata, 0)
         grps := make(map[int64]bool)
 	childs, err := mdb.listChilds(ctx, e, *fi.Cid)
 	if err != nil {
@@ -658,7 +661,7 @@ func (mdb *metaDB) getGroups(ctx context.Context, e Explorer, fi FileMetadata) (
 		}
 		if cfi.Groups == nil {
 			fname := name
-			needUpdate = append(needUpdate, FileMetadata{
+			needUpdate = append(needUpdate, iface.FileMetadata{
 				User: &user,
 				ParentPath: &parent,
 				Filename: &fname,
@@ -690,12 +693,12 @@ func (mdb *metaDB) getGroups(ctx context.Context, e Explorer, fi FileMetadata) (
         return groups, nil, nil
 }
 
-func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetadata, prev *FileMetadata, propagateEndTime bool) ([]FileMetadata, error) {
+func (mdb *metaDB) ensureChildList(ctx context.Context, e iface.MetaExplorer, fi iface.FileMetadata, prev *iface.FileMetadata, propagateEndTime bool) ([]iface.FileMetadata, error) {
 	log.Debugw("ensureChildList", "file", fi, "prev", prev, "propagateEndTime", propagateEndTime)
-	ret := make([]FileMetadata, 0)
-	var oldChilds map[string]ChildInfo
+	ret := make([]iface.FileMetadata, 0)
+	var oldChilds map[string]iface.ChildInfo
 	if prev == nil {
-		oldChilds = make(map[string]ChildInfo)
+		oldChilds = make(map[string]iface.ChildInfo)
 	} else {
 		var err error
 		oldChilds, err = mdb.listChilds(ctx, e, *prev.Cid)
@@ -728,7 +731,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 				log.Debugw("XXX child computed info[2]", "user", user, "parent", parent, "name", name)
 				n := name
 				st := *fi.StartTime
-				ret = append(ret, FileMetadata{
+				ret = append(ret, iface.FileMetadata{
 					User: &user,
 					ParentPath: &parent,
 					Filename: &n,
@@ -746,7 +749,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 			if changes {
 				n := name
 				st := *fi.StartTime
-				ret = append(ret, FileMetadata{
+				ret = append(ret, iface.FileMetadata{
 					User: &user,
 					ParentPath: &parent,
 					Filename: &n,
@@ -774,7 +777,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 		if changes {
 			n := name
 			st := *fi.StartTime
-			ret = append(ret, FileMetadata{
+			ret = append(ret, iface.FileMetadata{
 				User: &user,
 				ParentPath: &parent,
 				Filename: &n,
@@ -786,7 +789,7 @@ func (mdb *metaDB) ensureChildList(ctx context.Context, e Explorer, fi FileMetad
 	log.Debugw("XXX ensureChildList ret", "info", ret)
 	return ret, nil
 }
-func (mdb *metaDB) forceEndTime(ctx context.Context, fi *FileMetadata, endtime int64) error {
+func (mdb *metaDB) forceEndTime(ctx context.Context, fi *iface.FileMetadata, endtime int64) error {
 	// just updating end time when already having the rest ok, not sure we need to need update...
 	// but just in case, mark it for further check anyway
 	log.Debugw("forceEndTime", "info", fi, "EndTime", endtime)
@@ -821,7 +824,7 @@ func (mdb *metaDB) forceEndTimeByName(ctx context.Context, user, parent, name, c
 		log.Errorw("forceEndTimeByName Find", "user", user, "parent", parent, "name", name, "cid", c, "start", starttime, "endtime", endtime, "error", err)
 		return false, err
 	}
-	res := make([]FileMetadata, 1)
+	res := make([]iface.FileMetadata, 1)
 	if err := cursor.All(ctx, &res); err != nil {
 		log.Errorw("forceEndTimeByName Find.All", "user", user, "parent", parent, "name", name, "cid", c, "start", starttime, "endtime", endtime, "error", err)
 		return false, err
@@ -839,7 +842,7 @@ func (mdb *metaDB) forceEndTimeByName(ctx context.Context, user, parent, name, c
 	return false, nil
 }
 
-func (mdb *metaDB) getPathHistory(ctx context.Context, user, parent, name string, start_ts int64) ([]FileMetadata, error) {
+func (mdb *metaDB) getPathHistory(ctx context.Context, user, parent, name string, start_ts int64) ([]iface.FileMetadata, error) {
 	log.Debugw("getPathHistory", "user", user, "parent", parent, "name", name, "start", start_ts)
 	col := mdb.cMetaFile
 	cursor, err := col.Aggregate(ctx, []bson.M{
@@ -863,7 +866,7 @@ func (mdb *metaDB) getPathHistory(ctx context.Context, user, parent, name string
 		log.Errorw("getPathHistory Aggregate", "user", user, "parent", parent, "name", name, "start", start_ts, "error", err)
 		return nil, err
 	}
-	ret := make([]FileMetadata, 0)
+	ret := make([]iface.FileMetadata, 0)
 	if err := cursor.All(ctx, &ret); err != nil {
 		log.Errorw("getPathHistory Aggregate.All", "user", user, "parent", parent, "name", name, "start", start_ts, "error", err)
 		return nil, err
@@ -873,7 +876,7 @@ func (mdb *metaDB) getPathHistory(ctx context.Context, user, parent, name string
 }
 
 
-func (mdb *metaDB) listOfRequiredUpdate(ctx context.Context) ([]FileMetadata, error) {
+func (mdb *metaDB) listOfRequiredUpdate(ctx context.Context) ([]iface.FileMetadata, error) {
 	// returned value include the following fields: name, parent, user, start_ts
 	log.Debugw("listOfRequiredUpdate")
 	col := mdb.cMetaFile
@@ -910,7 +913,7 @@ func (mdb *metaDB) listOfRequiredUpdate(ctx context.Context) ([]FileMetadata, er
 		log.Debugw("listOfRequiredUpdate Aggregate", "error", err)
 		return nil, err
 	}
-	ret := make([]FileMetadata, 0)
+	ret := make([]iface.FileMetadata, 0)
 	if err := cursor.All(ctx, &ret); err != nil {
 		log.Debugw("listOfRequiredUpdate Aggregate.All", "error", err)
 		return nil, err
@@ -919,7 +922,7 @@ func (mdb *metaDB) listOfRequiredUpdate(ctx context.Context) ([]FileMetadata, er
 	return ret, nil
 }
 
-func (mdb *metaDB) LaunchCleanupLoop(e Explorer) error {
+func (mdb *metaDB) LaunchCleanupLoop(e iface.MetaExplorer) error {
 	go func() {
 		for {
 			log.Debugw("Waiting cleanup requirement...")
@@ -930,10 +933,10 @@ func (mdb *metaDB) LaunchCleanupLoop(e Explorer) error {
 	return nil
 }
 
-func (mdb *metaDB) ListFiles(user string, path string) ([]DirectoryItem, error) {
+func (mdb *metaDB) ListFiles(user string, path string) ([]iface.DirectoryItem, error) {
 	return nil, errors.New("api not implemented")
 }
-func (mdb *metaDB) GetFileInfo(user string, parent string, name string, ts *int64) (*FileMetadata, error) {
+func (mdb *metaDB) GetFileInfo(user string, parent string, name string, ts *int64) (*iface.FileMetadata, error) {
 	log.Debugw("GetFileInfo", "user", user, "parent", parent, "name", name)
 	ctx := context.TODO()
 	col := mdb.cMetaFile
@@ -951,7 +954,7 @@ func (mdb *metaDB) GetFileInfo(user string, parent string, name string, ts *int6
 		log.Errorw("GetFileInfo Find()", "user", user, "parent", parent, "name", name, "error", err)
 		return nil, err
 	}
-	res := make([]FileMetadata, 1)
+	res := make([]iface.FileMetadata, 1)
 	if err := cursor.All(ctx, &res); err != nil {
 		log.Errorw("GetFileInfo Find.All()", "user", user, "parent", parent, "name", name, "error", err)
 		return nil, err

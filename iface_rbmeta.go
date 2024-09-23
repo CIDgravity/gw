@@ -1,9 +1,8 @@
-package rbmeta
+package ribs
 
 import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
-
 type FileMetadata struct {
 	// All as ref, so they are optionnal in usage
 	Id              *primitive.ObjectID `bson:"_id"`
@@ -32,7 +31,7 @@ type DirectoryItem struct {
 	Cid      string
 }
 
-type Explorer interface {
+type MetaExplorer interface {
 	ListChilds(cid string) (map[string]ChildInfo, error)
 	ListGroups(string) ([]int64, error)
 }
@@ -44,10 +43,11 @@ type MetadataDB interface {
 	Remove(filepath string) error
 	Rename(oldName, newName string) error
 	/* Cleanup functions */
-	LaunchCleanupLoop(Explorer) error
+	LaunchCleanupLoop(MetaExplorer) error
 	LaunchServer() error
 
 	/* Query Functions */
 	ListFiles(user string, path string) ([]DirectoryItem, error)
 	GetFileInfo(user string, parent string, name string, ts *int64) (*FileMetadata, error)
 }
+

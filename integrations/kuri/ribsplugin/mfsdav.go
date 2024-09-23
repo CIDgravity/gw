@@ -22,10 +22,10 @@ import (
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	mh "github.com/multiformats/go-multihash"
-	"github.com/lotus-web3/ribs/rbmeta"
+	"github.com/lotus-web3/ribs"
 )
 
-func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb rbmeta.MetadataDB) {
+func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
 	log.Infow("davfs: Starting davfs")
 	davHandler := &webdav.Handler{
 		Prefix:     "",
@@ -67,7 +67,7 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb rbmeta.MetadataDB) {
 
 type mfsDavFs struct {
 	mr *mfs.Root
-	mdb rbmeta.MetadataDB
+	mdb ribs.MetadataDB
 }
 
 func (m *mfsDavFs) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -84,7 +84,7 @@ func (m *mfsDavFs) Mkdir(ctx context.Context, name string, perm os.FileMode) err
 type mfsDavFile struct {
 	mr  *mfs.Root
 	mfd mfs.FileDescriptor
-	mdb rbmeta.MetadataDB
+	mdb ribs.MetadataDB
 
 	mode  os.FileMode
 	mtime time.Time
@@ -154,7 +154,7 @@ func (m *mfsDavFile) Write(p []byte) (n int, err error) {
 type mfsDavDir struct {
 	mr  *mfs.Root
 	mfd *mfs.Directory
-	mdb rbmeta.MetadataDB
+	mdb ribs.MetadataDB
 
 	path string
 }
