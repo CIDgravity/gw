@@ -19,19 +19,24 @@ type resFileInfoErr struct {
 	Error   string `json:"error"`
 }
 type verboseDealDetailResult struct {
-	Provider string  `json:"provider"`
-	Expire   *string `json:"expire"`
-	DealID   *int64  `json:"dealId"`
-	Status   string  `json:"status"`
+	Provider      string  `json:"provider"`
+	EndEpoch      *int64  `json:"endEpoch"`
+	DealID        *int64  `json:"dealId"`
+	IsRetrievable bool    `json:"isRetrievable"`
+	State         string  `json:"state"`
 }
 type verboseGrpDetailResult struct {
-	Id     string                `json:"id"`
-	Deals  []verboseDealDetailResult `json:"deals"`
-	Status string                `json:"status"`
+	Id                   string                    `json:"id"`
+	Deals                []verboseDealDetailResult `json:"deals"`
+	State                string                    `json:"state"`
+	RetrievableCopies    int64                     `json:"retrievableCopies"`
+	isPartiallyOffloaded bool
+	isFullyOffloaded     bool
 }
 type verboseDetailResult struct {
-	Groups []verboseGrpDetailResult `json:"blocks"`
-	Status string                   `json:"status"`
+	Groups            []verboseGrpDetailResult `json:"blocks"`
+	State             string                   `json:"state"`
+	RetrievableCopies int64                    `json:"retrievableCopies"`
 }
 type resFileInfoDetail struct {
 	CID     string               `json:"cid"`
@@ -45,10 +50,56 @@ type resFileInfo struct {
 	Result  resFileResult `json:"result"`
 }
 
+const (
+	// Deal state
+        DealStateProposed = "proposed"
+        DealStatePublished = "published"
+	DealStateActive = "active"
+
+	// Group State
+	GroupStateWritable = "writable"
+	GroupStateFull = "full"
+	GroupStateVRCARDone = "full"
+	GroupStateReadyForDeals = "ready for deals"
+	GroupStateOffloaded = "offloaded"
+	GroupStateReload = "reload"
+
+	// File State
+	FileStateStaging = "staging"
+	FileStateOffloading = "offloading"
+	FileStatePartiallyOffload = "partially offloaded"
+	FileStateOffloaded = "offloaded"
+)
+
+
+/*
+Deal status:
+- proposed
+- published
+- active
+
+Group status:
+- writable
+- full
+- readyForDeal
+- partially-offloaded
+- offloaded
+
+FileStatus
+- staging
+- offloading
+- partially offloaded (all groups have at least 1 copy)
+- offloaded
+
+
+*/
+
+
 func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult, error) {
 	var ret verboseDetailResult
+	ret.State = FileStateOffloading
 	if fi.Groups == nil {
-		ret.Status = "Unknown groups. Try again later."
+		ret.State = FileStateStaging
 		return &ret, nil
 	}
 	for _, grp := range *fi.Groups {
@@ -58,17 +109,32 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 			log.Errorw("Failed to get group meta", "error", err)
 			return nil, xerrors.Errorf("Failed to get details")
 		}
-		if meta.State == iface.GroupStateWritable {
+		switch meta.State {
+		case iface.GroupStateWritable:
 			// Writable, so no deals
-			grpDetails.Status = "current"
+			grpDetails.State = GroupStateWritable
+			ret.State = FileStateStaging
 			ret.Groups = append(ret.Groups, grpDetails)
 			continue
-		}
-		if meta.State == iface.GroupStateFull {
+		case iface.GroupStateFull:
 			// full, but not yet uploaded... still mark it as current for now
-			grpDetails.Status = "inprogress"
+			grpDetails.State = GroupStateFull
+			ret.State = FileStateStaging
 			ret.Groups = append(ret.Groups, grpDetails)
 			continue
+		case iface.GroupStateVRCARDone:
+			// full, but not yet uploaded... still mark it as current for now
+			grpDetails.State = GroupStateVRCARDone
+			ret.State = FileStateStaging
+			ret.Groups = append(ret.Groups, grpDetails)
+			continue
+		case iface.GroupStateLocalReadyForDeals:
+			grpDetails.State = GroupStateReadyForDeals
+		case iface.GroupStateOffloaded:
+			grpDetails.State = GroupStateOffloaded
+			grpDetails.isFullyOffloaded = true
+		case iface.GroupStateReload:
+			grpDetails.State = GroupStateReload
 		}
 		grpDetails.Id = meta.PieceCID
 		deals, err := mdb.ribs.DealDiag().GroupDeals(grp)
@@ -82,17 +148,49 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 			}
 			var dealDetails verboseDealDetailResult
 			dealDetails.Provider = fmt.Sprintf("f0%d", deal.Provider)
+			dealDetails.State = DealStateProposed
 			if deal.DealID != 0 {
 				id := deal.DealID
 				dealDetails.DealID = &id
+				dealDetails.State = DealStatePublished
 			}
 			if deal.Sealed {
-				expire := fmt.Sprintf("%d", deal.EndEpoch)
-				dealDetails.Expire = &expire
+				grpDetails.isPartiallyOffloaded = true
+				endEpoch := deal.EndEpoch
+				dealDetails.EndEpoch = &endEpoch
+				dealDetails.IsRetrievable = !deal.NoRecentSuccess
+				dealDetails.State = DealStateActive
+				if dealDetails.IsRetrievable {
+					grpDetails.RetrievableCopies += 1
+				}
+			} else {
+				grpDetails.isPartiallyOffloaded = true
 			}
 			grpDetails.Deals = append(grpDetails.Deals, dealDetails)
 		}
 		ret.Groups = append(ret.Groups, grpDetails)
+	}
+	if ret.State != FileStateStaging {
+		partialOffload := true
+		fullOffload := true
+		retrievableCopies := ret.Groups[0].RetrievableCopies
+		for _, grp := range ret.Groups {
+			if grp.RetrievableCopies < retrievableCopies {
+				retrievableCopies = grp.RetrievableCopies
+			}
+			if !grp.isPartiallyOffloaded {
+				partialOffload = false
+				fullOffload = false
+			} else if !grp.isFullyOffloaded {
+				fullOffload = false
+			}
+		}
+		ret.RetrievableCopies = retrievableCopies
+		if fullOffload {
+			ret.State = FileStateOffloaded
+		} else if partialOffload {
+			ret.State = FileStatePartiallyOffload
+		}
 	}
 	return &ret, nil
 }
