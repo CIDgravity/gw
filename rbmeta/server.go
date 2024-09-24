@@ -60,14 +60,14 @@ const (
 	GroupStateWritable = "writable"
 	GroupStateFull = "full"
 	GroupStateVRCARDone = "full"
-	GroupStateReadyForDeals = "ready for deals"
+	GroupStateReadyForDeals = "ready_for_deals"
 	GroupStateOffloaded = "offloaded"
 	GroupStateReload = "reload"
 
 	// File State
 	FileStateStaging = "staging"
 	FileStateOffloading = "offloading"
-	FileStatePartiallyOffload = "partially offloaded"
+	FileStatePartiallyOffload = "partially_offloaded"
 	FileStateOffloaded = "offloaded"
 )
 
