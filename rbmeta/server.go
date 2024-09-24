@@ -20,14 +20,14 @@ type resFileInfoErr struct {
 }
 type verboseDealDetailResult struct {
 	Provider      string  `json:"provider"`
-	EndEpoch      *int64  `json:"endEpoch"`
-	DealID        *int64  `json:"dealId"`
+	EndEpoch      *int64  `json:"endEpoch",omitempty`
+	DealID        *int64  `json:"dealId",omitempty`
 	IsRetrievable bool    `json:"isRetrievable"`
 	State         string  `json:"state"`
 }
 type verboseGrpDetailResult struct {
 	Id                   string                    `json:"pieceCid"`
-	Deals                []verboseDealDetailResult `json:"deals"`
+	Deals                []verboseDealDetailResult `json:"deals",omitempty`
 	State                string                    `json:"state"`
 	RetrievableCopies    int64                     `json:"retrievableCopies"`
 	isPartiallyOffloaded bool
@@ -40,7 +40,7 @@ type verboseDetailResult struct {
 }
 type resFileInfoDetail struct {
 	CID     string               `json:"cid"`
-	Details *verboseDetailResult `json:"details"`
+	Details *verboseDetailResult `json:"details",omitempty`
 }
 type resFileResult struct {
 	File resFileInfoDetail `json:"file"`
