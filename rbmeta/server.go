@@ -26,7 +26,7 @@ type verboseDealDetailResult struct {
 	State         string  `json:"state"`
 }
 type verboseGrpDetailResult struct {
-	Id                   string                    `json:"id"`
+	Id                   string                    `json:"pieceCid"`
 	Deals                []verboseDealDetailResult `json:"deals"`
 	State                string                    `json:"state"`
 	RetrievableCopies    int64                     `json:"retrievableCopies"`
