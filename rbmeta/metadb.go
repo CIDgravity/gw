@@ -43,7 +43,8 @@ func Open(r iface.RIBS) (*metaDB, error) {
 	uri := cfg.Ribs.MongoDBUri
 
 	if uri == "" {
-		return nil, xerrors.Errorf("Mongo URI not provided")
+		log.Infow("Mongo URI not provided. Not collecting meta data")
+		return &metaDB{}, nil
 	}
 	cs, err := connstring.ParseAndValidate(uri)
 	if err != nil {
@@ -211,6 +212,9 @@ func (mdb *metaDB) insertChild(ctx context.Context, user, parent, name string, c
 
 /* Functions that should be fast, done directly as we write */
 func (mdb *metaDB) WriteFile(filepath string, c string, size uint64) error {
+	if mdb.conn == nil {
+		return nil
+	}
 	log.Debugw("metaDB.WriteFile", "path", filepath, "cid", c)
 	user, parent, name, err := SplitFilePath(filepath)
 	if err != nil {
@@ -233,6 +237,9 @@ func (mdb *metaDB) WriteFile(filepath string, c string, size uint64) error {
 	return nil
 }
 func (mdb *metaDB) WriteDir(filepath string, c string) error {
+	if mdb.conn == nil {
+		return nil
+	}
 	log.Debugw("metaDB.WriteDir", "path", filepath, "cid", c)
 	user, parent, name, err := SplitFilePath(filepath)
 	if err != nil {
@@ -261,6 +268,9 @@ type latestEndTSResult struct {
 }
 
 func (mdb *metaDB) Remove(filepath string) error {
+	if mdb.conn == nil {
+		return nil
+	}
 	log.Debugw("metaDB.Remove", "path", filepath)
 	// Search for latest ID
 	ctx := context.TODO()
@@ -307,6 +317,9 @@ func (mdb *metaDB) Remove(filepath string) error {
 
 // FileMetadata
 func (mdb *metaDB) Rename(oldName, newName string) error {
+	if mdb.conn == nil {
+		return nil
+	}
 	log.Debugw("metaDB.Rename", "src", oldName, "dst", newName)
 	if oldName == newName {
 		log.Warnw("Trying to rename to the same name", "filename", oldName)
@@ -928,6 +941,9 @@ func (mdb *metaDB) listOfRequiredUpdate(ctx context.Context) ([]iface.FileMetada
 }
 
 func (mdb *metaDB) LaunchCleanupLoop(e iface.MetaExplorer) error {
+	if mdb.conn == nil {
+		return nil
+	}
 	go func() {
 		for {
 			log.Debugw("Waiting cleanup requirement...")
@@ -942,6 +958,9 @@ func (mdb *metaDB) ListFiles(user string, path string) ([]iface.DirectoryItem, e
 	return nil, errors.New("api not implemented")
 }
 func (mdb *metaDB) GetFileInfo(user string, parent string, name string, ts *int64) (*iface.FileMetadata, error) {
+	if mdb.conn == nil {
+		return nil, nil
+	}
 	log.Debugw("GetFileInfo", "user", user, "parent", parent, "name", name)
 	ctx := context.TODO()
 	col := mdb.cMetaFile

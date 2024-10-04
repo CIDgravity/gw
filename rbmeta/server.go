@@ -247,6 +247,9 @@ func (mdb *metaDB) getFileInfoHandler() (func (w http.ResponseWriter, r *http.Re
 
 
 func (mdb *metaDB) LaunchServer() error {
+	if mdb.conn == nil {
+		return nil
+	}
 	http.HandleFunc("/file-info", mdb.getFileInfoHandler())
 
 	go func() {
