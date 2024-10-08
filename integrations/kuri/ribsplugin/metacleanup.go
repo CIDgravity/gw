@@ -31,8 +31,8 @@ func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 
 	pbnd, ok := rnd.(*merkledag.ProtoNode)
 	if !ok {
-		log.Errorw("error loading CID: not ProtoNode", "cid", c)
-		return nil, merkledag.ErrNotProtobuf
+		log.Warnw("error loading CID: not ProtoNode", "cid", c)
+		return nil, nil
 	}
 	return pbnd, nil
 }
@@ -44,11 +44,13 @@ func (e ExplorerInfo) ListChilds(c string) (map[string]ribs.ChildInfo, error) {
 		return nil, err
 	}
 	ret := make(map[string]ribs.ChildInfo)
-	for _, child := range node.Links() {
-		if child.Name != "" {
-			ret[child.Name] = ribs.ChildInfo{
-				Cid: child.Cid.String(),
-				Size: child.Size,
+	if node != nil {
+		for _, child := range node.Links() {
+			if child.Name != "" {
+				ret[child.Name] = ribs.ChildInfo{
+					Cid: child.Cid.String(),
+					Size: child.Size,
+				}
 			}
 		}
 	}
@@ -73,15 +75,28 @@ func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
 		return nil, err
 	}
 	grps := make(map[int64]bool)
-	grps, err = e.addGroups(node.Cid(), grps)
-	if err != nil {
-		log.Errorw("Failed to find hash for root CID", "cid", c)
-		return nil, err
-	}
-	for _, child := range node.Links() {
-		grps, err = e.addGroups(child.Cid, grps)
+	if node != nil {
+		grps, err = e.addGroups(node.Cid(), grps)
 		if err != nil {
-			log.Errorw("Failed to find hash for CID", "cid", child.Cid.String(), "fileCid", c)
+			log.Errorw("Failed to find hash for root CID", "cid", c)
+			return nil, err
+		}
+		for _, child := range node.Links() {
+			grps, err = e.addGroups(child.Cid, grps)
+			if err != nil {
+				log.Errorw("Failed to find hash for CID", "cid", child.Cid.String(), "fileCid", c)
+				return nil, err
+			}
+		}
+	} else {  // TODO: mutualize cid decode, and get some code here
+		c_, err := cid.Decode(c)
+		if err != nil {
+			log.Errorw("Failed to decode CID", "cid", c)
+			return nil, err
+		}
+		grps, err = e.addGroups(c_, grps)
+		if err != nil {
+			log.Errorw("Failed to find hash for root CID", "cid", c)
 			return nil, err
 		}
 	}
