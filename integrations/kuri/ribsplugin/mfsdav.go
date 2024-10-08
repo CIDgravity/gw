@@ -161,7 +161,9 @@ type mfsDavDir struct {
 
 func (m *mfsDavDir) Close() error {
 	log.Debugw("mfsDavDir.Close", "path", m.path)
-	return m.mfd.Flush()
+	ret := m.mfd.Flush()
+	log.Debugw("mfsDavDir.Closed", "path", m.path)
+	return ret
 }
 
 func (m *mfsDavDir) Read(p []byte) (n int, err error) {
@@ -264,6 +266,12 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 
 	var fi *mfs.File
 
+	/*
+	must_be_dir := path[len(path)-1] == '/'
+	if must_be_dir && path != "/" {
+		path = path[:len(path)-1]
+	}
+	*/
 	target, err := mfs.Lookup(m.mr, path)
 	switch err {
 	case nil:
@@ -275,9 +283,14 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 				mfd: target.(*mfs.Directory),
 				mdb:  m.mdb,
 
-				path: name,
+				path: path,
 			}, nil
 		}
+	/*
+	if must_be_dir {
+		return nil, xerrors.New("not a directory")
+	}
+	*/
 
 	case os.ErrNotExist:
 		if !create {
@@ -499,7 +512,7 @@ func (m *mfsDavFs) Rename(ctx context.Context, oldName, newName string) error {
 }
 
 func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	log.Debugw("STAT", "name", name)
+	log.Debugw("mfsDavfs.Stat", "name", name)
 	path, err := checkPath(name)
 	if err != nil {
 		return nil, err
@@ -535,13 +548,21 @@ func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 			Type:           ndtype,
 		}, nil*/
 
-		return &basicFileInfos{
+		ret := &basicFileInfos{
 			name:    gopath.Base(path),
 			size:    int64(d.FileSize()), // nd.Size?
 			mode:    d.Mode(),
 			modTime: d.ModTime(),
 			isDir:   d.Type() == ft.TDirectory || d.Type() == ft.THAMTShard,
-		}, nil
+		}
+		log.Debugw("mfsDavfs.Stat",
+			"name", name,
+			"ret.name", ret.name,
+			"ret.size", ret.size,
+			"ret.mode", ret.mode,
+			"ret.modTime", ret.modTime,
+			"ret.isDir", ret.isDir)
+		return ret, nil
 	case *dag.RawNode:
 		return &basicFileInfos{
 			name:    gopath.Base(path),
