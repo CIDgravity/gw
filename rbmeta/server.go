@@ -205,6 +205,11 @@ func (mdb *metaDB) getFileInfoHandler() (func (w http.ResponseWriter, r *http.Re
 		}
 
 		log.Debugw("Received", "Req", req)
+		if req.Filepath == "" {
+			log.Errorw("filepath field is required")
+			http.Error(w, "filepath field is required", http.StatusBadRequest)
+			return
+		}
 		user, parent, name, err := SplitFilePath(req.Filepath)
 		/* XXX: user not linked to ribs user
 		if user != req.FileOwner {
