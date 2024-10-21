@@ -29,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/ributil/boostnet"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -53,6 +54,11 @@ func (r *ribs) setCrawlState(state iface.CrawlState) {
 }
 
 func (r *ribs) spCrawler() {
+	cfg := configuration.GetConfig()
+	if !cfg.Ribs.RunSpCrawler {
+		return
+	}
+
 	r.setCrawlState(iface.CrawlState{State: crawlInit})
 
 	defer close(r.spCrawlClosed)
