@@ -30,6 +30,7 @@ type verboseGrpDetailResult struct {
 	Deals                []verboseDealDetailResult `json:"deals,omitempty"`
 	State                string                    `json:"state"`
 	RetrievableCopies    int64                     `json:"retrievableCopies"`
+	lastEndEpoch         int64
 	isPartiallyOffloaded bool
 	isFullyOffloaded     bool
 }
@@ -37,6 +38,8 @@ type verboseDetailResult struct {
 	Groups            []verboseGrpDetailResult `json:"groups"`
 	State             string                   `json:"state"`
 	RetrievableCopies int64                    `json:"retrievableCopies"`
+	ExpirationEpoch   *int64                    `json:"expriationEpoch,omitempty"`
+	ExpirationTs      *int64                    `json:"expriationTimestamp,omitempty"`
 }
 type resFileInfoDetail struct {
 	CID     string               `json:"cid"`
@@ -94,6 +97,12 @@ FileStatus
 
 */
 
+const (
+	FILECOIN_GENESIS_UNIX_EPOCH = 1598306400
+)
+func Epoch2Timestamp (epoch int64) int64 {
+	  return (epoch * 30) + FILECOIN_GENESIS_UNIX_EPOCH
+}
 
 func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult, error) {
 	var ret verboseDetailResult
@@ -162,6 +171,9 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 				dealDetails.State = DealStateActive
 				if dealDetails.IsRetrievable {
 					grpDetails.RetrievableCopies += 1
+					if deal.EndEpoch > grpDetails.lastEndEpoch {
+						grpDetails.lastEndEpoch = deal.EndEpoch
+					}
 				}
 			} else {
 				grpDetails.isPartiallyOffloaded = true
@@ -190,6 +202,17 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 			ret.State = FileStateOffloaded
 		} else if partialOffload {
 			ret.State = FileStatePartiallyOffload
+		}
+		if ret.RetrievableCopies > 0 {
+			expiration := ret.Groups[0].lastEndEpoch
+			for _, grp := range ret.Groups {
+				if expiration > grp.lastEndEpoch {
+					expiration = grp.lastEndEpoch
+				}
+			}
+			ret.ExpirationEpoch = &expiration
+			expTs := Epoch2Timestamp(expiration)
+			ret.ExpirationTs =  &expTs
 		}
 	}
 	return &ret, nil
