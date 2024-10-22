@@ -362,7 +362,7 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 	}
 
 	node, _ := fi.GetNode()
-	log.Debugw("mfsDavFs.OpenFile", "path", name, "writable", write, "cid", node.Cid().String())
+	log.Debugw("mfsDavFs.OpenFile", "path", name, "writable", write, "cid", node.Cid().String(), "mtime", mtime, "mode", mode)
 	return &mfsDavFile{
 		mr:  m.mr,
 		mfd: fd,
