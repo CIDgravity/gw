@@ -54,14 +54,14 @@ func (r *ribs) setCrawlState(state iface.CrawlState) {
 }
 
 func (r *ribs) spCrawler() {
+	defer close(r.spCrawlClosed)
+
 	cfg := configuration.GetConfig()
 	if !cfg.Ribs.RunSpCrawler {
 		return
 	}
 
 	r.setCrawlState(iface.CrawlState{State: crawlInit})
-
-	defer close(r.spCrawlClosed)
 
 	ctx := context.TODO()
 
