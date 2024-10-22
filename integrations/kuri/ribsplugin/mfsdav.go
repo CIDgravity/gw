@@ -336,6 +336,9 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 	if m, err := fi.ModTime(); err == nil {
 		mtime = m
 	}
+	if mtime.IsZero() {
+		mtime = time.Unix(0, 0)
+	}
 
 	fd, err := fi.Open(mfs.Flags{Read: read, Write: write, Sync: flush})
 	if err != nil {
