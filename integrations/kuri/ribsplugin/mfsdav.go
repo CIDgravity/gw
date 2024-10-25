@@ -135,11 +135,16 @@ func (m *mfsDavFile) Stat() (fs.FileInfo, error) {
 		return nil, err
 	}
 
+	mtime := m.mtime
+	if mtime.IsZero() {
+		mtime = time.Unix(0, 0)
+	}
+
 	return &basicFileInfos{
 		name:    gopath.Base(m.path),
 		size:    fsz,
 		mode:    m.mode,
-		modTime: m.mtime,
+		modTime: mtime,
 		isDir:   false,
 	}, nil
 }
@@ -230,9 +235,13 @@ func (m *mfsDavDir) Stat() (fs.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		mtime := d.ModTime()
+		if mtime.IsZero() {
+			mtime = time.Unix(0, 0)
+		}
 
 		out.mode = d.Mode()
-		out.modTime = d.ModTime()
+		out.modTime = mtime
 	}
 
 	return out, nil
@@ -557,6 +566,9 @@ func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 			mode:    d.Mode(),
 			modTime: d.ModTime(),
 			isDir:   d.Type() == ft.TDirectory || d.Type() == ft.THAMTShard,
+		}
+		if ret.modTime.IsZero() {
+			ret.modTime = time.Unix(0, 0)
 		}
 		log.Debugw("mfsDavfs.Stat",
 			"name", name,
