@@ -948,7 +948,11 @@ func (mdb *metaDB) LaunchCleanupLoop(e iface.MetaExplorer) error {
 		for {
 			log.Debugw("Waiting cleanup requirement...")
 			mdb.waitCleanupRequired()
-			mdb.runCleanup(e)
+			if err := mdb.runCleanup(e); err != nil {
+				// on error, wait at least one minute, and try again
+				mdb.askCleanup()
+				time.Sleep(60 * time.Second)
+			}
 		}
 	}()
 	return nil
