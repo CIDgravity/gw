@@ -3,6 +3,7 @@ package kuboribs
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
@@ -26,6 +27,9 @@ func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 	rnd, err := e.dag.Get(context.TODO(), c_)
 	if err != nil {
 		log.Errorw("error loading CID from DAG", "error", err, "cid", c)
+		if strings.HasPrefix(err.Error(), "block was not found locally") {
+			return nil, nil
+		}
 		return nil, err
 	}
 
