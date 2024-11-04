@@ -120,7 +120,7 @@ func makeRibs(ri ribsIn) (ribs.RIBS, error) {
 		},
 	})
 
-	if ri.H != nil {
+	if ri.H != nil || true {
 		go func() {
 			if err := web.Serve(context.TODO(), ":9010", r); err != nil {
 				panic("ribsweb serve failed")
