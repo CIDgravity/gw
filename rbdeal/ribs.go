@@ -311,10 +311,12 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		return nil, xerrors.Errorf("setup car server: %w", err)
 	}
 
+	/* XXX: no repair worker for now, we don't have a staging area to repair to
 	go r.repairWorker(context.TODO(), 0)
 	go r.repairWorker(context.TODO(), 1)
 	go r.repairWorker(context.TODO(), 2)
 	go r.repairWorker(context.TODO(), 3)
+	*/
 	/*go r.repairWorker(context.TODO(), 4)
 	go r.repairWorker(context.TODO(), 5)
 	go r.repairWorker(context.TODO(), 6)
