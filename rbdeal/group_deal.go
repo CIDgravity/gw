@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"os/exec"
 	"fmt"
 	"strconv"
-	//gobig "math/big"
 	"time"
 
 	"github.com/filecoin-project/go-address"
@@ -65,7 +63,7 @@ func (r *ribs) canSendMoreDeals(since time.Time) bool {
 	return r.canSendDealLastResult
 }
 
-func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, h host.Host, w *ributil.LocalWallet, checks_start *time.Time) error {
+func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.LocalWallet, checks_start *time.Time) error {
 	check_start := time.Now()
 	if checks_start != nil {
 		check_start = *checks_start

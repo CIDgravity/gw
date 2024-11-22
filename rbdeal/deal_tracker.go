@@ -337,7 +337,7 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 	}
 	sort.Slice(makeMoreDealsGids, func(i, j int) bool { return makeMoreDealsGids[i] < makeMoreDealsGids[j] })
 	for _, gid := range makeMoreDealsGids {
-		err := r.makeMoreDeals(context.TODO(), gid, r.host, r.wallet, &check_loop_start)
+		err := r.makeMoreDeals(context.TODO(), gid, r.wallet, &check_loop_start)
 		if err != nil {
 			log.Errorw("starting new deals", "error", err)
 		}
