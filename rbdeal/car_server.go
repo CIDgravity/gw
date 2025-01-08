@@ -55,6 +55,25 @@ func (r *ribs) setupCarServer(ctx context.Context, host host.Host) error {
 		}
 	}()
 
+	// bootstrap to libp2p.me
+	lmeMaddr := "/dns/libp2p.me/tcp/4001"
+	lmeMa, err := ma.NewMultiaddr(lmeMaddr)
+	if err != nil {
+		return err
+	}
+	lmePid, err := peer.Decode("12D3KooWSM8TT2UFGaXk7fisoiS1UC9MkWc2PVwYyKiWuNWBpqBw")
+	if err != nil {
+		return err
+	}
+
+	err = host.Connect(ctx, peer.AddrInfo{
+		ID:    lmePid,
+		Addrs: []ma.Multiaddr{lmeMa},
+	})
+	if err != nil {
+		log.Errorw("failed to connect to peer", "peer", lmePid, "error", err)
+	}
+
 	go r.carStatsWorker(ctx)
 
 	// todo also serve tcp
@@ -154,7 +173,7 @@ func (r *ribs) verify(ctx context.Context, token string) (carRequestToken, error
 		return carRequestToken{}, xerrors.Errorf("JWT Verification failed: %w", err)
 	}
 
-	if payload.Timeout < time.Now().Unix() {
+	if payload.Timeout < time.Now().Add(-dealDownloadTimeout).Unix() {
 		return carRequestToken{}, xerrors.Errorf("token expired")
 	}
 

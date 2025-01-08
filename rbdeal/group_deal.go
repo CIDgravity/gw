@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	gobig "math/big"
-	"time"
-
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	commcid "github.com/filecoin-project/go-fil-commcid"
@@ -23,6 +20,7 @@ import (
 	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
+	gobig "math/big"
 )
 
 const DealProtocolv120 = "/fil/storage/mk/1.2.0"
@@ -161,7 +159,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		}
 
 		// generate transfer token
-		transfer, err := r.makeCarRequest(id, time.Hour*36, dealInfo.CarSize, dealUuid)
+		transfer, err := r.makeCarRequest(id, dealDownloadTimeout, dealInfo.CarSize, dealUuid)
 		if err != nil {
 			return xerrors.Errorf("make car request token: %w", err)
 		}

@@ -22,7 +22,8 @@ var (
 
 	dealPublishFinality abi.ChainEpoch = 60
 
-	dealStartTime = abi.ChainEpoch(builtin.EpochsInDay * 4) // 4 days
+	dealStartTime       = abi.ChainEpoch(builtin.EpochsInDay * 4) // 4 days
+	dealDownloadTimeout = time.Hour * 24 * 4
 )
 
 // deal checker

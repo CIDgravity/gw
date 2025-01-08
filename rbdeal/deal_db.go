@@ -827,7 +827,7 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 	} else if stresp.DealStatus == nil {
 		errMsg := fmt.Sprintf("DealStatus is nil (resp err: '%s')", stresp.Error)
 
-		failed := true
+		failed := false
 
 		_, err := r.db.Exec(`update deals set
                  failed = ?,
