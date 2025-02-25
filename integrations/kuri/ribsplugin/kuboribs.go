@@ -3,13 +3,14 @@ package kuboribs
 import (
 	"context"
 	"fmt"
+    "github.com/ipfs/boxo/blockservice"
+    "github.com/ipfs/boxo/exchange/offline"
 	"os"
 
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
 	blockstore "github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
-	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
 
 	"github.com/ipfs/boxo/ipld/merkledag"
@@ -197,12 +198,15 @@ var _ blockstore.GCLocker = (*flushingGCLocker)(nil)
 
 // MFS Durability
 
-func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, dag format.DAGService, rbs *ribsbstore.Blockstore, mdb ribs.MetadataDB) (*mfs.Root, error) {
-	dsk := datastore.NewKey("/local/filesroot")
-	pf := func(ctx context.Context, c cid.Cid) error {
-		rootDS := repo.Datastore()
-		/*if err := rootDS.Sync(ctx, blockstore.BlockPrefix); err != nil {
-			return err
+func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore, mdb ribs.MetadataDB) (*mfs.Root, error) {
+    bsv := blockservice.New(rbs, offline.Exchange(rbs))
+    dag := merkledag.NewDAGService(bsv)
+
+    dsk := datastore.NewKey("/local/filesroot")
+    pf := func(ctx context.Context, c cid.Cid) error {
+        rootDS := repo.Datastore()
+        /*if err := rootDS.Sync(ctx, blockstore.BlockPrefix); err != nil {
+            return err
 		}
 		if err := rootDS.Sync(ctx, filestore.FilestorePrefix); err != nil {
 			return err

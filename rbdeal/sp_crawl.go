@@ -171,7 +171,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 
 	r.setCrawlState(iface.CrawlState{State: crawlQueryProviders})
 
-	const parallel = 128
+	const parallel = 64
 	throttle := make(chan struct{}, parallel)
 	const timeout = time.Second * 8
 
