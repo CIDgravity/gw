@@ -1,29 +1,29 @@
 package rbmeta
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"net/http"
+
+	iface "github.com/lotus-web3/ribs"
 	"golang.org/x/xerrors"
-        iface "github.com/lotus-web3/ribs"
 )
 
-
 type reqBody struct {
-	Filepath  string `json:"filepath"`
-	User      string `json:"User"`
-	Verbose   bool   `json:"verbose"`
+	Filepath *string `json:"filepath"`
+	CID      *string `json:"cid"`
+	Verbose  bool    `json:"verbose"`
 }
 type resFileInfoErr struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error"`
 }
 type verboseDealDetailResult struct {
-	Provider      string  `json:"provider"`
-	EndEpoch      *int64  `json:"endEpoch,omitempty"`
-	DealID        *int64  `json:"dealId,omitempty"`
-	IsRetrievable bool    `json:"isRetrievable"`
-	State         string  `json:"state"`
+	Provider      string `json:"provider"`
+	EndEpoch      *int64 `json:"endEpoch,omitempty"`
+	DealID        *int64 `json:"dealId,omitempty"`
+	IsRetrievable bool   `json:"isRetrievable"`
+	State         string `json:"state"`
 }
 type verboseGrpDetailResult struct {
 	Id                   string                    `json:"pieceCid,omitempty"`
@@ -38,11 +38,13 @@ type verboseDetailResult struct {
 	Groups            []verboseGrpDetailResult `json:"groups"`
 	State             string                   `json:"state"`
 	RetrievableCopies int64                    `json:"retrievableCopies"`
-	ExpirationEpoch   *int64                    `json:"expriationEpoch,omitempty"`
-	ExpirationTs      *int64                    `json:"expriationTimestamp,omitempty"`
+	ExpirationEpoch   *int64                   `json:"expriationEpoch,omitempty"`
+	ExpirationTs      *int64                   `json:"expriationTimestamp,omitempty"`
 }
 type resFileInfoDetail struct {
 	CID     string               `json:"cid"`
+	Path    string               `json:"path"`
+	File    string               `json:"file"`
 	Details *verboseDetailResult `json:"details,omitempty"`
 }
 type resFileResult struct {
@@ -55,25 +57,24 @@ type resFileInfo struct {
 
 const (
 	// Deal state
-        DealStateProposed = "proposed"
-        DealStatePublished = "published"
-	DealStateActive = "active"
+	DealStateProposed  = "proposed"
+	DealStatePublished = "published"
+	DealStateActive    = "active"
 
 	// Group State
-	GroupStateWritable = "writable"
-	GroupStateFull = "full"
-	GroupStateVRCARDone = "full"
+	GroupStateWritable      = "writable"
+	GroupStateFull          = "full"
+	GroupStateVRCARDone     = "full"
 	GroupStateReadyForDeals = "ready_for_deals"
-	GroupStateOffloaded = "offloaded"
-	GroupStateReload = "reload"
+	GroupStateOffloaded     = "offloaded"
+	GroupStateReload        = "reload"
 
 	// File State
-	FileStateStaging = "staging"
-	FileStateOffloading = "offloading"
+	FileStateStaging          = "staging"
+	FileStateOffloading       = "offloading"
 	FileStatePartiallyOffload = "partially_offloaded"
-	FileStateOffloaded = "offloaded"
+	FileStateOffloaded        = "offloaded"
 )
-
 
 /*
 Deal status:
@@ -100,8 +101,9 @@ FileStatus
 const (
 	FILECOIN_GENESIS_UNIX_EPOCH = 1598306400
 )
-func Epoch2Timestamp (epoch int64) int64 {
-	  return (epoch * 30) + FILECOIN_GENESIS_UNIX_EPOCH
+
+func Epoch2Timestamp(epoch int64) int64 {
+	return (epoch * 30) + FILECOIN_GENESIS_UNIX_EPOCH
 }
 
 func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult, error) {
@@ -212,67 +214,114 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 			}
 			ret.ExpirationEpoch = &expiration
 			expTs := Epoch2Timestamp(expiration)
-			ret.ExpirationTs =  &expTs
+			ret.ExpirationTs = &expTs
 		}
 	}
 	return &ret, nil
 }
 
-func (mdb *metaDB) getFileInfoHandler() (func (w http.ResponseWriter, r *http.Request)) {
-	return func (w http.ResponseWriter, r *http.Request) {
+func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		// set response header
+		w.Header().Set("Content-Type", "application/json")
+
+		// parse request body
 		var req reqBody
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			mdb.buildAndReturnResponse(w, fmt.Errorf("Invalid request body"), nil, req.Verbose)
 			return
 		}
 
 		log.Debugw("Received", "Req", req)
-		if req.Filepath == "" {
-			log.Errorw("filepath field is required")
-			http.Error(w, "filepath field is required", http.StatusBadRequest)
-			return
-		}
-		user, parent, name, err := SplitFilePath(req.Filepath)
-		/* XXX: user not linked to ribs user
-		if user != req.FileOwner {
-			log.Warnw("Inconsistent fileowner, but ignored", "user", user, "provided-owner", req.FileOwner)
-		}
-		*/
-		filemeta, err := mdb.GetFileInfo(user, parent, name, nil)
-		if err != nil {
-			log.Errorw("handleFileInfo GetFileInfo", "error", err)
-			http.Error(w, "Error retrieving fileinfo", http.StatusBadRequest)
+		if req.Filepath == nil && req.CID == nil {
+			log.Errorw("filepath or cid required")
+			mdb.buildAndReturnResponse(w, fmt.Errorf("filepath or cid required"), nil, req.Verbose)
 			return
 		}
 
-		if filemeta == nil {
-			respBody := resFileInfoErr{
-				Success: false,
-				Error: "File not found",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(respBody)
+		if req.Filepath != nil && req.CID != nil {
+			log.Errorw("filepath and cid cannot be provided at the same time")
+			mdb.buildAndReturnResponse(w, fmt.Errorf("filepath and cid cannot be provided at the same time"), nil, req.Verbose)
 			return
 		}
-		var details *verboseDetailResult
-		if req.Verbose {
-			details, err = mdb.getFileDetails(filemeta)
+
+		// handle case where filePath is provided
+		if req.Filepath != nil {
+			user, parent, name, err := SplitFilePath(*req.Filepath)
+
+			filemeta, err := mdb.GetFileInfo(user, parent, name, nil)
+			if err != nil {
+				log.Errorw("handleFileInfo GetFileInfo", "error", err)
+				mdb.buildAndReturnResponse(w, err, nil, req.Verbose)
+				return
+			}
+
+			mdb.buildAndReturnResponse(w, nil, filemeta, req.Verbose)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		respBody := resFileInfo{
-			Success: true,
-			Result: resFileResult{
-				File: resFileInfoDetail{
-					CID: *filemeta.Cid,
-					Details: details,
-				},
-			},
+
+		// handle case where CID is provided
+		if req.CID != nil {
+			filemeta, err := mdb.GetFileInfoFromCID(*req.CID, nil)
+			if err != nil {
+				log.Errorw("handleFileInfo GetFileInfoFromCID", "error", err)
+				mdb.buildAndReturnResponse(w, err, nil, req.Verbose)
+				return
+			}
+
+			mdb.buildAndReturnResponse(w, nil, filemeta, req.Verbose)
 		}
-		json.NewEncoder(w).Encode(respBody)
 	}
 }
 
+func (mdb *metaDB) buildAndReturnResponse(w http.ResponseWriter, hasError error, filemeta *iface.FileMetadata, isVerbose bool) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if hasError != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(resFileInfoErr{
+			Success: false,
+			Error:   hasError.Error(),
+		})
+		return
+	}
+
+	if filemeta == nil {
+		json.NewEncoder(w).Encode(resFileInfoErr{
+			Success: false,
+			Error:   "Not found",
+		})
+		return
+	}
+
+	var details *verboseDetailResult
+	var err error
+
+	if isVerbose {
+		details, err = mdb.getFileDetails(filemeta)
+
+		if err != nil {
+			json.NewEncoder(w).Encode(resFileInfoErr{
+				Success: false,
+				Error:   "Not found",
+			})
+			return
+		}
+	}
+
+	json.NewEncoder(w).Encode(resFileInfo{
+		Success: true,
+		Result: resFileResult{
+			File: resFileInfoDetail{
+				CID:     *filemeta.Cid,
+				Path:    *filemeta.ParentPath,
+				File:    *filemeta.Filename,
+				Details: details,
+			},
+		},
+	})
+}
 
 func (mdb *metaDB) LaunchServer() error {
 	if mdb.conn == nil {
