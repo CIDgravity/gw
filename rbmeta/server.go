@@ -222,23 +222,28 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 
 func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+
+		// set response header
+		w.Header().Set("Content-Type", "application/json")
+
+		// parse request body
 		var req reqBody
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			mdb.buildAndReturnResponse(w, fmt.Errorf("Invalid request body"), nil, req.Verbose)
 			return
 		}
 
 		log.Debugw("Received", "Req", req)
 		if req.Filepath == nil && req.CID == nil {
-			log.Errorw("Filepath or CID are required")
-			http.Error(w, "Filepath or CID are required", http.StatusBadRequest)
+			log.Errorw("filepath or cid required")
+			mdb.buildAndReturnResponse(w, fmt.Errorf("filepath or cid required"), nil, req.Verbose)
 			return
 		}
 
 		if req.Filepath != nil && req.CID != nil {
-			log.Errorw("Filepath and CID cannot be provided at the same time")
-			http.Error(w, "Filepath and CID cannot be provided at the same time", http.StatusBadRequest)
+			log.Errorw("filepath and cid cannot be provided at the same time")
+			mdb.buildAndReturnResponse(w, fmt.Errorf("filepath and cid cannot be provided at the same time"), nil, req.Verbose)
 			return
 		}
 
@@ -249,13 +254,11 @@ func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Requ
 			filemeta, err := mdb.GetFileInfo(user, parent, name, nil)
 			if err != nil {
 				log.Errorw("handleFileInfo GetFileInfo", "error", err)
-				http.Error(w, "Error retrieving fileinfo", http.StatusBadRequest)
+				mdb.buildAndReturnResponse(w, err, nil, req.Verbose)
 				return
 			}
 
-			resp := mdb.buildResponse(filemeta, req.Verbose)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			mdb.buildAndReturnResponse(w, nil, filemeta, req.Verbose)
 		}
 
 		// handle case where CID is provided
@@ -263,23 +266,33 @@ func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Requ
 			filemeta, err := mdb.GetFileInfoFromCID(*req.CID, nil)
 			if err != nil {
 				log.Errorw("handleFileInfo GetFileInfoFromCID", "error", err)
-				http.Error(w, "Error retrieving fileinfo with CID", http.StatusBadRequest)
+				mdb.buildAndReturnResponse(w, err, nil, req.Verbose)
 				return
 			}
 
-			resp := mdb.buildResponse(filemeta, req.Verbose)
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			mdb.buildAndReturnResponse(w, nil, filemeta, req.Verbose)
 		}
 	}
 }
 
-func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) interface{} {
+func (mdb *metaDB) buildAndReturnResponse(w http.ResponseWriter, hasError error, filemeta *iface.FileMetadata, isVerbose bool) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if hasError != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(resFileInfoErr{
+			Success: false,
+			Error:   hasError.Error(),
+		})
+		return
+	}
+
 	if filemeta == nil {
-		return resFileInfoErr{
+		json.NewEncoder(w).Encode(resFileInfoErr{
 			Success: false,
 			Error:   "Not found",
-		}
+		})
+		return
 	}
 
 	var details *verboseDetailResult
@@ -289,14 +302,15 @@ func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) i
 		details, err = mdb.getFileDetails(filemeta)
 
 		if err != nil {
-			return resFileInfoErr{
+			json.NewEncoder(w).Encode(resFileInfoErr{
 				Success: false,
 				Error:   "Not found",
-			}
+			})
+			return
 		}
 	}
 
-	return resFileInfo{
+	json.NewEncoder(w).Encode(resFileInfo{
 		Success: true,
 		Result: resFileResult{
 			File: resFileInfoDetail{
@@ -306,7 +320,7 @@ func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) i
 				Details: details,
 			},
 		},
-	}
+	})
 }
 
 func (mdb *metaDB) LaunchServer() error {
