@@ -11,7 +11,7 @@ import (
 
 type reqBody struct {
 	Filepath *string `json:"filepath"`
-	FileCID  *string `json:"fileCID"`
+	CID      *string `json:"cid"`
 	Verbose  bool    `json:"verbose"`
 }
 type resFileInfoErr struct {
@@ -43,6 +43,8 @@ type verboseDetailResult struct {
 }
 type resFileInfoDetail struct {
 	CID     string               `json:"cid"`
+	Path    string               `json:"path"`
+	File    string               `json:"file"`
 	Details *verboseDetailResult `json:"details,omitempty"`
 }
 type resFileResult struct {
@@ -228,15 +230,15 @@ func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Requ
 		}
 
 		log.Debugw("Received", "Req", req)
-		if req.Filepath == nil && req.FileCID == nil {
-			log.Errorw("filepath or fileCID are requred")
-			http.Error(w, "filepath or fileCID are requred", http.StatusBadRequest)
+		if req.Filepath == nil && req.CID == nil {
+			log.Errorw("Filepath or CID are required")
+			http.Error(w, "Filepath or CID are required", http.StatusBadRequest)
 			return
 		}
 
-		if req.Filepath != nil && req.FileCID != nil {
-			log.Errorw("filePath and fileCid cannot be provided at the same time")
-			http.Error(w, "filePath and fileCid cannot be provided at the same time", http.StatusBadRequest)
+		if req.Filepath != nil && req.CID != nil {
+			log.Errorw("Filepath and CID cannot be provided at the same time")
+			http.Error(w, "Filepath and CID cannot be provided at the same time", http.StatusBadRequest)
 			return
 		}
 
@@ -256,9 +258,9 @@ func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Requ
 			json.NewEncoder(w).Encode(resp)
 		}
 
-		// handle case where fileCID is provided
-		if req.FileCID != nil {
-			filemeta, err := mdb.GetFileInfoFromCID(*req.FileCID, nil)
+		// handle case where CID is provided
+		if req.CID != nil {
+			filemeta, err := mdb.GetFileInfoFromCID(*req.CID, nil)
 			if err != nil {
 				log.Errorw("handleFileInfo GetFileInfoFromCID", "error", err)
 				http.Error(w, "Error retrieving fileinfo with CID", http.StatusBadRequest)
@@ -276,7 +278,7 @@ func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) i
 	if filemeta == nil {
 		return resFileInfoErr{
 			Success: false,
-			Error:   "File not found",
+			Error:   "Not found",
 		}
 	}
 
@@ -289,7 +291,7 @@ func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) i
 		if err != nil {
 			return resFileInfoErr{
 				Success: false,
-				Error:   "File not found",
+				Error:   "Not found",
 			}
 		}
 	}
@@ -299,6 +301,8 @@ func (mdb *metaDB) buildResponse(filemeta *iface.FileMetadata, isVerbose bool) i
 		Result: resFileResult{
 			File: resFileInfoDetail{
 				CID:     *filemeta.Cid,
+				Path:    *filemeta.ParentPath,
+				File:    *filemeta.Filename,
 				Details: details,
 			},
 		},
