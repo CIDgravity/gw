@@ -17,6 +17,7 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
+        "github.com/lotus-web3/ribs/configuration"
 )
 
 func (r *ribs) MarketAdd(ctx context.Context, amount abi.TokenAmount) (cid.Cid, error) {
@@ -96,6 +97,12 @@ func (r *ribs) Withdraw(ctx context.Context, amount abi.TokenAmount, to address.
 
 func (r *ribs) watchMarket(ctx context.Context) {
 	defer close(r.marketWatchClosed)
+	cfg := configuration.GetConfig()
+
+	if !cfg.Wallet.AutoMarketBalance.GreaterThan(types.NewInt(0)) {
+		log.Infow("AutoMarketBalance at 0, no need to watch market.")
+		return
+	}
 
 	for {
 		select {
@@ -111,13 +118,13 @@ func (r *ribs) watchMarket(ctx context.Context) {
 		{
 			avail := types.BigSub(i.MarketBalanceDetailed.Escrow, i.MarketBalanceDetailed.Locked)
 
-			if avail.GreaterThan(minMarketBalance) {
+			if avail.GreaterThan(cfg.Wallet.MinMarketBalance) {
 				goto cooldown
 			}
 
 			log.Infow("market balance low, topping up")
 
-			toAdd := big.Sub(autoMarketBalance, avail)
+			toAdd := big.Sub(cfg.Wallet.AutoMarketBalance, avail)
 
 			c, err := r.MarketAdd(ctx, toAdd)
 			if err != nil {
@@ -125,14 +132,14 @@ func (r *ribs) watchMarket(ctx context.Context) {
 				goto cooldown
 			}
 
-			log.Errorw("AUTO-ADDED MARKET FUNDS", "amount", types.FIL(toAdd), "msg", c)
+			log.Infow("AUTO-ADDED MARKET FUNDS", "amount", types.FIL(toAdd), "msg", c)
 		}
 
 	cooldown:
 		select {
 		case <-r.close:
 			return
-		case <-time.After(2 * walletUpgradeInterval):
+		case <-time.After(2 * cfg.Wallet.UpgradeInterval):
 		}
 	}
 }
@@ -150,7 +157,8 @@ func (r *ribs) WalletInfo() (iface.WalletInfo, error) {
 	r.marketFundsLk.Lock()
 	defer r.marketFundsLk.Unlock()
 
-	if r.cachedWalletInfo != nil && time.Since(r.lastWalletInfoUpdate) < walletUpgradeInterval {
+	cfg := configuration.GetConfig()
+	if r.cachedWalletInfo != nil && time.Since(r.lastWalletInfoUpdate) < cfg.Wallet.UpgradeInterval {
 		return *r.cachedWalletInfo, nil
 	}
 

@@ -3,7 +3,12 @@ package rbdeal
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"os/exec"
 	"fmt"
+	"strconv"
+	"time"
+
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	commcid "github.com/filecoin-project/go-fil-commcid"
@@ -20,10 +25,11 @@ import (
 	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
-	gobig "math/big"
+	"github.com/lotus-web3/ribs/cidgravity"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
-const DealProtocolv120 = "/fil/storage/mk/1.2.0"
+const DealProtocolv121 = "/fil/storage/mk/1.2.1"
 
 type ErrRejected struct {
 	Reason string
@@ -33,25 +39,68 @@ func (e ErrRejected) Error() string {
 	return fmt.Sprintf("deal proposal rejected: %s", e.Reason)
 }
 
-func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.LocalWallet) error {
+func makeTraceToken(prov dealProvider) (string) {
+	auth := fmt.Sprintf("f0%d-%s:password", prov.id, time.Now().Format("20060102150405"))
+	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
+}
+
+func (r *ribs) canSendMoreDeals(since time.Time) bool {
+	log.Debugw("CanSendDeal?")
+	cfg := configuration.GetConfig()
+	if cfg.Ribs.DealCanSendCommand == "" {
+		return true
+	}
+	if since.Before(r.canSendDealLastCheck) {
+		log.Debugw("CanSendDeal: cached", "result", r.canSendDealLastResult, r.canSendDealLastCheck, "since", since)
+		return r.canSendDealLastResult
+	}
+	log.Debugw("CanSendDeal? running command")
+	cmd := exec.Command(cfg.Ribs.DealCanSendCommand)
+	err := cmd.Run()
+	r.canSendDealLastResult = err == nil
+	r.canSendDealLastCheck = time.Now()
+	log.Debugw("CanSendDeal: command called", "result", r.canSendDealLastResult, "ts", r.canSendDealLastCheck, "err", err)
+	return r.canSendDealLastResult
+}
+
+func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.LocalWallet, checks_start *time.Time) error {
+	check_start := time.Now()
+	if checks_start != nil {
+		check_start = *checks_start
+	}
+	log.Debugw("makeMoreDeals", "id", id, "time", check_start)
+
 	r.dealsLk.Lock()
+	defer r.dealsLk.Unlock()
+	log.Debugw("makeMoreDeals: lock acquired", "id", id)
+
+	// XXX: will have to review locks if we get blocked, and could have
+	// partial work in progress and return for now
 	if _, ok := r.moreDealsLocks[id]; ok {
-		r.dealsLk.Unlock()
+		// r.dealsLk.Unlock()
 
 		// another goroutine is already making deals for this group
 		return nil
 	}
 	r.moreDealsLocks[id] = struct{}{}
-	r.dealsLk.Unlock()
-
+	// r.dealsLk.Unlock()
 	defer func() {
-		r.dealsLk.Lock()
+		// r.dealsLk.Lock()
 		delete(r.moreDealsLocks, id)
-		r.dealsLk.Unlock()
+		// r.dealsLk.Unlock()
 	}()
+
 
 	if err := r.maybeEnsureS3Offload(id); err != nil {
 		return xerrors.Errorf("attempting s3 offload: %w", err)
+	}
+	if err := r.maybeEnsureEnsureExternalPush(id); err != nil {
+		return xerrors.Errorf("XYZ: attempting external offload: %w", err)
+	}
+
+	// now that offload is handled, check if we are allowed to send a deal now
+	if !r.canSendMoreDeals(check_start) {
+		return nil
 	}
 
 	dealInfo, err := r.db.GetDealParams(ctx, id)
@@ -59,13 +108,30 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("get deal params: %w", err)
 	}
 
-	notFailed, err := r.db.GetNonFailedDealCount(id)
+	notFailed, unretrievable, err := r.db.GetNonFailedDealCount(id)
 	if err != nil {
-		log.Errorf("getting non-failed deal count: %s", err)
+		log.Errorw("getting non-failed deal count", "error", err)
 		return xerrors.Errorf("getting non-failed deal count: %w", err)
 	}
 
-	if notFailed >= targetReplicaCount {
+	cfg := configuration.GetConfig()
+	max := func(a, b int) (int) {
+		if a > b {
+			return a
+		}
+		return b
+	}
+	min := func(a, b int) (int) {
+		if a < b {
+			return a
+		}
+		return b
+	}
+	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount - notFailed)
+	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount - (notFailed - unretrievable))
+	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount - notFailed)
+	log.Debugw("makeMoreDeals", "group", id, "copiesRequired", copiesRequired, "notFailed", notFailed, "unretrievable", unretrievable)
+	if copiesRequired <= 0 {
 		// occasionally in some racy cases we can end up here
 		return nil
 	}
@@ -98,14 +164,70 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		verified = true
 	}
 
-	provs, err := r.db.SelectDealProviders(id, dealInfo.PieceSize, verified, maxToPay)
+	pieceCid, err := commcid.PieceCommitmentV1ToCID(dealInfo.CommP)
+	if err != nil {
+		return fmt.Errorf("failed to convert commP to cid: %w", err)
+	}
+
+	// Gather more data for CIDGravity get-best-providers first
+	var providerCollateral abi.TokenAmount
+
+	bounds, err := gw.StateDealProviderCollateralBounds(ctx, abi.PaddedPieceSize(dealInfo.PieceSize), verified, ctypes.EmptyTSK)
+	if err != nil {
+		return fmt.Errorf("node error getting collateral bounds: %w", err)
+	}
+	providerCollateral = big.Div(big.Mul(bounds.Min, big.NewInt(6)), big.NewInt(5)) // add 20%
+
+	head, err := gw.ChainHead(ctx)
+	if err != nil {
+		return fmt.Errorf("getting chain head: %w", err)
+	}
+
+	startEpoch := head.Height() + abi.ChainEpoch(cfg.Deal.StartTime * builtin.EpochsInDay / 24)
+
+	duration := cfg.Deal.Duration * builtin.EpochsInDay
+
+	// XXX: price?
+	price := big.Zero()
+
+	transfer := types.Transfer{
+		Type:   "libp2p",
+		Size:   uint64(dealInfo.CarSize),
+	}
+	url, err := r.maybeGetExternalURL(id)
+	if err != nil {
+		return fmt.Errorf("Failed to get External URL: %w", err)
+	}
+	if url != nil {
+		transfer.Type = "http"
+	}
+
+	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
+
+	provsIds, err := r.cidg.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
+                PieceCid:             pieceCid.String(),
+                StartEpoch:           uint64(startEpoch),
+                Duration:             uint64(duration),
+                StoragePricePerEpoch: price.String(),
+                ProviderCollateral:   providerCollateral.String(),
+                VerifiedDeal:         &verified,
+                TransferSize:         transfer.Size,
+                TransferType:         transfer.Type,
+                RemoveUnsealedCopy:   &removeUnsealed,
+	})
 	if err != nil {
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
 
-	pieceCid, err := commcid.PieceCommitmentV1ToCID(dealInfo.CommP)
-	if err != nil {
-		return fmt.Errorf("failed to convert commP to cid: %w", err)
+	log.Debugw("making more deal", "group", id, "providers", provsIds)
+
+        provs := []dealProvider{}
+        for _, prov := range provsIds {
+		provid, err := strconv.Atoi(prov[2:])
+		if err != nil {
+			return xerrors.Errorf("invalid selected provider: %s: %w", prov, err)
+		}
+		provs = append(provs, dealProvider{id: int64(provid)})
 	}
 
 	makeDealWith := func(prov dealProvider) error {
@@ -120,33 +242,9 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("get addr info: %w", err)
 		}
 
-		var providerCollateral abi.TokenAmount
-
-		bounds, err := gw.StateDealProviderCollateralBounds(ctx, abi.PaddedPieceSize(dealInfo.PieceSize), verified, ctypes.EmptyTSK)
-		if err != nil {
-			return fmt.Errorf("node error getting collateral bounds: %w", err)
-		}
-		providerCollateral = big.Div(big.Mul(bounds.Min, big.NewInt(6)), big.NewInt(5)) // add 20%
-
-		head, err := gw.ChainHead(ctx)
-		if err != nil {
-			return fmt.Errorf("getting chain head: %w", err)
-		}
-
-		startEpoch := head.Height() + dealStartTime
 
 		// generate proposal
 		dealUuid := uuid.New()
-
-		duration := 530 * builtin.EpochsInDay
-
-		pricef := gobig.NewFloat(prov.ask_price)
-		if verified {
-			pricef = gobig.NewFloat(prov.ask_verif_price)
-		}
-
-		price := big.Zero()
-		pricef.Int(price.Int)
 
 		dealProposal, err := dealProposal(ctx, w, walletAddr, dealInfo.Root, abi.PaddedPieceSize(dealInfo.PieceSize), pieceCid, maddr, startEpoch, duration, verified, providerCollateral, price)
 		if err != nil {
@@ -170,6 +268,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			DealDataRoot:       dealInfo.Root,
 			IsOffline:          false,
 			Transfer:           transfer,
+			RemoveUnsealedCopy: removeUnsealed,
+			SkipIPNIAnnounce:   cfg.Deal.SkipIPNIAnnounce,
 		}
 
 		di := dbDealInfo{
@@ -209,7 +309,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("connect to miner: %w", err)
 		}
 
-		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv120)
+		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv121)
 		if err != nil {
 			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
 			if err != nil {
@@ -231,7 +331,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 
 		// MAKE THE DEAL
 
-		s, err := r.host.NewStream(ctx, addrInfo.ID, DealProtocolv120)
+		s, err := r.host.NewStream(ctx, addrInfo.ID, DealProtocolv121)
 		if err != nil {
 			err = r.db.StoreRejectedDeal(di.DealUUID, xerrors.Errorf("opening deal proposal stream: %w", err).Error(), 0)
 			if err != nil {
@@ -265,7 +365,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("marking deal as successfully proposed: %w", err)
 		}
 
-		log.Warnf("Deal %s with %s accepted for group %d!!!", dealUuid, maddr, id)
+		log.Infof("Deal %s with %s accepted for group %d!!!", dealUuid, maddr, id)
 
 		return nil
 	}
@@ -274,11 +374,16 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	for _, prov := range provs {
 		err := makeDealWith(prov)
 		if err == nil {
-			notFailed++
+			copiesRequired--
 
-			if notFailed >= targetReplicaCount {
+			// reselt last check to clear cache
+			r.canSendDealLastCheck = time.Unix(0, 0)
+			if copiesRequired <= 0 {
 				// enough
 				break
+			}
+			if !r.canSendMoreDeals(time.Now()) {
+				return nil
 			}
 
 			// deal made

@@ -33,7 +33,7 @@ func (d *RetryDB) Exec(query string, args ...interface{}) (sql.Result, error) {
 			return nil, err
 		}
 
-		log.Errorw("database is locked, retrying", "query", query, "args", args, "err", err)
+		log.Warnw("database is locked, retrying", "query", query, "args", args, "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -51,7 +51,7 @@ func (d *RetryDB) ExecContext(ctx context.Context, query string, args ...interfa
 			return nil, err
 		}
 
-		log.Errorw("database is locked, retrying", "query", query, "args", args, "err", err)
+		log.Warnw("database is locked, retrying", "query", query, "args", args, "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -70,7 +70,7 @@ func (d *RetryDB) QueryRow(query string, args ...interface{}) *sql.Row {
 			return row
 		}
 
-		log.Errorw("database is locked, retrying", "query", query, "args", args, "err", err)
+		log.Warnw("database is locked, retrying", "query", query, "args", args, "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -88,7 +88,7 @@ func (d *RetryDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 			return nil, err
 		}
 
-		log.Errorw("database is locked, retrying", "query", query, "args", args, "err", err)
+		log.Warnw("database is locked, retrying", "query", query, "args", args, "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -106,7 +106,7 @@ func (d *RetryDB) QueryContext(ctx context.Context, query string, args ...interf
 			return nil, err
 		}
 
-		log.Errorw("database is locked, retrying", "query", query, "args", args, "err", err)
+		log.Warnw("database is locked, retrying", "query", query, "args", args, "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -126,7 +126,7 @@ func (d *RetryDB) Begin() (*sql.Tx, error) {
 			return nil, err
 		}
 
-		log.Errorw("database is locked, retrying", "err", err)
+		log.Warnw("database is locked, retrying", "err", err)
 		time.Sleep(50 * time.Millisecond)
 	}
 }

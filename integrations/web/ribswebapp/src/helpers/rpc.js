@@ -6,7 +6,10 @@ class RibsRPC {
     static disconnectCallbacks = [];
 
     static createInstance() {
-        const rpcInstance = new RPC("ws://127.0.0.1:9010/rpc/v0"); // todo do not hardcode
+        const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+        const hostname = window.location.hostname;
+        const port = window.location.port ? `:${window.location.port}` : ""; // Include port if specified
+        const rpcInstance = new RPC(`${protocol}${hostname}${port}/rpc/v0`);
 
         RibsRPC.connectCallbacks.forEach((callback) => {
             rpcInstance.on("open", callback);

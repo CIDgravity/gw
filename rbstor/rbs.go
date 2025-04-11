@@ -21,7 +21,7 @@ import (
 	"golang.org/x/xerrors"
 )
 
-var log = logging.Logger("rbs")
+var log = logging.Logger("ribs:rbs")
 
 type openOptions struct {
 	db *ributil.RetryDB

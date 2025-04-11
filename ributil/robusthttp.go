@@ -76,13 +76,16 @@ func (r *robustHttpResponse) Read(p []byte) (n int, err error) {
 }
 
 func (r *robustHttpResponse) Close() error {
+	log.Debug("Entering function Close")
 	if r.curCloser != nil {
 		return r.curCloser.Close()
 	}
+	log.Warnw("Exiting Close with no current closer")
 	return nil
 }
 
 func (r *robustHttpResponse) startReq() error {
+	log.Debugw("Entering function startReq", "url", r.url)
 	dialer := &net.Dialer{
 		Timeout: 20 * time.Second,
 	}
@@ -92,6 +95,7 @@ func (r *robustHttpResponse) startReq() error {
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				log.Debugw("DialContext called", "network", network, "addr", addr)
 				conn, err := dialer.DialContext(ctx, network, addr)
 				if err != nil {
 					log.Errorw("DialContext error", "error", err)
@@ -119,7 +123,7 @@ func (r *robustHttpResponse) startReq() error {
 
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", r.atOff, r.dataSize-1))
 
-	log.Errorw("Before sending HTTP request", "url", r.url, "cr", fmt.Sprintf("bytes=%d-%d", r.atOff, r.dataSize))
+	log.Debugw("Before sending HTTP request", "url", r.url, "cr", fmt.Sprintf("bytes=%d-%d", r.atOff, r.dataSize))
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Errorw("Error in client.Do", "error", err)
@@ -150,7 +154,7 @@ func (r *robustHttpResponse) startReq() error {
 
 	r.cur = rw
 	r.curCloser = funcCloser(func() error {
-		log.Errorw("Closing response body")
+		log.Debugw("Closing response body")
 		rc.release()
 		return resp.Body.Close()
 	})

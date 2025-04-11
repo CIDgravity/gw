@@ -29,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/ributil/boostnet"
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
@@ -53,9 +54,14 @@ func (r *ribs) setCrawlState(state iface.CrawlState) {
 }
 
 func (r *ribs) spCrawler() {
-	r.setCrawlState(iface.CrawlState{State: crawlInit})
-
 	defer close(r.spCrawlClosed)
+
+	cfg := configuration.GetConfig()
+	if !cfg.Ribs.RunSpCrawler {
+		return
+	}
+
+	r.setCrawlState(iface.CrawlState{State: crawlInit})
 
 	ctx := context.TODO()
 
@@ -165,7 +171,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 
 	r.setCrawlState(iface.CrawlState{State: crawlQueryProviders})
 
-	const parallel = 128
+	const parallel = 64
 	throttle := make(chan struct{}, parallel)
 	const timeout = time.Second * 8
 

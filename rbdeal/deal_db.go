@@ -20,6 +20,7 @@ import (
 	iface "github.com/lotus-web3/ribs"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 type ribsDB struct {
@@ -151,6 +152,14 @@ create table if not exists offloads_s3
     group_id integer not null
         constraint offloads_s3_pk
             primary key
+);
+create table if not exists external_path
+(
+    group_id integer not null
+        constraint offloads_s3_pk
+            primary key,
+    module text,
+    path text
 );
 
 create table if not exists repairs
@@ -743,14 +752,15 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 	return out, nil
 }
 
-func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, error) {
+func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, int, error) {
 	var count int
-	err := r.db.QueryRow(`select count(*) from deals where group_id = ? and failed = 0 and case when last_retrieval_check > 0 then last_retrieval_check < (last_retrieval_check_success + 3600*24) else 1 end = 1`, group).Scan(&count)
+	var unretrievable int
+	err := r.db.QueryRow(`select count(*), COALESCE(sum(last_retrieval_check > (last_retrieval_check_success + 3600*24) and retrieval_probes_fail > 10), 0) from deals where group_id = ? and failed = 0`, group).Scan(&count, &unretrievable)
 	if err != nil {
-		return 0, xerrors.Errorf("querying deal count: %w", err)
+		return 0, 0, xerrors.Errorf("querying deal count: %w", err)
 	}
 
-	return count, nil
+	return count, unretrievable, nil
 }
 
 type dbDealInfo struct {
@@ -827,15 +837,12 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 	} else if stresp.DealStatus == nil {
 		errMsg := fmt.Sprintf("DealStatus is nil (resp err: '%s')", stresp.Error)
 
-		failed := false
-
 		_, err := r.db.Exec(`update deals set
-                 failed = ?,
                  sp_status = ?,
                  error_msg = ?,
                  last_state_query_error = ?,
                  last_state_query = ?
-             where uuid = ?`, failed, "Aborted", errMsg, errMsg, now, id)
+             where uuid = ?`, "Aborted", errMsg, errMsg, now, id)
 		if err != nil {
 			return xerrors.Errorf("update sp tracker: %w", err)
 		}
@@ -846,10 +853,7 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 			pubCid = &s
 		}
 
-		failed := stresp.DealStatus.Error != ""
-
 		_, err := r.db.Exec(`update deals set
-        failed = ?,
         sp_status = ?,
         error_msg = ?,
         sp_sealing_status = ?,
@@ -859,7 +863,7 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
         sp_txsize = ?,
         last_state_query = ?,
         last_state_query_error = ?
-        where uuid = ?`, failed, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
+        where uuid = ?`, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
 			stresp.DealStatus.SignedProposalCid.String(), pubCid,
 			stresp.NBytesReceived, stresp.NBytesReceived, stresp.TransferSize, now, lastError, id)
 		if err != nil {
@@ -926,7 +930,36 @@ func (r *ribsDB) PublishingDeals() ([]publishingDealMeta, error) {
 
 	return out, nil
 }
+func (r *ribsDB) AllUnpublishedDeals() ([]publishingDealMeta, error) {
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, "") from deals where published = 0 and failed = 0`)
+	if err != nil {
+		return nil, xerrors.Errorf("querying deals: %w", err)
+	}
+	defer res.Close()
 
+	out := make([]publishingDealMeta, 0)
+
+	for res.Next() {
+		var dm publishingDealMeta
+		err := res.Scan(&dm.DealUUID, &dm.ProviderAddr, &dm.Proposal, &dm.PublishCid)
+		if err != nil {
+			return nil, xerrors.Errorf("scanning deal: %w", err)
+		}
+
+		out = append(out, dm)
+	}
+
+	return out, nil
+}
+
+func (r *ribsDB) UpdatePublishedDealLight(id string, dealID abi.DealID) error {
+	_, err := r.db.Exec(`update deals set deal_id = ?, published = 1 where uuid = ?`, dealID, id)
+	if err != nil {
+		return xerrors.Errorf("update activated deal: %w", err)
+	}
+
+	return nil
+}
 func (r *ribsDB) UpdatePublishedDeal(id string, dealID abi.DealID, pubTs types2.TipSetKey) error {
 	_, err := r.db.Exec(`update deals set deal_id = ?, deal_pub_ts = ?, published = 1 where uuid = ?`, dealID, pubTs.String(), id)
 	if err != nil {
@@ -946,7 +979,49 @@ type publishedDealMeta struct {
 }
 
 func (r *ribsDB) PublishedDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, sp_pub_msg_cid, deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
+	if err != nil {
+		return nil, xerrors.Errorf("querying deals: %w", err)
+	}
+	defer res.Close()
+
+	out := make([]publishedDealMeta, 0)
+
+	for res.Next() {
+		var dm publishedDealMeta
+		err := res.Scan(&dm.DealUUID, &dm.ProviderAddr, &dm.Proposal, &dm.PublishCid, &dm.DealID)
+		if err != nil {
+			return nil, xerrors.Errorf("scanning deal: %w", err)
+		}
+
+		out = append(out, dm)
+	}
+
+	return out, nil
+}
+func (r *ribsDB) AllPublishedUnsealedDeals() ([]publishedDealMeta, error) {
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0`) // todo any reason to re-check failed/rejected deals?
+	if err != nil {
+		return nil, xerrors.Errorf("querying deals: %w", err)
+	}
+	defer res.Close()
+
+	out := make([]publishedDealMeta, 0)
+
+	for res.Next() {
+		var dm publishedDealMeta
+		err := res.Scan(&dm.DealUUID, &dm.ProviderAddr, &dm.Proposal, &dm.PublishCid, &dm.DealID)
+		if err != nil {
+			return nil, xerrors.Errorf("scanning deal: %w", err)
+		}
+
+		out = append(out, dm)
+	}
+
+	return out, nil
+}
+func (r *ribsDB) AllActiveDeals() ([]publishedDealMeta, error) {
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 1 and failed = 0`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -997,7 +1072,7 @@ func (r *ribsDB) MarkExpiredDeals(currentEpoch int64) error {
 		return fmt.Errorf("error getting affected rows: %w", err)
 	}
 
-	log.Warnw("Marked expired deals", "affectedRows", affectedRows)
+	log.Infow("Marked expired deals", "affectedRows", affectedRows)
 
 	return nil
 }
@@ -1735,6 +1810,47 @@ func (r *ribsDB) DropS3Offload(group iface.GroupKey) error {
 	return nil
 }
 
+func (r *ribsDB) NeedExternalModule() (*string, error) {
+	var module string
+	err := r.db.QueryRow(`select module from external_path limit 1`).Scan(&module)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, xerrors.Errorf("XYZ: query: %w", err)
+	}
+
+	return &module, nil
+}
+func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error) {
+	var module, path string
+	err := r.db.QueryRow(`select module, path from external_path where group_id = ?`, group).Scan(&module, &path)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, nil
+		}
+		return nil, nil, xerrors.Errorf("XYZ: query: %w", err)
+	}
+
+	return &module, &path, nil
+}
+func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path string) error {
+	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values (?, ?, ?)`, group, module, path)
+	if err != nil {
+		return xerrors.Errorf("XYZ: exec: %w", err)
+	}
+
+	return nil
+}
+func (r *ribsDB) DropExternalPath(group iface.GroupKey) error {
+	_, err := r.db.Exec(`delete from external_path where group_id = ?`, group)
+	if err != nil {
+		return xerrors.Errorf("XYZ: exec: %w", err)
+	}
+
+	return nil
+}
+
 func (r *ribsDB) LastTotalUploadedBytes() (int64, error) {
 	var b *int64
 	err := r.db.QueryRow(`select sum(sp_recv_bytes) from deals`).Scan(&b)
@@ -1845,6 +1961,7 @@ ORDER BY
 }
 
 func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
+	cfg := configuration.GetConfig()
 	query := `
         INSERT INTO repairs (group_id, retrievable_deals)
 			SELECT
@@ -1857,11 +1974,11 @@ func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
 			GROUP BY
 				all_groups.group_id
 			HAVING
-				COALESCE(COUNT(d.group_id), 0) < 3
+				COALESCE(COUNT(d.group_id), 0) < ?
 		ON CONFLICT (group_id) DO UPDATE
 		SET retrievable_deals = EXCLUDED.retrievable_deals;
     `
-	_, err := r.db.Exec(query)
+	_, err := r.db.Exec(query, cfg.Ribs.RetrievableRepairThreshold)
 	return err
 }
 

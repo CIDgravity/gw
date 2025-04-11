@@ -31,7 +31,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-var log = logging.Logger("carlog")
+var log = logging.Logger("ribs:carlog")
 
 const (
 	HeadName = "head"
@@ -57,7 +57,7 @@ var placeholderCid = func() cid.Cid {
 	data := make([]byte, 32)
 	multihash, err := mh.Sum(data, mh.IDENTITY, len(data))
 	if err != nil {
-		panic("Error creating multihash: " + err.Error())
+		log.Panicf("Error creating multihash: %s", err.Error())
 	}
 	return cid.NewCidV1(cid.Raw, multihash)
 }()
@@ -350,7 +350,7 @@ func Open(staging CarStorageProvider, indexPath, dataPath string, tc TruncCleanu
 				return nil, xerrors.Errorf("opening leveldb index: %w", err)
 			}
 			if os.IsNotExist(err) {
-				log.Errorw("leveldb index missing, attempting to fix", "error", err, "path", filepath.Join(indexPath, LevelIndex))
+				log.Warnw("leveldb index missing, attempting to fix", "error", err, "path", filepath.Join(indexPath, LevelIndex))
 
 				idx, err = OpenLevelDBIndex(filepath.Join(indexPath, LevelIndex+".temp"), true)
 				if err != nil {
@@ -471,11 +471,11 @@ func (j *CarLog) truncate(offset, size int64, onRemove TruncCleanup) error {
 		return xerrors.Errorf("getting multihashes to truncate: %w", err)
 	}
 
-	log.Errorw("truncate", "offset", offset, "size", size, "diff", size-offset, "idxEnts", len(toTruncate), "dataPath", j.DataPath, "listTime", time.Since(listStart))
+	log.Infow("truncate", "offset", offset, "size", size, "diff", size-offset, "idxEnts", len(toTruncate), "dataPath", j.DataPath, "listTime", time.Since(listStart))
 
 	if len(toTruncate) > 0 {
 		for i, multihash := range toTruncate {
-			log.Errorw("truncate", "idx", i, "multihash", multihash)
+			log.Infow("truncate", "idx", i, "multihash", multihash)
 		}
 
 		if err := onRemove(offset, toTruncate); err != nil {
@@ -526,7 +526,7 @@ func (j *CarLog) fixLevelIndex(h Head, w WritableIndex) error {
 			mhsBuf = mhsBuf[:0]
 			offsBuf = offsBuf[:0]
 
-			log.Errorw("fixLevelIndex", "done", done)
+			log.Infow("fixLevelIndex", "done", done)
 		}
 
 		return nil
@@ -1403,7 +1403,7 @@ func (j *CarLog) genTopCar() error {
 			return xerrors.Errorf("cannot generate top car - data position mismatch")
 		}
 
-		log.Errorw("resuming top car generation", "dataLen", j.dataLen, "dataEnd", j.dataEnd, "dataPos", j.dataPos.pos, "dataStart", j.dataStart, "dataPath", j.DataPath, "indexPath", j.IndexPath)
+		log.Infow("resuming top car generation", "dataLen", j.dataLen, "dataEnd", j.dataEnd, "dataPos", j.dataPos.pos, "dataStart", j.dataStart, "dataPath", j.DataPath, "indexPath", j.IndexPath)
 	}
 	j.dataEnd = j.dataLen
 

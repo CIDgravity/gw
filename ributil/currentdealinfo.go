@@ -21,7 +21,7 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 )
 
-var log = logging.Logger("ributil")
+var log = logging.Logger("ribs:ributil")
 
 // borrowed from lotus
 

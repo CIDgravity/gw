@@ -30,21 +30,9 @@ var (
 const clientReadDeadline = 10 * time.Second
 const clientWriteDeadline = 10 * time.Second
 
-var DealCheckInterval = 10 * time.Second
 var ParallelDealChecks = 10
 
 var minDatacap = types.NewInt(192 << 30)
-
-var (
-	minimumReplicaCount = 5
-	targetReplicaCount  = 10
-)
-
-// market wallet management
-var walletUpgradeInterval = time.Minute
-
-var minMarketBalance = types.NewInt(100_000_000_000_000_000)    // 100 mFIL
-var autoMarketBalance = types.NewInt(1_000_000_000_000_000_000) // 1 FIL
 
 // deal transfers
 

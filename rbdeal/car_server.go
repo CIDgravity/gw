@@ -358,21 +358,21 @@ func getPreferredAddrs(h host.Host) []ma.Multiaddr {
 
 func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	if req.Header.Get("Authorization") == "" {
-		log.Errorw("car request auth: no auth header", "url", req.URL)
+		log.Warnw("car request auth: no auth header", "url", req.URL)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
 	reqToken, err := r.verify(req.Context(), req.Header.Get("Authorization"))
 	if err != nil {
-		log.Errorw("car request auth: failed to verify token", "error", err, "url", req.URL)
+		log.Warnw("car request auth: failed to verify token", "error", err, "url", req.URL)
 		http.Error(w, xerrors.Errorf("car request auth: %w", err).Error(), http.StatusUnauthorized)
 		return
 	}
 
 	pid, err := peer.Decode(req.RemoteAddr)
 	if err != nil {
-		log.Infow("data transfer request failed: parsing remote address as peer ID",
+		log.Warnw("data transfer request failed: parsing remote address as peer ID",
 			"remote-addr", req.RemoteAddr, "err", err)
 		http.Error(w, "Failed to parse remote address '"+req.RemoteAddr+"' as peer ID", http.StatusBadRequest)
 		return
@@ -391,7 +391,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	if req.Header.Get("Range") != "" {
 		s1 := strings.Split(req.Header.Get("Range"), "=")
 		if len(s1) != 2 {
-			log.Errorw("invalid content range (1)", "range", req.Header.Get("Content-Range"), "s1", s1)
+			log.Warnw("invalid content range (1)", "range", req.Header.Get("Content-Range"), "s1", s1)
 			http.Error(w, "invalid content range", http.StatusBadRequest)
 			return
 		}
@@ -403,14 +403,14 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 		s2 := strings.Split(s1[1], "-")
 		if len(s2) != 2 {
-			log.Errorw("invalid content range (3)", "range", req.Header.Get("Content-Range"), "s2", s2)
+			log.Warnw("invalid content range (3)", "range", req.Header.Get("Content-Range"), "s2", s2)
 			http.Error(w, "invalid content range", http.StatusBadRequest)
 			return
 		}
 
 		toDiscard, err = strconv.ParseInt(s2[0], 10, 64)
 		if err != nil {
-			log.Errorw("invalid content range (4)", "range", req.Header.Get("Content-Range"), "s2", s2)
+			log.Warnw("invalid content range (4)", "range", req.Header.Get("Content-Range"), "s2", s2)
 			http.Error(w, "invalid content range", http.StatusBadRequest)
 			return
 		}
@@ -418,7 +418,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		if s2[1] != "" {
 			toLimit, err = strconv.ParseInt(s2[1], 10, 64)
 			if err != nil {
-				log.Errorw("invalid content range (5)", "range", req.Header.Get("Content-Range"), "s2", s2)
+				log.Warnw("invalid content range (5)", "range", req.Header.Get("Content-Range"), "s2", s2)
 				http.Error(w, "invalid content range", http.StatusBadRequest)
 				return
 			}
@@ -453,6 +453,23 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		r.s3Redirects.Add(1)
 
 		http.Redirect(w, req, s3u, http.StatusFound)
+		return
+	}
+
+	// external offload
+	extu, err := r.maybeGetExternalURL(reqToken.Group)
+	if err != nil {
+		log.Errorw("XYZ: car request: external url", "error", err, "url", req.URL)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if extu != nil {
+		// in s3, redirect
+		log.Infow("XYZ: car request: redir to external url", "error", err, "url", *extu)
+
+		//r.s3Redirects.Add(1)
+
+		http.Redirect(w, req, *extu, http.StatusFound)
 		return
 	}
 
@@ -529,7 +546,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		transferSpeedMbps := float64(transferredBytes*8) / 1e6 / elapsedTime.Seconds()
 
 		if transferSpeedMbps < float64(minTransferMbps) {
-			log.Errorw("car request: transfer speed too slow", "url", req.URL, "speed", transferSpeedMbps, "deal", reqToken.DealUUID, "group", reqToken.Group)
+			log.Warnw("car request: transfer speed too slow", "url", req.URL, "speed", transferSpeedMbps, "deal", reqToken.DealUUID, "group", reqToken.Group)
 			http.Error(w, "transfer speed too slow", http.StatusGone)
 			return
 		}

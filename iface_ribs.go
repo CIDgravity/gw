@@ -17,6 +17,8 @@ type RIBS interface {
 	Wallet() Wallet
 	DealDiag() RIBSDiag
 
+	MetaDB() MetadataDB
+
 	io.Closer
 }
 

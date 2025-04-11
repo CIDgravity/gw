@@ -17,13 +17,16 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/lotus-web3/ribs/cidgravity"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/rbstor"
+	"github.com/lotus-web3/ribs/rbmeta"
 	"github.com/lotus-web3/ribs/ributil"
 	"golang.org/x/xerrors"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
-var log = logging.Logger("ribs")
+var log = logging.Logger("ribs:rbdeal")
 
 type openOptions struct {
 	hostGetter          func(...libp2p.Option) (host.Host, error)
@@ -73,6 +76,7 @@ func WithFileCoinApiEndpoint(wp string) OpenOption {
 type ribs struct {
 	iface.RBS
 	db *ribsDB
+	mdb iface.MetadataDB
 
 	host   host.Host
 	wallet *ributil.LocalWallet
@@ -111,6 +115,9 @@ type ribs struct {
 	rateCounters *ributil.RateCounters[peer.ID]
 
 	/* car upload offload (S3) */
+	cidg cidgravity.CIDGravity
+	canSendDealLastCheck  time.Time
+	canSendDealLastResult bool
 
 	s3          *s3.S3
 	s3Bucket    string
@@ -122,6 +129,9 @@ type ribs struct {
 	/* s3 stats */
 
 	s3UploadBytes, s3UploadStarted, s3UploadDone, s3UploadErr, s3Redirects, s3ReadReqs, s3ReadBytes atomic.Int64
+
+	/* external modules */
+	externalOffloader *ExternalOffloader
 
 	/* dealmaking */
 	dealsLk        sync.Mutex
@@ -144,6 +154,11 @@ type ribs struct {
 	repairFetchCounters *ributil.RateCounters[iface.GroupKey]
 }
 
+func (r *ribs) MetaDB() iface.MetadataDB {
+	return r.mdb
+}
+
+
 func (r *ribs) Wallet() iface.Wallet {
 	return r
 }
@@ -153,15 +168,12 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		return nil, xerrors.Errorf("make root dir: %w", err)
 	}
 
+	cfg := configuration.GetConfig()
 	opt := &openOptions{
 		hostGetter:          libp2p.New,
 		localWalletOpener:   ributil.OpenWallet,
 		localWalletPath:     "~/.ribswallet",
-		fileCoinAPIEndpoint: "https://api.chain.love/rpc/v1",
-	}
-
-	if os.Getenv("RIBS_FILECOIN_API_ENDPOINT") != "" {
-		opt.fileCoinAPIEndpoint = os.Getenv("RIBS_FILECOIN_API_ENDPOINT")
+		fileCoinAPIEndpoint: cfg.Ribs.FilecoinApiEndpoint,
 	}
 
 	for _, o := range opts {
@@ -276,11 +288,20 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		return nil, xerrors.Errorf("trying to initialize S3 offload: %w", err)
 	}
 
+	if err := r.maybeInitExternal(); err != nil {
+		return nil, xerrors.Errorf("XYZ: trying to initialize external offload: %w", err)
+	}
+
 	r.RBS.ExternalStorage().InstallProvider(rp)
 
 	if err := r.RBS.Start(); err != nil {
 		return nil, xerrors.Errorf("start storage: %w", err)
 	}
+	mdb, err := rbmeta.Open(r)
+	if err != nil {
+		return nil, xerrors.Errorf("Initializing MetaDatabase: %w", err)
+	}
+	r.mdb = mdb
 
 	go r.spCrawler()
 	go r.dealTracker(context.TODO())
@@ -290,10 +311,12 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		return nil, xerrors.Errorf("setup car server: %w", err)
 	}
 
+	/* XXX: no repair worker for now, we don't have a staging area to repair to
 	go r.repairWorker(context.TODO(), 0)
 	go r.repairWorker(context.TODO(), 1)
 	go r.repairWorker(context.TODO(), 2)
 	go r.repairWorker(context.TODO(), 3)
+	*/
 	/*go r.repairWorker(context.TODO(), 4)
 	go r.repairWorker(context.TODO(), 5)
 	go r.repairWorker(context.TODO(), 6)
@@ -317,18 +340,20 @@ func (r *ribs) subGroupChanges() {
 
 func (r *ribs) onSub(group iface.GroupKey, from, to iface.GroupState) {
 	if to == iface.GroupStateLocalReadyForDeals {
-		c, err := r.db.GetNonFailedDealCount(group)
+		c, _, err := r.db.GetNonFailedDealCount(group)
 		if err != nil {
 			log.Errorf("getting non-failed deal count: %s", err)
 			return
 		}
 
-		if c >= targetReplicaCount {
+		cfg := configuration.GetConfig()
+		// lose check, will go in loop and check it out later anyway if needed
+		if c >= cfg.Ribs.MinimumRetrievableCount {
 			return
 		}
 
 		go func() {
-			err = r.makeMoreDeals(context.TODO(), group, r.wallet)
+			err = r.makeMoreDeals(context.TODO(), group, r.wallet, nil)
 			if err != nil {
 				log.Errorf("starting new deals: %s", err)
 			}

@@ -22,19 +22,26 @@ import (
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
 	mh "github.com/multiformats/go-multihash"
+	"github.com/lotus-web3/ribs"
 )
 
-func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root) {
+func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
+	log.Infow("davfs: Starting davfs")
 	davHandler := &webdav.Handler{
 		Prefix:     "",
-		FileSystem: &mfsDavFs{mr: fr},
+		FileSystem: &mfsDavFs{mr: fr, mdb: mdb},
 		LockSystem: webdav.NewMemLS(),
 
 		Logger: func(r *http.Request, err error) {
-			log.Errorw("dav", "err", err, "req", r.URL, "method", r.Method)
+			if err != nil {	
+				log.Errorw("dav", "err", err, "req", r.URL, "method", r.Method)
+			} else {
+				log.Infow("dav", "req", r.URL, "method", r.Method)
+			}
 		},
 	}
 
+	log.Infow("davfs: Listening")
 	srv := &http.Server{
 		Addr:    ":8077",
 		Handler: davHandler,
@@ -55,32 +62,62 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root) {
 			return srv.Shutdown(ctx)
 		},
 	})
+	log.Infow("davfs: Started")
 }
 
 type mfsDavFs struct {
 	mr *mfs.Root
+	mdb ribs.MetadataDB
 }
 
 func (m *mfsDavFs) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
-	return mfs.Mkdir(m.mr, name, mfs.MkdirOpts{Mkparents: true, Mode: perm, ModTime: time.Now()})
+	ret := mfs.Mkdir(m.mr, name, mfs.MkdirOpts{Mkparents: true, Mode: perm, ModTime: time.Now()})
+	if ret != nil {
+		log.Errorw("mfsDavFs.Mkdir", "error", ret, "name", name)
+	} else {
+		log.Infof("mfsDavFs.Mkdir %s", name)
+		// mfs.mdb.WriteDir - but we don't have CID, and probably empty... wait for some next update?
+	}
+	return ret
 }
 
 type mfsDavFile struct {
 	mr  *mfs.Root
 	mfd mfs.FileDescriptor
+	mdb ribs.MetadataDB
 
 	mode  os.FileMode
 	mtime time.Time
 
 	path string
+	mfi *mfs.File
+	writable bool
 }
 
 func (m *mfsDavFile) Close() error {
-	return m.mfd.Close()
+	ret := m.mfd.Close()
+	if (m.writable) {
+		node, err := m.mfi.GetNode()
+		if err != nil {
+			log.Errorw("Failed to get FileNode on File.Close()", "error", err, "path", m.path)
+			return err
+		}
+		size, err := node.Size()
+		if err != nil {
+			log.Errorw("Failed to get Node size on File.Close()", "error", err, "path", m.path)
+		}
+		if err := m.mdb.WriteFile(m.path, node.Cid().String(), size); err != nil {
+			log.Errorw("Failed to WriteFile File.Close()", "error", err, "path", m.path)
+			return err
+		}
+	}
+	return ret
 }
 
 func (m *mfsDavFile) Read(p []byte) (n int, err error) {
-	return m.mfd.Read(p)
+	n, err = m.mfd.Read(p)
+	log.Debugw("mfsDavFile.Read", "path", m.path, "len", n)
+	return
 }
 
 func (m *mfsDavFile) Seek(offset int64, whence int) (int64, error) {
@@ -92,33 +129,46 @@ func (m *mfsDavFile) Readdir(count int) ([]fs.FileInfo, error) {
 }
 
 func (m *mfsDavFile) Stat() (fs.FileInfo, error) {
+	log.Debugw("mfsDavFile.Stat", "path", m.path)
 	fsz, err := m.mfd.Size()
 	if err != nil {
 		return nil, err
+	}
+
+	mtime := m.mtime
+	if mtime.IsZero() {
+		mtime = time.Unix(0, 0)
 	}
 
 	return &basicFileInfos{
 		name:    gopath.Base(m.path),
 		size:    fsz,
 		mode:    m.mode,
-		modTime: m.mtime,
+		modTime: mtime,
 		isDir:   false,
 	}, nil
 }
 
 func (m *mfsDavFile) Write(p []byte) (n int, err error) {
 	return m.mfd.Write(p)
+	n, err = m.mfd.Write(p)
+	log.Debugw("mfsDavFile.Write", "path", m.path, "size", n)
+	return
 }
 
 type mfsDavDir struct {
 	mr  *mfs.Root
 	mfd *mfs.Directory
+	mdb ribs.MetadataDB
 
 	path string
 }
 
 func (m *mfsDavDir) Close() error {
-	return m.mfd.Flush()
+	log.Debugw("mfsDavDir.Close", "path", m.path)
+	ret := m.mfd.Flush()
+	log.Debugw("mfsDavDir.Closed", "path", m.path)
+	return ret
 }
 
 func (m *mfsDavDir) Read(p []byte) (n int, err error) {
@@ -130,6 +180,7 @@ func (m *mfsDavDir) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (m *mfsDavDir) Readdir(count int) ([]fs.FileInfo, error) {
+	log.Debugw("mfsDavDir.Readdir", "path", m.path)
 	var out []fs.FileInfo
 
 	var errStop = errors.New("stop")
@@ -164,6 +215,7 @@ func (m *mfsDavDir) Readdir(count int) ([]fs.FileInfo, error) {
 }
 
 func (m *mfsDavDir) Stat() (fs.FileInfo, error) {
+	log.Debugw("mfsDavDir.Stat", "path", m.path)
 	nd, err := m.mfd.GetNode()
 	if err != nil {
 		return nil, xerrors.Errorf("get node for dir stat: %w", err)
@@ -183,9 +235,13 @@ func (m *mfsDavDir) Stat() (fs.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		mtime := d.ModTime()
+		if mtime.IsZero() {
+			mtime = time.Unix(0, 0)
+		}
 
 		out.mode = d.Mode()
-		out.modTime = d.ModTime()
+		out.modTime = mtime
 	}
 
 	return out, nil
@@ -219,6 +275,12 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 
 	var fi *mfs.File
 
+	/*
+	must_be_dir := path[len(path)-1] == '/'
+	if must_be_dir && path != "/" {
+		path = path[:len(path)-1]
+	}
+	*/
 	target, err := mfs.Lookup(m.mr, path)
 	switch err {
 	case nil:
@@ -228,10 +290,16 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 			return &mfsDavDir{
 				mr:  m.mr,
 				mfd: target.(*mfs.Directory),
+				mdb:  m.mdb,
 
-				path: name,
+				path: path,
 			}, nil
 		}
+	/*
+	if must_be_dir {
+		return nil, xerrors.New("not a directory")
+	}
+	*/
 
 	case os.ErrNotExist:
 		if !create {
@@ -277,6 +345,9 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 	if m, err := fi.ModTime(); err == nil {
 		mtime = m
 	}
+	if mtime.IsZero() {
+		mtime = time.Unix(0, 0)
+	}
 
 	fd, err := fi.Open(mfs.Flags{Read: read, Write: write, Sync: flush})
 	if err != nil {
@@ -299,14 +370,19 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 		return nil, xerrors.Errorf("mfs open seek: %w", err)
 	}
 
+	node, _ := fi.GetNode()
+	log.Debugw("mfsDavFs.OpenFile", "path", name, "writable", write, "cid", node.Cid().String(), "mtime", mtime, "mode", mode)
 	return &mfsDavFile{
 		mr:  m.mr,
 		mfd: fd,
+		mdb:  m.mdb,
 
 		mode:  mode,
 		mtime: mtime,
 
 		path: name,
+		mfi: fi,
+		writable: write,
 	}, nil
 }
 
@@ -318,7 +394,7 @@ var v1CidPrefix = cid.Prefix{
 }
 
 func (m *mfsDavFs) RemoveAll(ctx context.Context, name string) error {
-	log.Errorw("REMOVE ALL", "name", name)
+	log.Debugw("REMOVE ALL", "name", name)
 	arg := name
 
 	path, err := checkPath(arg)
@@ -377,6 +453,9 @@ func (m *mfsDavFs) RemoveAll(ctx context.Context, name string) error {
 	if err != nil {
 		return xerrors.Errorf("%s: %w", path, err)
 	}
+	if err := m.mdb.Remove(name); err != nil {
+		log.Errorw("Failed to remove metadata file info", "error", err, "path", name)
+	}
 
 	err = pdir.Flush()
 	if err != nil {
@@ -416,7 +495,7 @@ func getParentDir(root *mfs.Root, dir string) (*mfs.Directory, error) {
 }
 
 func (m *mfsDavFs) Rename(ctx context.Context, oldName, newName string) error {
-	log.Errorw("RENAME", "oldName", oldName, "newName", newName)
+	log.Debugw("RENAME", "oldName", oldName, "newName", newName)
 	src, err := checkPath(oldName)
 	if err != nil {
 		return err
@@ -425,17 +504,27 @@ func (m *mfsDavFs) Rename(ctx context.Context, oldName, newName string) error {
 	if err != nil {
 		return err
 	}
+	if src != "/" && src[len(src)-1] == '/' && dst != "/" && dst[len(dst)-1] == '/' {
+		src = src[:len(src)-1]
+		dst = dst[:len(dst)-1]
+	}
 
 	err = mfs.Mv(m.mr, src, dst)
 	/*if err == nil && flush {
 		_, err = mfs.FlushPath(ctx, m.mr, "/")
 	}*/
+	if err != nil {
+		return err
+	}
+	if err := m.mdb.Rename(src, dst); err != nil {
+		log.Errorw("Rename: failed to rename metadata", "error", err, "src", src, "dst", dst)
+	}
 
-	return err
+	return nil
 }
 
 func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	log.Errorw("STAT", "name", name)
+	log.Debugw("mfsDavfs.Stat", "name", name)
 	path, err := checkPath(name)
 	if err != nil {
 		return nil, err
@@ -471,13 +560,24 @@ func (m *mfsDavFs) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 			Type:           ndtype,
 		}, nil*/
 
-		return &basicFileInfos{
+		ret := &basicFileInfos{
 			name:    gopath.Base(path),
 			size:    int64(d.FileSize()), // nd.Size?
 			mode:    d.Mode(),
 			modTime: d.ModTime(),
 			isDir:   d.Type() == ft.TDirectory || d.Type() == ft.THAMTShard,
-		}, nil
+		}
+		if ret.modTime.IsZero() {
+			ret.modTime = time.Unix(0, 0)
+		}
+		log.Debugw("mfsDavfs.Stat",
+			"name", name,
+			"ret.name", ret.name,
+			"ret.size", ret.size,
+			"ret.mode", ret.mode,
+			"ret.modTime", ret.modTime,
+			"ret.isDir", ret.isDir)
+		return ret, nil
 	case *dag.RawNode:
 		return &basicFileInfos{
 			name:    gopath.Base(path),

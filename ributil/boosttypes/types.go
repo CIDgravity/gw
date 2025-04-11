@@ -86,24 +86,24 @@ type DealParams struct {
 	ClientDealProposal market.ClientDealProposal
 	DealDataRoot       cid.Cid
 	Transfer           Transfer // Transfer params will be the zero value if this is an offline deal
+	RemoveUnsealedCopy bool
+	SkipIPNIAnnounce   bool
 }
 
-type DealFilterParams struct {
-	DealParams           *DealParams
-	SealingPipelineState *Status
+/*
+type DirectDealParams struct {
+       DealUUID           uuid.UUID
+       AllocationID       verifreg.AllocationId
+       PieceCid           cid.Cid
+       ClientAddr         address.Address
+       StartEpoch         abi.ChainEpoch
+       EndEpoch           abi.ChainEpoch
+       FilePath           string
+       DeleteAfterImport  bool
+       RemoveUnsealedCopy bool
+       SkipIPNIAnnounce   bool
 }
-
-type Status struct {
-	SectorStates map[api.SectorState]int
-	Workers      []*worker
-}
-
-type worker struct {
-	ID     string
-	Start  time.Time
-	Stage  string
-	Sector int32
-}
+*/
 
 // Transfer has the parameters for a data transfer
 type Transfer struct {

@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/url"
-	"os"
 	"path"
 	"sort"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"golang.org/x/xerrors"
 
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 func (r *ribs) maybeInitS3Offload() error {
@@ -32,8 +32,8 @@ func (r *ribs) maybeInitS3Offload() error {
 		return xerrors.Errorf("failed to check if S3 offload is needed: %w", err)
 	}
 
-	endpoint := os.Getenv("S3_ENDPOINT")
-	if endpoint == "" {
+	cfg := configuration.GetConfig()
+	if cfg.S3.Endpoint == "" {
 		if need {
 			return xerrors.Errorf("S3 offload enabled but S3_ENDPOINT not set")
 		}
@@ -41,24 +41,17 @@ func (r *ribs) maybeInitS3Offload() error {
 		return nil
 	}
 
-	log.Infow("S3 offload enabled", "endpoint", endpoint)
+	log.Infow("S3 offload enabled", "endpoint", cfg.S3.Endpoint)
 
-	region := os.Getenv("S3_REGION")
-	accessKey := os.Getenv("S3_ACCESS_KEY")
-	secretKey := os.Getenv("S3_SECRET_KEY")
-	token := os.Getenv("S3_TOKEN")
-	bucket := os.Getenv("S3_BUCKET")
-	bucketUrl := os.Getenv("S3_BUCKET_URL")
-
-	burl, err := url.Parse(bucketUrl)
+	burl, err := url.Parse(cfg.S3.BucketUrl)
 	if err != nil {
 		return xerrors.Errorf("failed to parse S3_BUCKET_URL: %w", err)
 	}
 
 	s3Config := &aws.Config{
-		Endpoint:    aws.String(endpoint),
-		Credentials: credentials.NewStaticCredentials(accessKey, secretKey, token),
-		Region:      aws.String(region),
+		Endpoint:    aws.String(cfg.S3.Endpoint),
+		Credentials: credentials.NewStaticCredentials(cfg.S3.AccessKey, cfg.S3.SecretKey, cfg.S3.Token),
+		Region:      aws.String(cfg.S3.Region),
 	}
 
 	asess, err := session.NewSession(s3Config)
@@ -67,7 +60,7 @@ func (r *ribs) maybeInitS3Offload() error {
 	}
 
 	r.s3 = s3.New(asess)
-	r.s3Bucket = bucket
+	r.s3Bucket = cfg.S3.Bucket
 	r.s3BucketUrl = burl
 
 	r.RBS.StagingStorage().InstallStagingProvider(&ribsStagingProvider{r: r})
