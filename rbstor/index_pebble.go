@@ -44,7 +44,11 @@ func NewPebbleIndex(path string) (*PebbleIndex, error) {
 		db: db,
 		iterPool: sync.Pool{
 			New: func() interface{} {
-				return db.NewIter(nil)
+				it, err := db.NewIter(nil)
+				if err != nil {
+					panic(err)
+				}
+				return it
 			},
 		},
 	}, nil
