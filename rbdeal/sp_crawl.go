@@ -123,7 +123,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 		return xerrors.Errorf("loading market actor: %w", err)
 	}
 
-	bt, err := mact.LockedTable()
+	bt, err := mact.EscrowTable()
 	if err != nil {
 		return xerrors.Errorf("getting locked table: %w", err)
 	}
@@ -214,7 +214,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 				defer stlk.Unlock()
 
 				if err != nil {
-					log.Debugw("error querying provider", "actor", actor, "err", err)
+					log.Errorw("error querying provider", "actor", actor, "err", err)
 				}
 
 				if err := r.db.UpdateProviderProtocols(actor, res); err != nil {

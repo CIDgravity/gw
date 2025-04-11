@@ -257,7 +257,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		}
 
 		// generate transfer token
-		transfer, err := r.makeCarRequest(id, time.Hour*36, dealInfo.CarSize, dealUuid)
+		transfer, err := r.makeCarRequest(id, dealDownloadTimeout, dealInfo.CarSize, dealUuid)
 		if err != nil {
 			return xerrors.Errorf("make car request token: %w", err)
 		}
