@@ -67,6 +67,11 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 	if module != nil {
 		return nil
 	}
+
+	if r.externalOffloader == nil {
+		return nil
+	}
+
 	return (r.externalOffloader).EnsureExternalPush(gid)
 }
 func (r *ribs) maybeGetExternalURL(gid iface.GroupKey) (*string, error) {
