@@ -40,7 +40,7 @@ func (r *ribs) maybeInitExternal() error {
 		}
 		if found {
 			log.Infow("XYZ: External module configured", "name", module.GetModuleName())
-			(*r).externalOffloader = &module
+			r.externalOffloader = module
 			return nil
 		}
 	}
@@ -56,7 +56,7 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 		if r.externalOffloader == nil {
 			return nil
 		}
-		if lmod := (*r.externalOffloader).GetModuleName(); lmod != *mname {
+		if lmod := r.externalOffloader.GetModuleName(); lmod != *mname {
 			return xerrors.Errorf("XYZ: External: need %s module, %s loaded", mname, lmod)
 		}
 	}
@@ -67,7 +67,7 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 	if module != nil {
 		return nil
 	}
-	return (*r.externalOffloader).EnsureExternalPush(gid)
+	return (r.externalOffloader).EnsureExternalPush(gid)
 }
 func (r *ribs) maybeGetExternalURL(gid iface.GroupKey) (*string, error) {
 	module, path, err := r.db.GetExternalPath(gid)
@@ -80,10 +80,10 @@ func (r *ribs) maybeGetExternalURL(gid iface.GroupKey) (*string, error) {
 	if r.externalOffloader == nil {
 		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but no module loaded", *module)
 	}
-	if lmod := (*r.externalOffloader).GetModuleName(); lmod != *module {
+	if lmod := r.externalOffloader.GetModuleName(); lmod != *module {
 		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but %s module loaded", *module, lmod)
 	}
-	return (*r.externalOffloader).GetGroupExternalURL(gid, *path)
+	return r.externalOffloader.GetGroupExternalURL(gid, *path)
 }
 func (r *ribs) cleanupExternalOffload(gid iface.GroupKey) error {
 	module, epath, err := r.db.GetExternalPath(gid)
@@ -98,10 +98,10 @@ func (r *ribs) cleanupExternalOffload(gid iface.GroupKey) error {
 	if r.externalOffloader == nil {
 		return xerrors.Errorf("XYZ: External: offloaded to %s, but no module loaded", *module)
 	}
-	if lmod := (*r.externalOffloader).GetModuleName(); lmod != *module {
+	if lmod := r.externalOffloader.GetModuleName(); lmod != *module {
 		return xerrors.Errorf("XYZ: External: offloaded to %s, but %s module loaded", *module, lmod)
 	}
-	return (*r.externalOffloader).CleanExternal(gid, *epath)
+	return r.externalOffloader.CleanExternal(gid, *epath)
 }
 
 func getLocalWebPath() string {

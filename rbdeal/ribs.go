@@ -131,7 +131,7 @@ type ribs struct {
 	s3UploadBytes, s3UploadStarted, s3UploadDone, s3UploadErr, s3Redirects, s3ReadReqs, s3ReadBytes atomic.Int64
 
 	/* external modules */
-	externalOffloader *ExternalOffloader
+	externalOffloader ExternalOffloader
 
 	/* dealmaking */
 	dealsLk        sync.Mutex
