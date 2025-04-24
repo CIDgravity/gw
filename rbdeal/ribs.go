@@ -12,18 +12,19 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/fatih/color"
+	"github.com/filecoin-project/go-address"
 	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/lotus-web3/ribs/cidgravity"
 	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/rbstor"
+	"github.com/lotus-web3/ribs/cidgravity"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/rbmeta"
+	"github.com/lotus-web3/ribs/rbstor"
 	"github.com/lotus-web3/ribs/ributil"
 	"golang.org/x/xerrors"
-	"github.com/lotus-web3/ribs/configuration"
 )
 
 var log = logging.Logger("ribs:rbdeal")
@@ -75,7 +76,7 @@ func WithFileCoinApiEndpoint(wp string) OpenOption {
 
 type ribs struct {
 	iface.RBS
-	db *ribsDB
+	db  *ribsDB
 	mdb iface.MetadataDB
 
 	host   host.Host
@@ -115,7 +116,7 @@ type ribs struct {
 	rateCounters *ributil.RateCounters[peer.ID]
 
 	/* car upload offload (S3) */
-	cidg cidgravity.CIDGravity
+	cidg                  cidgravity.CIDGravity
 	canSendDealLastCheck  time.Time
 	canSendDealLastResult bool
 
@@ -158,9 +159,58 @@ func (r *ribs) MetaDB() iface.MetadataDB {
 	return r.mdb
 }
 
-
 func (r *ribs) Wallet() iface.Wallet {
 	return r
+}
+
+func OpenOrCreateWallet(path string) (*ributil.LocalWallet, address.Address, error) {
+	wallet, err := ributil.OpenWallet(path)
+	if err != nil {
+		return nil, address.Undef, fmt.Errorf("open wallet: %w", err)
+	}
+
+	defWallet, err := wallet.GetDefault()
+	if err != nil {
+		wl, err := wallet.WalletList(context.TODO())
+		if err != nil {
+			return nil, address.Undef, fmt.Errorf("get wallet list: %w", err)
+		}
+
+		if len(wl) == 0 {
+			a, err := wallet.WalletNew(context.TODO(), "secp256k1")
+			if err != nil {
+				return nil, address.Undef, fmt.Errorf("creating wallet: %w", err)
+			}
+
+			color.Yellow("--------------------------------------------------------------")
+			fmt.Println("CREATED NEW GATEWAY WALLET")
+			fmt.Println("ADDRESS: ", color.GreenString("%s", a))
+			fmt.Println("")
+			fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", path)
+			fmt.Println("")
+			fmt.Println("Before using Gateway, you must fund your wallet with FIL.")
+			fmt.Println("You can also supply it with DataCap if you want to make")
+			fmt.Println("FIL+ deals.")
+			color.Yellow("--------------------------------------------------------------")
+
+			wl = append(wl, a)
+		}
+
+		if len(wl) != 1 {
+			return nil, address.Undef, fmt.Errorf("no default wallet or more than one wallet: %#v", wl)
+		}
+
+		if err := wallet.SetDefault(wl[0]); err != nil {
+			return nil, address.Undef, fmt.Errorf("setting default wallet: %w", err)
+		}
+
+		defWallet, err = wallet.GetDefault()
+		if err != nil {
+			return nil, address.Undef, fmt.Errorf("getting default wallet: %w", err)
+		}
+	}
+
+	return wallet, defWallet, nil
 }
 
 func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
@@ -228,56 +278,12 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 	r.retrProv = rp
 
 	{
-		wallet, err := opt.localWalletOpener(opt.localWalletPath)
+		wallet, defWallet, err := OpenOrCreateWallet(opt.localWalletPath)
 		if err != nil {
-			return nil, xerrors.Errorf("open wallet: %w", err)
+			return nil, xerrors.Errorf("open/create wallet: %w", err)
 		}
-
-		defWallet, err := wallet.GetDefault()
-		if err != nil {
-			wl, err := wallet.WalletList(context.TODO())
-			if err != nil {
-				return nil, xerrors.Errorf("get wallet list: %w", err)
-			}
-
-			if len(wl) == 0 {
-				a, err := wallet.WalletNew(context.TODO(), "secp256k1")
-				if err != nil {
-					return nil, xerrors.Errorf("creating wallet: %w", err)
-				}
-
-				color.Yellow("--------------------------------------------------------------")
-				fmt.Println("CREATED NEW RIBS WALLET")
-				fmt.Println("ADDRESS: ", color.GreenString("%s", a))
-				fmt.Println("")
-				fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", opt.localWalletPath)
-				fmt.Println("")
-				fmt.Println("Before using RIBS, you must fund your wallet with FIL.")
-				fmt.Println("You can also supply it with DataCap if you want to make")
-				fmt.Println("FIL+ deals.")
-				color.Yellow("--------------------------------------------------------------")
-
-				wl = append(wl, a)
-			}
-
-			if len(wl) != 1 {
-				return nil, xerrors.Errorf("no default wallet or more than one wallet: %#v", wl)
-			}
-
-			if err := wallet.SetDefault(wl[0]); err != nil {
-				return nil, xerrors.Errorf("setting default wallet: %w", err)
-			}
-
-			defWallet, err = wallet.GetDefault()
-			if err != nil {
-				return nil, xerrors.Errorf("getting default wallet: %w", err)
-			}
-		}
-
 		fmt.Println("RIBS Wallet: ", defWallet)
-
 		r.wallet = wallet
-
 		r.host, err = opt.hostGetter()
 		if err != nil {
 			return nil, xerrors.Errorf("creating host: %w", err)
