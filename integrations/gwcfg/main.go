@@ -8,13 +8,17 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -50,9 +54,9 @@ func collectKeys() ([]groupedEnvKey, error) {
 	sectionFor := func(env string) (section string, advanced bool) {
 		switch {
 		case strings.HasPrefix(env, "EXTERNAL_S3_"):
-			return "S3", false
+			return "Upload:S3", false
 		case strings.HasPrefix(env, "EXTERNAL_LOCALWEB_"):
-			return "LocalWeb", false
+			return "Upload:LocalWeb", false
 		case strings.HasPrefix(env, "CIDGRAVITY_"):
 			return "CIDGravity", false
 		case strings.HasPrefix(env, "RIBS_WALLET_"):
@@ -266,6 +270,99 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 	// commit changes
 	for _, b := range bindings {
 		env[b.key] = *b.value
+	}
+
+	if section == "Upload:LocalWeb" && !editAdvanced {
+		builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
+		port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
+		urlStr := env["EXTERNAL_LOCALWEB_URL"]
+		if builtin == "true" {
+			// Validate port and URL
+			if !isValidPort(port) {
+				fmt.Printf("❌ Port %q is not valid. Please edit the settings.\n", port)
+				return editSection("Upload:LocalWeb", keys, env, false)
+			}
+			if !isValidURL(urlStr) {
+				fmt.Printf("❌ URL %q is not valid. Please edit the settings.\n", urlStr)
+				return editSection("Upload:LocalWeb", keys, env, false)
+			}
+
+			// Ask if user wants to test
+			doTest := false
+			if err := huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title("Do you want to test the endpoint online?").
+						Description("* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity.").
+						Value(&doTest),
+				),
+			).Run(); err != nil {
+				return err
+			}
+			if doTest {
+				for {
+					// Start temp server
+					handler := http.NewServeMux()
+					handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+						fmt.Fprintln(w, "gwcfg test OK")
+					})
+					shutdown, err := startTempHTTPServer(port, handler)
+					if err != nil {
+						fmt.Printf("❌ Failed to start temporary server: %s\n", err)
+						goto afterTest
+					}
+
+					// Wait a moment for server to start
+					time.Sleep(500 * time.Millisecond)
+
+					{
+						// Test endpoint
+						testURL := urlStr
+						_, err := url.Parse(testURL)
+						if err != nil {
+							fmt.Printf("❌ Failed to parse URL: %s\n", err)
+							goto afterTest
+						}
+
+						fmt.Printf("Testing endpoint: %s ...\n", testURL)
+						testErr := testEndpoint(testURL)
+						if testErr == nil {
+							fmt.Println("✅ Endpoint is reachable!")
+						} else {
+							fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
+						}
+					}
+
+					// Stop the server immediately after the test
+					shutdown()
+
+				afterTest:
+					// Prompt for retry/edit/continue
+					var action string
+					opts := []huh.Option[string]{
+						huh.NewOption("Retry test", "retry"),
+						huh.NewOption("Edit settings", "edit"),
+						huh.NewOption("Continue", "continue"),
+					}
+					if err := huh.NewForm(
+						huh.NewGroup(
+							huh.NewSelect[string]().Title("What do you want to do?").Options(opts...).Value(&action),
+						),
+					).Run(); err != nil {
+						return err
+					}
+					switch action {
+					case "retry":
+						continue // re-run the test loop
+					case "edit":
+						return editSection("Upload:LocalWeb", keys, env, false)
+					case "continue":
+						break // exit the test loop and continue
+					}
+					break // exit the test loop
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -527,6 +624,14 @@ func envComment(key string) string {
 		return "Time SPs have to handle the deal (Hours)"
 	case "RIBS_DATA":
 		return "The path to the RIBS data directory"
+	case "EXTERNAL_LOCALWEB_BUILTIN_SERVER":
+		return "Whether to run a local web server for deal uploads (true/false)"
+	case "EXTERNAL_LOCALWEB_SERVER_PORT":
+		return "The port to run the local web server on"
+	case "EXTERNAL_LOCALWEB_SERVER_TLS":
+		return "Whether to run the local web server with TLS (true/false)"
+	case "EXTERNAL_LOCALWEB_PATH":
+		return "The path to the local web server's data directory (required for external web server, allowed for builtin server)"
 	}
 	return ""
 }
@@ -588,6 +693,51 @@ func signChallengeWithWallet(walletPath string, challenge string) (string, error
 	sigBytes := append([]byte{byte(sig.Type)}, sig.Data...)
 
 	return hex.EncodeToString(sigBytes), nil
+}
+
+// Helper to validate port
+func isValidPort(portStr string) bool {
+	port, err := strconv.Atoi(portStr)
+	return err == nil && port > 0 && port < 65536
+}
+
+// Helper to validate URL
+func isValidURL(u string) bool {
+	_, err := url.ParseRequestURI(u)
+	return err == nil
+}
+
+// Start a temporary HTTP server on the given port, returns a shutdown function and the actual port used
+func startTempHTTPServer(port string, handler http.Handler) (shutdown func(), err error) {
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return nil, err
+	}
+	server := &http.Server{Handler: handler}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		wg.Done()
+		server.Serve(ln)
+	}()
+	wg.Wait()
+	return func() {
+		server.Close()
+	}, nil
+}
+
+// Call an external API to test the endpoint (for demo, just GET the URL)
+func testEndpoint(url string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected status: %s", resp.Status)
+	}
+	return nil
 }
 
 func main() {

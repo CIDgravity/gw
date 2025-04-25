@@ -33,7 +33,7 @@ func (r *ribs) maybeInitS3Offload() error {
 	}
 
 	cfg := configuration.GetConfig()
-	if cfg.S3.Endpoint == "" {
+	if cfg.External.S3.Endpoint == "" {
 		if need {
 			return xerrors.Errorf("S3 offload enabled but S3_ENDPOINT not set")
 		}
@@ -41,17 +41,17 @@ func (r *ribs) maybeInitS3Offload() error {
 		return nil
 	}
 
-	log.Infow("S3 offload enabled", "endpoint", cfg.S3.Endpoint)
+	log.Infow("S3 offload enabled", "endpoint", cfg.External.S3.Endpoint)
 
-	burl, err := url.Parse(cfg.S3.BucketUrl)
+	burl, err := url.Parse(cfg.External.S3.BucketUrl)
 	if err != nil {
 		return xerrors.Errorf("failed to parse S3_BUCKET_URL: %w", err)
 	}
 
 	s3Config := &aws.Config{
-		Endpoint:    aws.String(cfg.S3.Endpoint),
-		Credentials: credentials.NewStaticCredentials(cfg.S3.AccessKey, cfg.S3.SecretKey, cfg.S3.Token),
-		Region:      aws.String(cfg.S3.Region),
+		Endpoint:    aws.String(cfg.External.S3.Endpoint),
+		Credentials: credentials.NewStaticCredentials(cfg.External.S3.AccessKey, cfg.External.S3.SecretKey, cfg.External.S3.Token),
+		Region:      aws.String(cfg.External.S3.Region),
 	}
 
 	asess, err := session.NewSession(s3Config)
@@ -60,7 +60,7 @@ func (r *ribs) maybeInitS3Offload() error {
 	}
 
 	r.s3 = s3.New(asess)
-	r.s3Bucket = cfg.S3.Bucket
+	r.s3Bucket = cfg.External.S3.Bucket
 	r.s3BucketUrl = burl
 
 	r.RBS.StagingStorage().InstallStagingProvider(&ribsStagingProvider{r: r})

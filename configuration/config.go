@@ -17,9 +17,9 @@ type LocalwebConfig struct {
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
 	Url  string `envconfig:"EXTERNAL_LOCALWEB_URL"`
 
-	BuiltinServer bool   `envconfig:"EXTERNAL_BUILTIN_SERVER" default:"true"`
-	ServerPort string `envconfig:"EXTERNAL_SERVER_PORT" default:"8443"`
-	ServerTLS  bool   `envconfig:"EXTERNAL_SERVER_TLS" default:"true"`
+	BuiltinServer bool   `envconfig:"EXTERNAL_LOCALWEB_BUILTIN_SERVER" default:"true"`
+	ServerPort string `envconfig:"EXTERNAL_LOCALWEB_SERVER_PORT" default:"8443"`
+	ServerTLS  bool   `envconfig:"EXTERNAL_LOCALWEB_SERVER_TLS" default:"true"`
 }
 
 type S3Config struct {

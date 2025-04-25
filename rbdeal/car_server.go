@@ -5,37 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	ma "github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr/net"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"sort"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/mitchellh/go-homedir"
+
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
-	gostream "github.com/libp2p/go-libp2p-gostream"
-	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
 )
 
 var bootTime = time.Now()
 
-func (r *ribs) setupCarServer(ctx context.Context, host host.Host) error {
-	// todo protect incoming streams
-
-	listener, err := gostream.Listen(host, types.DataTransferProtocol)
-	if err != nil {
-		return fmt.Errorf("starting gostream listener: %w", err)
+func (r *ribs) setupCarServer(ctx context.Context) error {
+	cfg := configuration.GetConfig()
+	if !cfg.External.Localweb.BuiltinServer {
+		return nil
 	}
 
 	handler := http.NewServeMux()
@@ -48,35 +48,37 @@ func (r *ribs) setupCarServer(ctx context.Context, host host.Host) error {
 			return ctx
 		},
 	}
+	
+	if cfg.External.Localweb.ServerTLS {
+		repoDir := cfg.Ribs.DataDir
+		repoDir, err := homedir.Expand(repoDir)
+		if err != nil {
+			return xerrors.Errorf("failed to expand repo dir: %w", err)
+		}
+
+		if err := os.MkdirAll(repoDir, 0755); err != nil {
+			return xerrors.Errorf("failed to create repo dir: %w", err)
+		}
+
+		// tls uses letsencrypt autocert and gets the domain from Url
+		certManager := autocert.Manager{
+			Prompt: autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(cfg.External.Localweb.Url),
+			Cache: autocert.DirCache(filepath.Join(repoDir, "acme")),
+		}
+
+		server.TLSConfig = certManager.TLSConfig()
+	}
+
 	go func() {
-		if err := server.Serve(listener); err != nil {
-			log.Errorw("car server failed to start", "error", err)
-			return
+		if cfg.External.Localweb.ServerTLS {
+			server.ListenAndServeTLS("", "")
+		} else {
+			server.ListenAndServe()
 		}
 	}()
 
-	// bootstrap to libp2p.me
-	lmeMaddr := "/dns/libp2p.me/tcp/4001"
-	lmeMa, err := ma.NewMultiaddr(lmeMaddr)
-	if err != nil {
-		return err
-	}
-	lmePid, err := peer.Decode("12D3KooWSM8TT2UFGaXk7fisoiS1UC9MkWc2PVwYyKiWuNWBpqBw")
-	if err != nil {
-		return err
-	}
-
-	err = host.Connect(ctx, peer.AddrInfo{
-		ID:    lmePid,
-		Addrs: []ma.Multiaddr{lmeMa},
-	})
-	if err != nil {
-		log.Errorw("failed to connect to peer", "peer", lmePid, "error", err)
-	}
-
 	go r.carStatsWorker(ctx)
-
-	// todo also serve tcp
 
 	return nil
 }
@@ -192,14 +194,25 @@ func (r *ribs) makeCarRequestToken(group int64, timeout time.Duration, carSize i
 }
 
 func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) (types.Transfer, error) {
+	cfg := configuration.GetConfig()
+	
 	reqToken, err := r.makeCarRequestToken(group, timeout, carSize, deal)
 	if err != nil {
 		return types.Transfer{}, xerrors.Errorf("make car request token: %w", err)
 	}
 
-	prefAddrs := getPreferredAddrs(r.host)
+	if cfg.External.S3.Endpoint != "" {
+		return types.Transfer{}, xerrors.Errorf("s3 endpoint is set, direct to s3 TODO")
+	}
 
-	transferParams := &types.HttpRequest{URL: "libp2p://" + prefAddrs[0].String() + "/p2p/" + r.host.ID().String()} // todo get from autonat / config
+	u, err := url.Parse(cfg.External.Localweb.Url)
+	if err != nil {
+		return types.Transfer{}, xerrors.Errorf("parse localweb url: %w", err)
+	}
+
+	u.Path = path.Join(u.Path, fmt.Sprintf("%d.car", group))
+
+	transferParams := &types.HttpRequest{URL: u.String()}
 	transferParams.Headers = map[string]string{
 		"Authorization": string(reqToken),
 	}
@@ -210,150 +223,12 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 	}
 
 	transfer := types.Transfer{
-		Type:   "libp2p",
+		Type:   "http",
 		Params: paramsBytes,
 		Size:   uint64(carSize),
 	}
 
-	if os.Getenv("S3_ENDPOINT") != "" {
-		// with s3 we don't need to transfer the data, use a p2p proxy for more reliable connectivity
-		transfer, err = convertLibp2pTransferToProxy(transfer, r.host.ID(), prefAddrs)
-		if err != nil {
-			return types.Transfer{}, fmt.Errorf("convert libp2p transfer to proxy: %w", err)
-		}
-	}
-
 	return transfer, nil
-}
-
-// ConvertLibp2pTransferToProxy takes a libp2p Transfer and outputs a proxied HTTP Transfer
-func convertLibp2pTransferToProxy(transfer types.Transfer, peerid peer.ID, prefAddrs []ma.Multiaddr) (types.Transfer, error) {
-	// Check that the transfer is of Type "libp2p"
-	if transfer.Type != "libp2p" {
-		return types.Transfer{}, fmt.Errorf("transfer is not of type libp2p")
-	}
-
-	// Unmarshal the Params field to get the HttpRequest
-	var httpReq types.HttpRequest
-	err := json.Unmarshal(transfer.Params, &httpReq)
-	if err != nil {
-		return types.Transfer{}, fmt.Errorf("unmarshal transfer Params: %w", err)
-	}
-
-	// Construct new URL pointing to the proxy server
-	proxyURL := fmt.Sprintf("https://libp2p.me/%s/", peerid.String())
-
-	// Create new Headers, including the X-Multiaddr headers
-	headers := httpReq.Headers
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-
-	// Add X-Multiaddr headers
-	headers["X-Multiaddr"] = ""
-	for _, maddr := range prefAddrs {
-		headers["X-Multiaddr"] = headers["X-Multiaddr"] + maddr.String() + ","
-	}
-	headers["X-Multiaddr"] = strings.TrimSuffix(headers["X-Multiaddr"], ",")
-
-	// Add X-P2P-Protocol header
-	headers["X-P2P-Protocol"] = types.DataTransferProtocol
-
-	// Create new HttpRequest with the proxy URL and updated headers
-	newHttpReq := types.HttpRequest{
-		URL:     proxyURL,
-		Headers: headers,
-	}
-
-	// Marshal the new HttpRequest to Params
-	newParams, err := json.Marshal(newHttpReq)
-	if err != nil {
-		return types.Transfer{}, fmt.Errorf("marshal new HttpRequest: %w", err)
-	}
-
-	// Create new Transfer object of type "http"
-	newTransfer := types.Transfer{
-		Type:   "http",
-		Params: newParams,
-		Size:   transfer.Size,
-	}
-
-	return newTransfer, nil
-}
-
-func getPreferredAddrs(h host.Host) []ma.Multiaddr {
-	type addrWithPref struct {
-		addr ma.Multiaddr
-		pref int
-	}
-
-	var addrs []addrWithPref
-
-	for _, addr := range h.Addrs() {
-		// Default preference for 'other' addresses
-		pref := 4
-
-		// Extract the protocols from the multiaddress
-		protocols := addr.Protocols()
-
-		// Flags to identify the type of address
-		isDNS := false
-		isIP4 := false
-		isIP6 := false
-
-		for _, p := range protocols {
-			switch p.Code {
-			case ma.P_DNS, ma.P_DNS4, ma.P_DNS6, ma.P_DNSADDR:
-				isDNS = true
-			case ma.P_IP4:
-				isIP4 = true
-			case ma.P_IP6:
-				isIP6 = true
-			}
-		}
-
-		// Handle DNS addresses
-		if isDNS {
-			pref = 1
-			addrs = append(addrs, addrWithPref{addr: addr, pref: pref})
-			continue
-		}
-
-		// Skip private addresses
-		if manet.IsPrivateAddr(addr) {
-			continue
-		}
-
-		// Handle public IP addresses
-		if isIP4 {
-			pref = 2
-		} else if isIP6 {
-			pref = 3
-		}
-
-		addrs = append(addrs, addrWithPref{addr: addr, pref: pref})
-	}
-
-	if len(addrs) == 0 {
-		for _, a := range h.Addrs() {
-			addrs = append(addrs, addrWithPref{addr: a, pref: 4})
-		}
-
-		log.Errorw("no non-private addresses found, using all addresses", "addrs", h.Addrs())
-	}
-
-	// Sort the addresses based on the preference
-	sort.SliceStable(addrs, func(i, j int) bool {
-		return addrs[i].pref < addrs[j].pref
-	})
-
-	// Extract the sorted multiaddresses
-	var sortedAddrs []ma.Multiaddr
-	for _, ap := range addrs {
-		sortedAddrs = append(sortedAddrs, ap.addr)
-	}
-
-	return sortedAddrs
 }
 
 func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
