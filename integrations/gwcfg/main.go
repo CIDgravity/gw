@@ -49,10 +49,10 @@ func collectKeys() ([]groupedEnvKey, error) {
 
 	sectionFor := func(env string) (section string, advanced bool) {
 		switch {
-		case strings.HasPrefix(env, "S3_"):
+		case strings.HasPrefix(env, "EXTERNAL_S3_"):
 			return "S3", false
-		case strings.HasPrefix(env, "EXTERNAL_"):
-			return "External", false
+		case strings.HasPrefix(env, "EXTERNAL_LOCALWEB_"):
+			return "LocalWeb", false
 		case strings.HasPrefix(env, "CIDGRAVITY_"):
 			return "CIDGravity", false
 		case strings.HasPrefix(env, "RIBS_WALLET_"):
@@ -357,12 +357,11 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
 		}
 	}
 
-	// 3. External config: none/s3/localweb
+	// 3. External config: s3/localweb
 	var extType string
 	extOpts := []huh.Option[string]{
-		huh.NewOption("None", "none"),
-		huh.NewOption("S3", "s3"),
 		huh.NewOption("LocalWeb", "localweb"),
+		huh.NewOption("S3", "s3"),
 	}
 	if err := huh.NewForm(
 		huh.NewGroup(

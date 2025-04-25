@@ -16,25 +16,32 @@ var log = logging.Logger("ribs:config")
 type LocalwebConfig struct {
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
 	Url  string `envconfig:"EXTERNAL_LOCALWEB_URL"`
+
+	BuiltinServer bool   `envconfig:"EXTERNAL_BUILTIN_SERVER" default:"true"`
+	ServerPort string `envconfig:"EXTERNAL_SERVER_PORT" default:"8443"`
+	ServerTLS  bool   `envconfig:"EXTERNAL_SERVER_TLS" default:"true"`
+}
+
+type S3Config struct {
+	Endpoint  string `envconfig:"EXTERNAL_S3_ENDPOINT"`
+	Region    string `envconfig:"EXTERNAL_S3_REGION"`
+	AccessKey string `envconfig:"EXTERNAL_S3_ACCESS_KEY"`
+	SecretKey string `envconfig:"EXTERNAL_S3_SECRET_KEY"`
+	Token     string `envconfig:"EXTERNAL_S3_TOKEN"`
+	Bucket    string `envconfig:"EXTERNAL_S3_BUCKET"`
+	BucketUrl string `envconfig:"EXTERNAL_S3_BUCKET_URL"`
 }
 
 type ExternalConfig struct {
 	Localweb LocalwebConfig
+	S3       S3Config
 }
 
-type S3Config struct {
-	Endpoint  string `envconfig:"S3_ENDPOINT"`
-	Region    string `envconfig:"S3_REGION"`
-	AccessKey string `envconfig:"S3_ACCESS_KEY"`
-	SecretKey string `envconfig:"S3_SECRET_KEY"`
-	Token     string `envconfig:"S3_TOKEN"`
-	Bucket    string `envconfig:"S3_BUCKET"`
-	BucketUrl string `envconfig:"S3_BUCKET_URL"`
-}
+
 type CidGravityConfig struct {
 	ApiToken                string            `envconfig:"CIDGRAVITY_API_TOKEN"`
 	ApiEndpointGetProviders string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
-	ApiEndpointGetDeals     string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
+	ApiEndpointGetDeals     string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GOCD" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
 	MaxConns                int64             `envconfig:"CIDGRAVITY_MAX_CONNECTIONS" default:"4"`
 	AltClients              []string          `envconfig:"CIDGRAVITY_ALT_CLIENTS"`
 	AltTokens               map[string]string
@@ -67,7 +74,6 @@ type WalletConfig struct {
 
 type Config struct {
 	Loaded     bool
-	S3         S3Config
 	External   ExternalConfig
 	CidGravity CidGravityConfig
 	Ribs       RibsConfig
