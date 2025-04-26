@@ -462,7 +462,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
 	}
 	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewSelect[string]().Title("External config type").Options(extOpts...).Value(&extType),
+			huh.NewSelect[string]().Title("Upload config type").Options(extOpts...).Value(&extType),
 		),
 	).Run(); err != nil {
 		return err
@@ -471,7 +471,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
 	switch extType {
 	case "s3":
 		for _, k := range keys {
-			if k.Section == "S3" {
+			if k.Section == "Upload:S3" {
 				val := k.DefaultValue
 				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
 				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
@@ -482,7 +482,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
 		}
 	case "localweb":
 		for _, k := range keys {
-			if k.Section == "External" {
+			if k.Section == "Upload:LocalWeb" {
 				val := k.DefaultValue
 				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
 				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
