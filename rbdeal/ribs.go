@@ -110,7 +110,7 @@ type ribs struct {
 	uploadStats     map[iface.GroupKey]*iface.GroupUploadStats
 	uploadStatsSnap map[iface.GroupKey]*iface.GroupUploadStats
 
-	activeUploads map[uuid.UUID]struct{}
+	activeUploads map[uuid.UUID]int
 	uploadStatsLk sync.Mutex
 
 	rateCounters *ributil.RateCounters[peer.ID]

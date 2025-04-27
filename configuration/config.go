@@ -20,6 +20,8 @@ type LocalwebConfig struct {
 	BuiltinServer bool   `envconfig:"EXTERNAL_LOCALWEB_BUILTIN_SERVER" default:"true"`
 	ServerPort string `envconfig:"EXTERNAL_LOCALWEB_SERVER_PORT" default:"8443"`
 	ServerTLS  bool   `envconfig:"EXTERNAL_LOCALWEB_SERVER_TLS" default:"true"`
+
+	MaxConcurrentUploadsPerDeal int `envconfig:"EXTERNAL_LOCALWEB_MAX_CONCURRENT_UPLOADS_PER_DEAL" default:"15"`
 }
 
 type S3Config struct {

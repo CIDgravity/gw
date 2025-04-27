@@ -344,14 +344,16 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 	// this is a local transfer, track stats
 
+	cfg := configuration.GetConfig()
+
 	r.uploadStatsLk.Lock()
-	if _, found := r.activeUploads[reqToken.DealUUID]; found {
+	if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
 		http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
 		r.uploadStatsLk.Unlock()
 		return
 	}
 
-	r.activeUploads[reqToken.DealUUID] = struct{}{}
+	r.activeUploads[reqToken.DealUUID]++
 
 	if r.uploadStats[reqToken.Group] == nil {
 		r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
@@ -369,7 +371,10 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 	defer func() {
 		r.uploadStatsLk.Lock()
-		delete(r.activeUploads, reqToken.DealUUID)
+		r.activeUploads[reqToken.DealUUID]--
+		if r.activeUploads[reqToken.DealUUID] == 0 {
+			delete(r.activeUploads, reqToken.DealUUID)
+		}
 		r.uploadStats[reqToken.Group].ActiveRequests--
 		r.uploadStatsLk.Unlock()
 	}()
