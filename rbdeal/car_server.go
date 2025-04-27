@@ -401,9 +401,9 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	startTime := DerefOr(transferInfo.CarTransferStartTime, 0)
+	//startTime := DerefOr(transferInfo.CarTransferStartTime, 0)
 
-	if time.Since(bootTime) > transferIdleTimeout && startTime > 0 {
+	/* if time.Since(bootTime) > transferIdleTimeout && startTime > 0 {
 		if time.Since(time.Unix(DerefOr(transferInfo.CarTransferLastEndTime, 0), 0)) > transferIdleTimeout {
 			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer not restarted for too long")); err != nil {
 				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
@@ -424,7 +424,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "transfer speed too slow", http.StatusGone)
 			return
 		}
-	}
+	} */
 
 	/* rc := r.rateCounters.Get(pid)
 	rateWriter := ributil.NewRateEnforcingWriter(sw, rc, transferIdleTimeout)
