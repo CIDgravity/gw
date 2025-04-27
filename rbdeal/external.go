@@ -123,8 +123,8 @@ func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
 
 	lwi.r = r
 	if lwi.path == "" || lwi.url == "" {
-		if lwi.url != "" {
-			return false, xerrors.Errorf("XYZ: LocalWeb: If localweb url is set, path must also be set: '%s' & '%s'", lwi.path, lwi.url)
+		if lwi.url == "" {
+			return false, xerrors.Errorf("XYZ: LocalWeb: If localweb path is set, url must also be set: '%s' & '%s'", lwi.path, lwi.url)
 		}
 		if lwi.path == "" && !cfg.External.Localweb.BuiltinServer {
 			return false, xerrors.Errorf("XYZ: LocalWeb: path must be set if builtin server is disabled: '%s' & '%s'", lwi.path, lwi.url)
