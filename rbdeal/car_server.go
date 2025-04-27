@@ -70,6 +70,15 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 		server.TLSConfig = certManager.TLSConfig()
 	}
 
+	listenPort, err := strconv.Atoi(cfg.External.Localweb.ServerPort)
+	if err != nil {
+		return xerrors.Errorf("failed to convert server port to int: %w", err)
+	}
+
+	// always listen on 0.0.0.0
+	server.Addr = fmt.Sprintf("0.0.0.0:%d", listenPort)
+
+
 	go func() {
 		if cfg.External.Localweb.ServerTLS {
 			server.ListenAndServeTLS("", "")
