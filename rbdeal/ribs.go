@@ -252,7 +252,7 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 
 		uploadStats:     map[iface.GroupKey]*iface.GroupUploadStats{},
 		uploadStatsSnap: map[iface.GroupKey]*iface.GroupUploadStats{},
-		activeUploads:   map[uuid.UUID]struct{}{},
+		activeUploads:   map[uuid.UUID]int{},
 		rateCounters:    ributil.NewRateCounters[peer.ID](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps))),
 
 		s3Uploads: map[iface.GroupKey]struct{}{},
