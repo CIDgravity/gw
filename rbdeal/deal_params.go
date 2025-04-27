@@ -47,4 +47,4 @@ var maxTransfers = linkSpeedMbps / minTransferMbps * 8 / 10 // 80% for safety ma
 // also transfer rate check interval
 var transferIdleTimeout = 5 * time.Minute
 
-var maxTransferRetries = 10
+var maxTransferRetries = 10000
