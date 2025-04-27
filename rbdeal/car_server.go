@@ -21,10 +21,8 @@ import (
 
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
-	"github.com/libp2p/go-libp2p/core/peer"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
@@ -254,20 +252,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pid, err := peer.Decode(req.RemoteAddr)
-	if err != nil {
-		log.Warnw("data transfer request failed: parsing remote address as peer ID",
-			"remote-addr", req.RemoteAddr, "err", err)
-		http.Error(w, "Failed to parse remote address '"+req.RemoteAddr+"' as peer ID", http.StatusBadRequest)
-		return
-	}
-
-	log := log.With("peer", pid, "deal", reqToken.DealUUID)
-
-	// Protect the libp2p connection for the lifetime of the transfer
-	tag := uuid.New().String()
-	r.host.ConnManager().Protect(pid, tag)
-	defer r.host.ConnManager().Unprotect(pid, tag)
+	log := log.With("deal", reqToken.DealUUID)
 
 	var toDiscard int64
 	var toLimit int64 = -1 // -1 means no limit, read to the end
@@ -436,9 +421,10 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	rc := r.rateCounters.Get(pid)
+	/* rc := r.rateCounters.Get(pid)
 	rateWriter := ributil.NewRateEnforcingWriter(sw, rc, transferIdleTimeout)
-	defer rateWriter.Done()
+	defer rateWriter.Done() */
+	rateWriter := sw
 
 	respLen := *gm.DealCarSize - toDiscard
 	if toLimit != -1 {
@@ -463,7 +449,10 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	err = r.RBS.Storage().ReadCar(req.Context(), reqToken.Group, func(int64) {}, writerToUse)
 
 	defer func() {
-		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, rateWriter.WriteError()); err != nil {
+		//werr := rateWriter.WriteError()
+		werr := err
+
+		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
 			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
 			return
 		}
