@@ -113,22 +113,28 @@ func getLocalWebPath() string {
 	cfg := configuration.GetConfig()
 	return cfg.External.Localweb.Path
 }
-func getLocalWebUrl() string {
-	cfg := configuration.GetConfig()
-	return cfg.External.Localweb.Url
-}
 
 func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
+	cfg := configuration.GetConfig()
+
 	lwi.name = EXTERNAL_LOCALWEB
 	lwi.path = getLocalWebPath()
-	lwi.url = getLocalWebUrl()
+	lwi.url = cfg.External.Localweb.Url
+
 	lwi.r = r
-	if lwi.path == "" && lwi.url == "" {
+	if lwi.path == "" || lwi.url == "" {
+		if lwi.url != "" {
+			return false, xerrors.Errorf("XYZ: LocalWeb: If localweb url is set, path must also be set: '%s' & '%s'", lwi.path, lwi.url)
+		}
+		if lwi.path == "" && !cfg.External.Localweb.BuiltinServer {
+			return false, xerrors.Errorf("XYZ: LocalWeb: path must be set if builtin server is disabled: '%s' & '%s'", lwi.path, lwi.url)
+		}
+		if lwi.path != "" && cfg.External.Localweb.BuiltinServer {
+			return false, xerrors.Errorf("XYZ: LocalWeb: todo: path is set but builtin server is enabled: '%s' & '%s'", lwi.path, lwi.url)
+		}
 		return false, nil
 	}
-	if lwi.path == "" || lwi.url == "" {
-		return false, xerrors.Errorf("XYZ: LocalWeb: module need both EXTERNAL_LOCALWEB_PATH and EXTERNAL_LOCALWEB_URL to be set: '%s' & '%s'", lwi.path, lwi.url)
-	}
+
 	return true, nil
 }
 
