@@ -120,6 +120,7 @@ type ribs struct {
 	canSendDealLastCheck  time.Time
 	canSendDealLastResult bool
 
+	// <todo> move to s3 external module struct
 	s3          *s3.S3
 	s3Bucket    string
 	s3BucketUrl *url.URL
@@ -130,6 +131,7 @@ type ribs struct {
 	/* s3 stats */
 
 	s3UploadBytes, s3UploadStarted, s3UploadDone, s3UploadErr, s3Redirects, s3ReadReqs, s3ReadBytes atomic.Int64
+	// </todo>
 
 	/* external modules */
 	externalOffloader ExternalOffloader
@@ -288,10 +290,6 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		if err != nil {
 			return nil, xerrors.Errorf("creating host: %w", err)
 		}
-	}
-
-	if err := r.maybeInitS3Offload(); err != nil {
-		return nil, xerrors.Errorf("trying to initialize S3 offload: %w", err)
 	}
 
 	if err := r.maybeInitExternal(); err != nil {

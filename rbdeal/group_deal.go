@@ -90,10 +90,6 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		// r.dealsLk.Unlock()
 	}()
 
-
-	if err := r.maybeEnsureS3Offload(id); err != nil {
-		return xerrors.Errorf("attempting s3 offload: %w", err)
-	}
 	if err := r.maybeEnsureEnsureExternalPush(id); err != nil {
 		return xerrors.Errorf("XYZ: attempting external offload: %w", err)
 	}

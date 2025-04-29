@@ -75,7 +75,6 @@ type WalletConfig struct {
 }
 
 type Config struct {
-	Loaded     bool
 	External   ExternalConfig
 	CidGravity CidGravityConfig
 	Ribs       RibsConfig
@@ -87,13 +86,11 @@ type Config struct {
 var config Config
 
 func GetConfig() *Config {
-	if !config.Loaded {
-		err := LoadConfig()
-		if err != nil {
-			panic(err)
-		}
-	}
 	return &config
+}
+
+func init() {
+	LoadConfig()
 }
 
 func LoadConfig() error {
@@ -148,7 +145,6 @@ func LoadConfig() error {
 		}
 	}
 
-	config.Loaded = true
 	log.Debugw("Loaded config", "config", config)
 	return nil
 }

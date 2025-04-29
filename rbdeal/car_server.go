@@ -306,25 +306,6 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// todo run more checks here?
-
-	s3u, err := r.maybeGetS3URL(reqToken.Group)
-	if err != nil {
-		log.Errorw("car request: s3 url", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if s3u != "" {
-		// in s3, redirect
-		log.Debugw("car request: redir to s3 url", "error", err, "url", s3u)
-
-		r.s3Redirects.Add(1)
-
-		http.Redirect(w, req, s3u, http.StatusFound)
-		return
-	}
-
 	// external offload
 	extu, err := r.maybeGetExternalURL(reqToken.Group)
 	if err != nil {
@@ -333,7 +314,6 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if extu != nil {
-		// in s3, redirect
 		log.Infow("XYZ: car request: redir to external url", "error", err, "url", *extu)
 
 		//r.s3Redirects.Add(1)
