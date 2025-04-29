@@ -186,18 +186,6 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	// XXX: price?
 	price := big.Zero()
 
-	transfer := types.Transfer{
-		Type:   "libp2p",
-		Size:   uint64(dealInfo.CarSize),
-	}
-	url, err := r.maybeGetExternalURL(id)
-	if err != nil {
-		return fmt.Errorf("Failed to get External URL: %w", err)
-	}
-	if url != nil {
-		transfer.Type = "http"
-	}
-
 	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
 	req := cidgravity.CIDgravityGetBestAvailableProvidersRequest{
@@ -207,8 +195,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		StoragePricePerEpoch: price.String(),
 		ProviderCollateral:   providerCollateral.String(),
 		VerifiedDeal:         &verified,
-		TransferSize:         transfer.Size,
-		TransferType:         transfer.Type,
+		TransferSize:         uint64(dealInfo.CarSize),
+		TransferType:         "http",
 		RemoveUnsealedCopy:   &removeUnsealed,
 	}
 
