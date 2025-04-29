@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/url"
+	"path"
 	"sort"
 	"sync"
 	"time"
@@ -164,8 +165,10 @@ func (s *S3OffloadInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) er
 }
 
 func (s *S3OffloadInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
-	//TODO implement me
-	panic("implement me")
+	base := *s.r.s3BucketUrl
+	base.Path = path.Join(base.Path, lpath)
+	u := base.String()
+	return &u, nil
 }
 
 func (s *S3OffloadInfo) CleanExternal(gid iface.GroupKey, lpath string) error {

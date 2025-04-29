@@ -35,6 +35,10 @@ func getLocalWebPath() (string, error) {
 		p = path.Join(rdir, "cardata")
 	}
 
+	if err := os.MkdirAll(p, 0755); err != nil {
+		return "", xerrors.Errorf("XYZ: LocalWeb: failed to create cardata dir: %w", err)
+	}
+
 	return p, nil
 }
 
