@@ -25,9 +25,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	ribs2 "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/ributil"
 	"github.com/lotus-web3/ribs/cidgravity"
 	"github.com/lotus-web3/ribs/configuration"
+	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
 )
@@ -82,7 +82,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 		}
 
 		for n, deal := range toCheck {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("SPDealCheckLoop: published", "count", len(toCheck), "n", n)
 			}
 			dealInfo, err := gw.StateMarketStorageDeal(ctx, deal.DealID, types2.EmptyTSK)
@@ -133,7 +133,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 		}
 
 		for n, deal := range toCheck {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("SPDealCheckLoop: publishing", "count", len(toCheck), "n", n)
 			}
 			var dprop market.ClientDealProposal
@@ -191,7 +191,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 		sem := make(chan struct{}, ParallelDealChecks)
 
 		for n, deal := range toCheck {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("SPDealCheckLoop: inactives", "count", len(toCheck), "n", n)
 			}
 			sem <- struct{}{}
@@ -247,7 +247,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 		store := adt.WrapStore(ctx, cbor.NewCborStore(blockstore.NewAPIBlockstore(gw)))
 
 		for n, deal := range toFill {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("SPDealCheckLoop: filling sector numbers", "count", len(toFill), "n", n)
 			}
 			if abi.ActorID(deal.Provider) != curProvider {
@@ -270,7 +270,7 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 
 				curProviderDeals = make(map[abi.DealID]abi.SectorNumber)
 				for _, s := range ms {
-					for _, d := range s.DealIDs {
+					for _, d := range s.DeprecatedDealIDs {
 						curProviderDeals[d] = s.SectorNumber
 					}
 				}
@@ -324,11 +324,11 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 					return xerrors.Errorf("XYZ: cleaning up external offload: %w", err)
 				}
 			} else {
-				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "inprogress", notFailedDeal - gs.SealedDeals)
+				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "inprogress", notFailedDeal-gs.SealedDeals)
 			}
-		} else if (notFailedDeal < int64(cfg.Ribs.MinimumReplicaCount)) || (notFailedDeal - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) && notFailedDeal < int64(cfg.Ribs.MaximumReplicaCount)) {
+		} else if (notFailedDeal < int64(cfg.Ribs.MinimumReplicaCount)) || (notFailedDeal-gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) && notFailedDeal < int64(cfg.Ribs.MaximumReplicaCount)) {
 			makeMoreDealsGids = append(makeMoreDealsGids, gid)
-		} else if gs.SealedDeals >= int64(cfg.Ribs.MaximumReplicaCount) && int64(cfg.Ribs.MaximumReplicaCount) - gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) {
+		} else if gs.SealedDeals >= int64(cfg.Ribs.MaximumReplicaCount) && int64(cfg.Ribs.MaximumReplicaCount)-gs.Unretrievable < int64(cfg.Ribs.MinimumRetrievableCount) {
 			return xerrors.Errorf("Group %d has too many copies, and too many untrievable copies. Not offloading\n", gid)
 		}
 	}
@@ -369,7 +369,7 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 			return err
 		}
 		for n, deal := range unpublishedDeals {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("cidg DealCheck: unpublished", "count", len(unpublishedDeals), "n", n)
 			}
 			dealId, err := r.findUnpublishedDeal(deals, deal.Proposal)
@@ -388,7 +388,7 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 			return err
 		}
 		for n, deal := range publishedDeals {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("cidg DealCheck: publishedDeals", "count", len(publishedDeals), "n", n)
 			}
 			ds, ok := deals[deal.DealID]
@@ -399,14 +399,14 @@ func (r *ribs) runCidGravityDealCheckLoop(ctx context.Context) error {
 			}
 		}
 	}
-	// active, need to check by DealID if the current state changed 
+	// active, need to check by DealID if the current state changed
 	{
 		activeDeals, err := r.db.AllActiveDeals()
 		if err != nil {
 			return err
 		}
 		for n, deal := range activeDeals {
-			if n % DEBUG_LOOP_COUNT == 0 {
+			if n%DEBUG_LOOP_COUNT == 0 {
 				log.Debugw("cidg DealCheck: activeDeals", "count", len(activeDeals), "n", n)
 			}
 			ds, ok := deals[deal.DealID]
@@ -439,7 +439,6 @@ func (r *ribs) runDealCheckLoop(ctx context.Context) error {
 	}
 	return nil
 }
-
 
 func (r *ribs) runDealCheckQuery(ctx context.Context, gw api.Gateway, walletAddr address.Address, deal inactiveDealMeta) error {
 	maddr, err := address.NewIDAddress(uint64(deal.ProviderAddr))

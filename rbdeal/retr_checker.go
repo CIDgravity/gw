@@ -3,33 +3,26 @@ package rbdeal
 import (
 	"context"
 	"fmt"
+	"github.com/filecoin-project/lassie/pkg/types"
 	lru "github.com/hashicorp/golang-lru/v2"
-	trustlessutils "github.com/ipld/go-trustless-utils"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/lotus-web3/ribs/carlog"
 	"github.com/multiformats/go-multiaddr"
 	"io"
 	"math/rand"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
-	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/lib/must"
-	"github.com/ipfs/go-unixfsnode"
-	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipni/go-libipni/metadata"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/ributil"
-	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 
-	"github.com/filecoin-project/lassie/pkg/lassie"
-	"github.com/filecoin-project/lassie/pkg/types"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -39,28 +32,6 @@ var maxConsecutiveTimeouts = 5
 var consecutiveTimoutsForgivePeriod = 10 * time.Minute
 var parallelChecks = 30
 
-type ProbingRetrievalFinder struct {
-	lk      sync.Mutex
-	lookups map[cid.Cid][]types.RetrievalCandidate
-}
-
-func (p *ProbingRetrievalFinder) FindCandidates(ctx context.Context, cid cid.Cid, f func(types.RetrievalCandidate)) error {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	lu, ok := p.lookups[cid]
-	if !ok {
-		log.Debugw("no candidate for cid", "cid", cid)
-		return nil
-	}
-
-	for _, candidate := range lu {
-		f(candidate)
-	}
-
-	return nil
-}
-
 func (r *ribs) retrievalChecker(ctx context.Context) {
 	gw, closer, err := client.NewGatewayRPCV1(ctx, r.lotusRPCAddr, nil)
 	if err != nil {
@@ -68,20 +39,8 @@ func (r *ribs) retrievalChecker(ctx context.Context) {
 	}
 	defer closer()
 
-	rf := &ProbingRetrievalFinder{
-		lookups: map[cid.Cid][]types.RetrievalCandidate{},
-	}
-
-	lsi, err := lassie.NewLassie(ctx, lassie.WithProviderAllowList(map[peer.ID]bool{}),
-		lassie.WithCandidateSource(rf),
-		lassie.WithGlobalTimeout(retrievalCheckTimeout),
-		lassie.WithProviderTimeout(retrievalCheckTimeout))
-	if err != nil {
-		log.Fatalw("failed to create lassie", "error", err)
-	}
-
 	for {
-		err := r.doRetrievalCheck(ctx, gw, rf, lsi)
+		err := r.doRetrievalCheck(ctx, gw)
 		if err != nil {
 			log.Warnw("failed to do retrieval check", "error", err)
 		}
@@ -97,7 +56,7 @@ type timeoutEntry struct {
 
 var timeoutLk sync.Mutex
 
-func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway, prf *ProbingRetrievalFinder, lsi *lassie.Lassie) error {
+func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 	candidates, err := r.db.GetRetrievalCheckCandidates()
 	if err != nil {
 		return xerrors.Errorf("failed to get retrieval check candidates: %w", err)
@@ -175,17 +134,8 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway, prf *Probin
 
 		timeoutLk.Unlock()
 
-	retryGetSample:
 		hashToGet := samples[candidate.Group][rand.Intn(len(samples[candidate.Group]))]
 		cidToGet := cid.NewCidV1(cid.Raw, hashToGet)
-
-		prf.lk.Lock()
-		_, ok = prf.lookups[cidToGet]
-		prf.lk.Unlock()
-		if ok {
-			time.Sleep(1 * time.Millisecond)
-			goto retryGetSample
-		}
 
 		group := groups[candidate.Group]
 
@@ -274,7 +224,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway, prf *Probin
 			defer func() {
 				<-checkThrottle
 			}()
-			err = r.retrievalCheckCandidate(ctx, candidate, addrInfo, cidToGet, group, fixedPeer, prf, lsi, timeoutCache, cs)
+			err = r.retrievalCheckCandidate(ctx, candidate, addrInfo, cidToGet, group, fixedPeer, timeoutCache, cs)
 			if err != nil {
 				log.Warnw("failed to check candidate", "error", err)
 			}
@@ -289,13 +239,13 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway, prf *Probin
 }
 
 func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckCandidate, addrInfo ProviderAddrInfo, cidToGet cid.Cid, group iface.GroupDesc, fixedPeer []peer.AddrInfo,
-	prf *ProbingRetrievalFinder, lsi *lassie.Lassie, timeoutCache *lru.Cache[int64, *timeoutEntry], cs []types.RetrievalCandidate) error {
+	timeoutCache *lru.Cache[int64, *timeoutEntry], cs []types.RetrievalCandidate) error {
 	//// http path, maybe
 	if len(addrInfo.HttpMaddrs) > 0 {
 		u, err := ributil.MaddrsToUrl(addrInfo.HttpMaddrs)
 		if err != nil {
 			log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-			goto lassie
+			return xerrors.Errorf("failed to parse addrinfo: %w", err)
 		}
 
 		start := time.Now()
@@ -374,7 +324,7 @@ func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckC
 		}()
 		if err != nil {
 			log.Warnw("failed to get http", "provider", candidate.Provider, "err", err)
-			goto lassie
+			return xerrors.Errorf("failed to get http: %w", err)
 		}
 
 		// record success
@@ -394,125 +344,16 @@ func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckC
 		log.Debugw("http retrieval check success", "provider", candidate.Provider, "group", candidate.Group, "took", time.Since(start))
 		return nil
 	}
-lassie:
 
-	var allowLassie bool = true
-	if os.Getenv("RIBS_ALLOW_LASSIE") == "false" {
-		allowLassie = false
-	}
-
-	if !allowLassie {
-		log.Debugw("no http addrs, and lassie disabled", "provider", candidate.Provider)
-		r.rckFail.Add(1)
-		r.rckFailAll.Add(1)
-
-		var res RetrievalResult
-		res.Success = false
-		res.Error = "no http addrs, and lassie disabled"
-
-		err := r.db.RecordRetrievalCheckResult(candidate.DealID, res)
-		if err != nil {
-			return xerrors.Errorf("failed to record retrieval check result: %w", err)
-		}
-
-		return nil
-	}
-
-	//// lassie path
-
-	prf.lk.Lock()
-	prf.lookups[cidToGet] = cs
-	prf.lk.Unlock()
-
-	wstor := &ributil.IpldStoreWrapper{BS: blockstore.NewMemorySync()}
-
-	linkSystem := cidlink.DefaultLinkSystem()
-	linkSystem.SetWriteStorage(wstor)
-	linkSystem.SetReadStorage(wstor)
-	linkSystem.TrustedStorage = true
-	unixfsnode.AddUnixFSReificationToLinkSystem(&linkSystem)
-
-	request := types.RetrievalRequest{
-		RetrievalID:       must.One(types.NewRetrievalID()),
-		LinkSystem:        linkSystem,
-		PreloadLinkSystem: linkSystem,
-		Protocols:         []multicodec.Code{ /*multicodec.TransportBitswap,*/ multicodec.TransportGraphsyncFilecoinv1 /*, multicodec.TransportIpfsGatewayHttp*/},
-		MaxBlocks:         10,
-		/*Providers: []types.Provider{
-			{
-				Peer: fixedPeer,
-				Protocols: []metadata.Protocol{
-
-				},
-			},
-		},*/
-
-		Request: trustlessutils.Request{
-			Root:       cidToGet,
-			Path:       "",
-			Scope:      trustlessutils.DagScopeBlock,
-			Bytes:      nil,
-			Duplicates: false,
-		},
-	}
-
-	/*request.PreloadLinkSystem = cidlink.DefaultLinkSystem()
-	request.PreloadLinkSystem.SetReadStorage(uselessWrapperStore)
-	request.PreloadLinkSystem.SetWriteStorage(uselessWrapperStore)
-	request.PreloadLinkSystem.TrustedStorage = true*/
-
-	start := time.Now()
-	ctx, done := context.WithTimeout(ctx, retrievalCheckTimeout)
-
-	stat, err := lsi.Fetch(ctx, request, types.WithEventsCallback(func(event types.RetrievalEvent) {
-		//log.Errorw("retr event", "event", event.String())
-	}))
-
-	done()
+	log.Debugw("no http addrs, and lassie disabled", "provider", candidate.Provider)
+	r.rckFail.Add(1)
+	r.rckFailAll.Add(1)
 
 	var res RetrievalResult
-	if err == nil {
-		log.Debugw("retrieval stat", "stat", stat, "provider", candidate.Provider, "group", candidate.Group, "deal", candidate.DealID, "took", time.Since(start))
-		res.Success = true
-		res.Duration = time.Since(start)
-		res.TimeToFirstByte = stat.TimeToFirstByte
+	res.Success = false
+	res.Error = "no http addrs, and lassie disabled"
 
-		r.rckSuccess.Add(1)
-		r.rckSuccessAll.Add(1)
-	} else {
-		log.Warnw("failed to fetch", "error", err, "provider", candidate.Provider, "group", candidate.Group, "deal", candidate.DealID, "took", time.Since(start))
-		res.Success = false
-		res.Error = err.Error()
-
-		r.rckFail.Add(1)
-		r.rckFailAll.Add(1)
-
-		timeoutLk.Lock()
-		if time.Since(start) > retrievalCheckTimeout {
-			v, ok := timeoutCache.Get(candidate.Provider)
-			if !ok {
-				v = &timeoutEntry{
-					lastTimeout: time.Now(),
-				}
-			}
-			v.consecutiveTimeouts++
-			v.lastTimeout = time.Now()
-			timeoutCache.Add(candidate.Provider, v)
-		} else {
-			v, ok := timeoutCache.Peek(candidate.Provider)
-			if ok {
-				v.consecutiveTimeouts = 0
-				timeoutCache.Add(candidate.Provider, v)
-			}
-		}
-		timeoutLk.Unlock()
-	}
-
-	prf.lk.Lock()
-	delete(prf.lookups, cidToGet)
-	prf.lk.Unlock()
-
-	err = r.db.RecordRetrievalCheckResult(candidate.DealID, res)
+	err := r.db.RecordRetrievalCheckResult(candidate.DealID, res)
 	if err != nil {
 		return xerrors.Errorf("failed to record retrieval check result: %w", err)
 	}
