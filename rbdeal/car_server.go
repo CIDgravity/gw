@@ -182,8 +182,8 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 	if err != nil {
 		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url: %w", err)
 	}
-	if extu != nil {
-		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url: %s", *extu)
+	if extu == nil {
+		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url is nil")
 	}
 
 	transferParams := &types.HttpRequest{URL: *extu}
