@@ -51,8 +51,8 @@ func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
 
 	lwi.r = r
 	if lwi.url == "" {
-		if lwi.path != "" && cfg.External.Localweb.BuiltinServer {
-			return false, xerrors.Errorf("XYZ: LocalWeb: todo: path is set but builtin server is enabled but url is not set: '%s' & '%s'", lwi.path, lwi.url)
+		if lwi.path == "" && cfg.External.Localweb.BuiltinServer {
+			return false, xerrors.Errorf("XYZ: LocalWeb: todo: path is not set, builtin server is enabled but url is not set: '%s' & '%s'", lwi.path, lwi.url)
 		}
 		return false, nil
 	}
