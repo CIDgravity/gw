@@ -16,6 +16,7 @@ type ExternalOffloader interface {
 	GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error)
 	CleanExternal(gid iface.GroupKey, lpath string) error
 	ReadCar(ctx context.Context, group iface.GroupKey, path string, off int64, size int64) (io.ReadCloser, error)
+	ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error)
 }
 
 func (r *ribs) maybeInitExternal() error {

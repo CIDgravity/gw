@@ -23,7 +23,7 @@ type RIBS interface {
 }
 
 type RIBSDiag interface {
-	CarUploadStats() UploadStats
+	//CarUploadStats() UploadStats
 	DealSummary() (DealSummary, error)
 	GroupDeals(gk GroupKey) ([]DealMeta, error)
 

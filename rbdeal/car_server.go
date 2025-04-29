@@ -3,25 +3,19 @@ package rbdeal
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/mitchellh/go-homedir"
 
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
-	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/configuration"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/crypto/acme/autocert"
@@ -85,12 +79,12 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 		}
 	}()
 
-	go r.carStatsWorker(ctx)
+	//go r.carStatsWorker(ctx)
 
 	return nil
 }
 
-func (r *ribs) carStatsWorker(ctx context.Context) {
+/* func (r *ribs) carStatsWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -99,8 +93,8 @@ func (r *ribs) carStatsWorker(ctx context.Context) {
 			r.updateCarStats()
 		}
 	}
-}
-
+} */
+/* 
 func (r *ribs) updateCarStats() {
 	r.uploadStatsLk.Lock()
 	defer r.uploadStatsLk.Unlock()
@@ -133,36 +127,7 @@ func (r *ribs) CarUploadStats() iface.UploadStats {
 		ByGroup:        r.uploadStatsSnap,
 		LastTotalBytes: lastTotalBytes,
 	}
-}
-
-type carStatWriter struct {
-	groupCtr *int64
-	wrote    int64
-
-	w         io.Writer
-	toDiscard int64
-}
-
-func (c *carStatWriter) Write(p []byte) (n int, err error) {
-	defer func() {
-		c.wrote += int64(n)
-	}()
-
-	var discarded int64
-	if c.toDiscard > 0 {
-		if int64(len(p)) <= c.toDiscard {
-			c.toDiscard -= int64(len(p))
-			return len(p), nil
-		}
-		p = p[c.toDiscard:]
-		discarded = c.toDiscard
-		c.toDiscard = 0
-	}
-	n, err = c.w.Write(p)
-	atomic.AddInt64(c.groupCtr, int64(n))
-	n += int(discarded)
-	return
-}
+} */
 
 var jwtKey = func() *jwt.HMACSHA { // todo generate / store
 	return jwt.NewHS256([]byte("this is super safe"))
@@ -212,14 +177,16 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 		return types.Transfer{}, xerrors.Errorf("s3 endpoint is set, direct to s3 TODO")
 	}
 
-	u, err := url.Parse(cfg.External.Localweb.Url)
+	// external offload
+	extu, err := r.maybeGetExternalURL(group)
 	if err != nil {
-		return types.Transfer{}, xerrors.Errorf("parse localweb url: %w", err)
+		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url: %w", err)
+	}
+	if extu != nil {
+		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url: %s", *extu)
 	}
 
-	u.Path = path.Join(u.Path, fmt.Sprintf("%d.car", group))
-
-	transferParams := &types.HttpRequest{URL: u.String()}
+	transferParams := &types.HttpRequest{URL: *extu}
 	transferParams.Headers = map[string]string{
 		"Authorization": string(reqToken),
 	}
@@ -254,78 +221,9 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 	log := log.With("deal", reqToken.DealUUID)
 
-	var toDiscard int64
-	var toLimit int64 = -1 // -1 means no limit, read to the end
-
-	if req.Header.Get("Range") != "" {
-		s1 := strings.Split(req.Header.Get("Range"), "=")
-		if len(s1) != 2 {
-			log.Warnw("invalid content range (1)", "range", req.Header.Get("Content-Range"), "s1", s1)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-		if !strings.HasPrefix(s1[0], "bytes") {
-			log.Errorw("invalid content range (2)", "range", req.Header.Get("Content-Range"), "s1", s1)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		s2 := strings.Split(s1[1], "-")
-		if len(s2) != 2 {
-			log.Warnw("invalid content range (3)", "range", req.Header.Get("Content-Range"), "s2", s2)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		toDiscard, err = strconv.ParseInt(s2[0], 10, 64)
-		if err != nil {
-			log.Warnw("invalid content range (4)", "range", req.Header.Get("Content-Range"), "s2", s2)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		if s2[1] != "" {
-			toLimit, err = strconv.ParseInt(s2[1], 10, 64)
-			if err != nil {
-				log.Warnw("invalid content range (5)", "range", req.Header.Get("Content-Range"), "s2", s2)
-				http.Error(w, "invalid content range", http.StatusBadRequest)
-				return
-			}
-		}
-	}
-
-	gm, err := r.RBS.StorageDiag().GroupMeta(reqToken.Group)
-	if err != nil {
-		log.Errorw("car request: group meta", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if gm.DealCarSize == nil {
-		log.Errorw("car request: no deal car size", "url", req.URL)
-		http.Error(w, "no deal car size", http.StatusInternalServerError)
-		return
-	}
-
-	// external offload
-	extu, err := r.maybeGetExternalURL(reqToken.Group)
-	if err != nil {
-		log.Errorw("XYZ: car request: external url", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if extu != nil {
-		log.Infow("XYZ: car request: redir to external url", "error", err, "url", *extu)
-
-		//r.s3Redirects.Add(1)
-
-		http.Redirect(w, req, *extu, http.StatusFound)
-		return
-	}
-
 	// this is a local transfer, track stats
 
-	cfg := configuration.GetConfig()
-
+/* 
 	r.uploadStatsLk.Lock()
 	if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
 		http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
@@ -340,12 +238,6 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	r.uploadStats[reqToken.Group].ActiveRequests++
-
-	sw := &carStatWriter{
-		groupCtr:  &r.uploadStats[reqToken.Group].UploadBytes,
-		w:         w,
-		toDiscard: toDiscard,
-	}
 
 	r.uploadStatsLk.Unlock()
 
@@ -380,60 +272,20 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
 		return
 	}
-
-	//startTime := DerefOr(transferInfo.CarTransferStartTime, 0)
-
-	/* if time.Since(bootTime) > transferIdleTimeout && startTime > 0 {
-		if time.Since(time.Unix(DerefOr(transferInfo.CarTransferLastEndTime, 0), 0)) > transferIdleTimeout {
-			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer not restarted for too long")); err != nil {
-				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-				return
-			}
-
-			http.Error(w, "transfer not restarted for too long", http.StatusGone)
-			return
-		}
-
-		// if the transfer was started already, and going on for a while, check the speed
-		elapsedTime := time.Since(time.Unix(startTime, 0))
-		transferredBytes := DerefOr(transferInfo.CarTransferLastBytes, 0)
-		transferSpeedMbps := float64(transferredBytes*8) / 1e6 / elapsedTime.Seconds()
-
-		if transferSpeedMbps < float64(minTransferMbps) {
-			log.Warnw("car request: transfer speed too slow", "url", req.URL, "speed", transferSpeedMbps, "deal", reqToken.DealUUID, "group", reqToken.Group)
-			http.Error(w, "transfer speed too slow", http.StatusGone)
-			return
-		}
-	} */
-
-	/* rc := r.rateCounters.Get(pid)
-	rateWriter := ributil.NewRateEnforcingWriter(sw, rc, transferIdleTimeout)
-	defer rateWriter.Done() */
-	rateWriter := sw
-
-	respLen := *gm.DealCarSize - toDiscard
-	if toLimit != -1 {
-		respLen = toLimit - toDiscard + 1
-	}
-
-	w.Header().Set("Content-Length", strconv.FormatInt(respLen, 10))
+ */
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
-	// limit writer in case we have a range request
-	var errLimitReached = errors.New("byte limit reached")
-	var writerToUse io.Writer = rateWriter
-
-	if toLimit != -1 {
-		writerToUse = &LimitWriter{
-			W:   rateWriter,
-			N:   toLimit - toDiscard + 1,
-			Err: errLimitReached,
-		}
+	cf, err := r.externalOffloader.ReadCarFile(req.Context(), reqToken.Group)
+	if err != nil {
+		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	err = r.RBS.Storage().ReadCar(req.Context(), reqToken.Group, func(int64) {}, writerToUse)
+	defer cf.Close()
+	http.ServeContent(w, req, "gdata.car", time.Time{}, cf)
 
-	defer func() {
+/* 	defer func() {
 		//werr := rateWriter.WriteError()
 		werr := err
 
@@ -442,7 +294,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}()
-
+ */
 	if err != nil {
 		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -163,3 +163,25 @@ func (lwi *LocalWebInfo) ReadCar(ctx context.Context, group iface.GroupKey, path
 		Closer: file,
 	}, nil
 }
+
+func (lwi *LocalWebInfo) ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error) {
+	target, err := getLocalWebPath()
+	if err != nil {
+		return nil, xerrors.Errorf("XYZ: LocalWeb: failed to get local web path: %w", err)
+	}
+	mod, pstr, err := lwi.r.db.GetExternalPath(group)
+	if err != nil {
+		return nil, xerrors.Errorf("XYZ: LocalWeb: failed to get external path for group %d: %w", group, err)
+	}
+	if mod == nil || *mod != lwi.name {
+		return nil, xerrors.Errorf("XYZ: LocalWeb: external path for group %d is not a local web path", group)
+	}
+
+	target = path.Join(target, *pstr)
+	file, err := os.Open(target)
+	if err != nil {
+		return nil, xerrors.Errorf("XYZ: LocalWeb: failed to open carfile %s for group %d: %w", target, group, err)
+	}
+
+	return file, nil
+}

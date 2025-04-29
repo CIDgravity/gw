@@ -216,6 +216,10 @@ func (s *S3OffloadInfo) ReadCar(ctx context.Context, group iface.GroupKey, path 
 	return req.HTTPResponse.Body, nil
 }
 
+func (s *S3OffloadInfo) ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error) {
+	return nil, xerrors.Errorf("RCF not implemented for S3")
+}
+
 const partSize = 128 << 20 // todo investigate streaming much larger parts
 const minPartSize = 8 << 20
 const adjustmentSize = 100 << 10 // 100 KiB

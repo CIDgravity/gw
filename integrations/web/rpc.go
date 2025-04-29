@@ -53,7 +53,8 @@ func (rc *RIBSRpc) CrawlState(ctx context.Context) (ribs.CrawlState, error) {
 }
 
 func (rc *RIBSRpc) CarUploadStats(ctx context.Context) (ribs.UploadStats, error) {
-	return rc.ribs.DealDiag().CarUploadStats(), nil
+	//return rc.ribs.DealDiag().CarUploadStats(), nil
+	return ribs.UploadStats{}, nil
 }
 
 func (rc *RIBSRpc) ReachableProviders(ctx context.Context) ([]ribs.ProviderMeta, error) {

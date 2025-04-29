@@ -1534,7 +1534,7 @@ func DerefOr[T any](v *T, def T) T {
 	return *v
 }
 
-type TransferInfo struct {
+/* type TransferInfo struct {
 	Failed                 int
 	CarTransferAttempts    int
 	CarTransferStartTime   *int64
@@ -1575,7 +1575,7 @@ func (r *ribsDB) UpdateTransferStats(dealUUID uuid.UUID, lastBytes int64, abortE
 	}
 
 	return nil
-}
+} */
 
 type RetrCheckCandidate struct {
 	DealID   string

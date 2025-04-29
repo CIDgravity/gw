@@ -13,11 +13,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
-	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/cidgravity"
 	"github.com/lotus-web3/ribs/configuration"
@@ -106,16 +104,7 @@ type ribs struct {
 	/* sp tracker */
 	crawlState atomic.Pointer[iface.CrawlState]
 
-	/* car uploads */
-	uploadStats     map[iface.GroupKey]*iface.GroupUploadStats
-	uploadStatsSnap map[iface.GroupKey]*iface.GroupUploadStats
-
-	activeUploads map[uuid.UUID]int
-	uploadStatsLk sync.Mutex
-
-	rateCounters *ributil.RateCounters[peer.ID]
-
-	/* car upload offload (S3) */
+	/*  */
 	cidg                  cidgravity.CIDGravity
 	canSendDealLastCheck  time.Time
 	canSendDealLastResult bool
@@ -252,10 +241,10 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 
 		lotusRPCAddr: opt.fileCoinAPIEndpoint,
 
-		uploadStats:     map[iface.GroupKey]*iface.GroupUploadStats{},
-		uploadStatsSnap: map[iface.GroupKey]*iface.GroupUploadStats{},
-		activeUploads:   map[uuid.UUID]int{},
-		rateCounters:    ributil.NewRateCounters[peer.ID](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps))),
+		//uploadStats:     map[iface.GroupKey]*iface.GroupUploadStats{},
+		//uploadStatsSnap: map[iface.GroupKey]*iface.GroupUploadStats{},
+		//activeUploads:   map[uuid.UUID]int{},
+		//rateCounters:    ributil.NewRateCounters[peer.ID](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps))),
 
 		s3Uploads: map[iface.GroupKey]struct{}{},
 
