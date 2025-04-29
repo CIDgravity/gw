@@ -200,22 +200,24 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 
 	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
-	provsIds, err := r.cidg.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
-                PieceCid:             pieceCid.String(),
-                StartEpoch:           uint64(startEpoch),
-                Duration:             uint64(duration),
-                StoragePricePerEpoch: price.String(),
-                ProviderCollateral:   providerCollateral.String(),
-                VerifiedDeal:         &verified,
-                TransferSize:         transfer.Size,
-                TransferType:         transfer.Type,
-                RemoveUnsealedCopy:   &removeUnsealed,
-	})
+	req := cidgravity.CIDgravityGetBestAvailableProvidersRequest{
+		PieceCid:             pieceCid.String(),
+		StartEpoch:           uint64(startEpoch),
+		Duration:             uint64(duration),
+		StoragePricePerEpoch: price.String(),
+		ProviderCollateral:   providerCollateral.String(),
+		VerifiedDeal:         &verified,
+		TransferSize:         transfer.Size,
+		TransferType:         transfer.Type,
+		RemoveUnsealedCopy:   &removeUnsealed,
+	}
+
+	provsIds, err := r.cidg.GetBestAvailableProviders(req)
 	if err != nil {
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
 
-	log.Debugw("making more deal", "group", id, "providers", provsIds)
+	log.Debugw("making more deal", "group", id, "providers", provsIds, "req", req)
 
         provs := []dealProvider{}
         for _, prov := range provsIds {
