@@ -297,19 +297,19 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		}
 
 		if err := r.host.Connect(ctx, *addrInfo); err != nil {
-			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
-			if err != nil {
-				return fmt.Errorf("saving rejected deal info: %w", err)
+			sterr := r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
+			if sterr != nil {
+				return fmt.Errorf("saving rejected deal info: %w", sterr)
 			}
 
-			return xerrors.Errorf("connect to miner: %w", err)
+			return xerrors.Errorf("connect to miner %s: %w", maddr, err)
 		}
 
 		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv121)
 		if err != nil {
-			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
-			if err != nil {
-				return fmt.Errorf("saving rejected deal info: %w", err)
+			sterr := r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
+			if sterr != nil {
+				return fmt.Errorf("saving rejected deal info: %w", sterr)
 			}
 
 			return fmt.Errorf("getting protocols for peer %s: %w", addrInfo.ID, err)
