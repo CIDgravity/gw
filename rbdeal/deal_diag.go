@@ -16,7 +16,14 @@ func (r *ribs) DealDiag() iface.RIBSDiag {
 }
 
 func (r *ribs) CrawlState() iface.CrawlState {
-	return *r.crawlState.Load()
+	cs := r.crawlState.Load()
+	if cs == nil {
+		return iface.CrawlState{
+			State: "disabled",
+		}
+	}
+
+	return *cs
 }
 
 func (r *ribs) ReachableProviders() []iface.ProviderMeta {
@@ -57,6 +64,10 @@ func (r *ribs) Filecoin(ctx context.Context) (api.Gateway, jsonrpc.ClientCloser,
 }
 
 func getLibP2PInfoForHost(h host.Host) iface.Libp2pInfo {
+	if h == nil {
+		return iface.Libp2pInfo{}
+	}
+
 	out := iface.Libp2pInfo{
 		PeerID: h.ID().String(),
 		Peers:  len(h.Network().Peers()),
