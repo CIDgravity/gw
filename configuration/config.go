@@ -60,7 +60,7 @@ type RibsConfig struct {
 	DealCheckInterval          time.Duration `envconfig:"RIBS_DEAL_CHECK_INTERVAL" default:"30s"`
 	DealCanSendCommand         string        `envconfig:"RIBS_DEAL_CAN_SEND_COMMAND" default:""`
 	MongoDBUri                 string        `envconfig:"RIBS_MONGODB_URI"`
-	RunSpCrawler               bool          `envconfig:"RIBS_RUN_SP_CRAWLER" default:false`
+	RunSpCrawler               bool          `envconfig:"RIBS_RUN_SP_CRAWLER" default:true`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
