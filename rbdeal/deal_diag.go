@@ -65,7 +65,10 @@ func (r *ribs) Filecoin(ctx context.Context) (api.Gateway, jsonrpc.ClientCloser,
 
 func getLibP2PInfoForHost(h host.Host) iface.Libp2pInfo {
 	if h == nil {
-		return iface.Libp2pInfo{}
+		return iface.Libp2pInfo{
+			Listen: []string{},
+			PeerID: "n/a",
+		}
 	}
 
 	out := iface.Libp2pInfo{
