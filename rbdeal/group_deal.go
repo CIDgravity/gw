@@ -90,10 +90,6 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		// r.dealsLk.Unlock()
 	}()
 
-
-	if err := r.maybeEnsureS3Offload(id); err != nil {
-		return xerrors.Errorf("attempting s3 offload: %w", err)
-	}
 	if err := r.maybeEnsureEnsureExternalPush(id); err != nil {
 		return xerrors.Errorf("XYZ: attempting external offload: %w", err)
 	}
@@ -190,36 +186,26 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	// XXX: price?
 	price := big.Zero()
 
-	transfer := types.Transfer{
-		Type:   "libp2p",
-		Size:   uint64(dealInfo.CarSize),
-	}
-	url, err := r.maybeGetExternalURL(id)
-	if err != nil {
-		return fmt.Errorf("Failed to get External URL: %w", err)
-	}
-	if url != nil {
-		transfer.Type = "http"
-	}
-
 	removeUnsealed := cfg.Deal.RemoveUnsealedCopy
 
-	provsIds, err := r.cidg.GetBestAvailableProviders(cidgravity.CIDgravityGetBestAvailableProvidersRequest{
-                PieceCid:             pieceCid.String(),
-                StartEpoch:           uint64(startEpoch),
-                Duration:             uint64(duration),
-                StoragePricePerEpoch: price.String(),
-                ProviderCollateral:   providerCollateral.String(),
-                VerifiedDeal:         &verified,
-                TransferSize:         transfer.Size,
-                TransferType:         transfer.Type,
-                RemoveUnsealedCopy:   &removeUnsealed,
-	})
+	req := cidgravity.CIDgravityGetBestAvailableProvidersRequest{
+		PieceCid:             pieceCid.String(),
+		StartEpoch:           uint64(startEpoch),
+		Duration:             uint64(duration),
+		StoragePricePerEpoch: price.String(),
+		ProviderCollateral:   providerCollateral.String(),
+		VerifiedDeal:         &verified,
+		TransferSize:         uint64(dealInfo.CarSize),
+		TransferType:         "http",
+		RemoveUnsealedCopy:   &removeUnsealed,
+	}
+
+	provsIds, err := r.cidg.GetBestAvailableProviders(req)
 	if err != nil {
 		return xerrors.Errorf("select deal providers: %w", err)
 	}
 
-	log.Debugw("making more deal", "group", id, "providers", provsIds)
+	log.Debugw("making more deal", "group", id, "providers", provsIds, "req", req)
 
         provs := []dealProvider{}
         for _, prov := range provsIds {
@@ -301,19 +287,19 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		}
 
 		if err := r.host.Connect(ctx, *addrInfo); err != nil {
-			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
-			if err != nil {
-				return fmt.Errorf("saving rejected deal info: %w", err)
+			sterr := r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
+			if sterr != nil {
+				return fmt.Errorf("saving rejected deal info: %w", sterr)
 			}
 
-			return xerrors.Errorf("connect to miner: %w", err)
+			return xerrors.Errorf("connect to miner %s: %w", maddr, err)
 		}
 
 		x, err := r.host.Peerstore().FirstSupportedProtocol(addrInfo.ID, DealProtocolv121)
 		if err != nil {
-			err = r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
-			if err != nil {
-				return fmt.Errorf("saving rejected deal info: %w", err)
+			sterr := r.db.StoreRejectedDeal(di.DealUUID, fmt.Sprintf("failed to connect to miner: %s", err), 0)
+			if sterr != nil {
+				return fmt.Errorf("saving rejected deal info: %w", sterr)
 			}
 
 			return fmt.Errorf("getting protocols for peer %s: %w", addrInfo.ID, err)

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/filecoin-project/go-state-types/builtin"
 	"github.com/filecoin-project/lotus/chain/types"
 )
 
@@ -22,7 +21,6 @@ var (
 
 	dealPublishFinality abi.ChainEpoch = 60
 
-	dealStartTime       = abi.ChainEpoch(builtin.EpochsInDay * 4) // 4 days
 	dealDownloadTimeout = time.Hour * 24 * 4
 )
 
@@ -45,6 +43,6 @@ var maxTransfers = linkSpeedMbps / minTransferMbps * 8 / 10 // 80% for safety ma
 
 // time the sp has to start the first transfer, and for data to not be flowing
 // also transfer rate check interval
-var transferIdleTimeout = 5 * time.Minute
+var transferIdleTimeout = 120 * time.Minute
 
-var maxTransferRetries = 10
+var maxTransferRetries = 10000

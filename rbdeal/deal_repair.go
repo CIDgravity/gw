@@ -2,6 +2,7 @@ package rbdeal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/ipfs/go-cid"
 	ribs2 "github.com/lotus-web3/ribs"
@@ -443,7 +444,7 @@ func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.G
 		}
 	}()
 
-	err = r.retrProv.FetchDeal(ctx, group, gm.RootCid, tempDir, groupFile)
+	err = errors.New("lassie is gone")
 	done()
 
 	if err != nil {

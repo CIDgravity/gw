@@ -2,35 +2,26 @@ package rbdeal
 
 import (
 	"context"
-	"fmt"
-	"github.com/google/uuid"
-	"golang.org/x/xerrors"
-	"os"
-	"path"
-
 	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
+	"golang.org/x/xerrors"
+	"io"
 )
+
+type CarSource func(context.Context, iface.GroupKey, func(int64), io.Writer) error
 
 type ExternalOffloader interface {
 	maybeInitExternal(r *ribs) (bool, error)
 	GetModuleName() string
-	EnsureExternalPush(gid iface.GroupKey) error
+	EnsureExternalPush(gid iface.GroupKey, src CarSource) error
 	GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error)
 	CleanExternal(gid iface.GroupKey, lpath string) error
+	ReadCar(ctx context.Context, group iface.GroupKey, path string, off int64, size int64) (io.ReadCloser, error)
+	ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error)
 }
-
-type LocalWebInfo struct {
-	name string
-	path string
-	url  string
-	r    *ribs
-}
-
-const EXTERNAL_LOCALWEB = "local-web"
 
 func (r *ribs) maybeInitExternal() error {
 	modules := []ExternalOffloader{
+		&S3OffloadInfo{},
 		&LocalWebInfo{},
 	}
 	for _, module := range modules {
@@ -40,13 +31,16 @@ func (r *ribs) maybeInitExternal() error {
 		}
 		if found {
 			log.Infow("XYZ: External module configured", "name", module.GetModuleName())
-			(*r).externalOffloader = &module
+			r.externalOffloader = module
 			return nil
 		}
 	}
 
+	r.RBS.StagingStorage().InstallStagingProvider(&ribsStagingProvider{r: r})
+
 	return nil
 }
+
 func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 	mname, err := r.db.NeedExternalModule()
 	if err != nil {
@@ -56,7 +50,7 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 		if r.externalOffloader == nil {
 			return nil
 		}
-		if lmod := (*r.externalOffloader).GetModuleName(); lmod != *mname {
+		if lmod := r.externalOffloader.GetModuleName(); lmod != *mname {
 			return xerrors.Errorf("XYZ: External: need %s module, %s loaded", mname, lmod)
 		}
 	}
@@ -65,10 +59,17 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 		return xerrors.Errorf("XYZ: External: fail to get ext path: %w", err)
 	}
 	if module != nil {
+		// already pushed
 		return nil
 	}
-	return (*r.externalOffloader).EnsureExternalPush(gid)
+
+	if r.externalOffloader == nil {
+		return nil
+	}
+
+	return (r.externalOffloader).EnsureExternalPush(gid, r.RBS.Storage().ReadCar)
 }
+
 func (r *ribs) maybeGetExternalURL(gid iface.GroupKey) (*string, error) {
 	module, path, err := r.db.GetExternalPath(gid)
 	if err != nil {
@@ -80,11 +81,12 @@ func (r *ribs) maybeGetExternalURL(gid iface.GroupKey) (*string, error) {
 	if r.externalOffloader == nil {
 		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but no module loaded", *module)
 	}
-	if lmod := (*r.externalOffloader).GetModuleName(); lmod != *module {
+	if lmod := r.externalOffloader.GetModuleName(); lmod != *module {
 		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but %s module loaded", *module, lmod)
 	}
-	return (*r.externalOffloader).GetGroupExternalURL(gid, *path)
+	return r.externalOffloader.GetGroupExternalURL(gid, *path)
 }
+
 func (r *ribs) cleanupExternalOffload(gid iface.GroupKey) error {
 	module, epath, err := r.db.GetExternalPath(gid)
 	if err != nil {
@@ -98,92 +100,54 @@ func (r *ribs) cleanupExternalOffload(gid iface.GroupKey) error {
 	if r.externalOffloader == nil {
 		return xerrors.Errorf("XYZ: External: offloaded to %s, but no module loaded", *module)
 	}
-	if lmod := (*r.externalOffloader).GetModuleName(); lmod != *module {
+	if lmod := r.externalOffloader.GetModuleName(); lmod != *module {
 		return xerrors.Errorf("XYZ: External: offloaded to %s, but %s module loaded", *module, lmod)
 	}
-	return (*r.externalOffloader).CleanExternal(gid, *epath)
+	return r.externalOffloader.CleanExternal(gid, *epath)
 }
 
-func getLocalWebPath() string {
-	cfg := configuration.GetConfig()
-	return cfg.External.Localweb.Path
-}
-func getLocalWebUrl() string {
-	cfg := configuration.GetConfig()
-	return cfg.External.Localweb.Url
+type ribsStagingProvider struct {
+	r *ribs
 }
 
-func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
-	lwi.name = EXTERNAL_LOCALWEB
-	lwi.path = getLocalWebPath()
-	lwi.url = getLocalWebUrl()
-	lwi.r = r
-	if lwi.path == "" && lwi.url == "" {
-		return false, nil
-	}
-	if lwi.path == "" || lwi.url == "" {
-		return false, xerrors.Errorf("XYZ: LocalWeb: module need both EXTERNAL_LOCALWEB_PATH and EXTERNAL_LOCALWEB_URL to be set: '%s' & '%s'", lwi.path, lwi.url)
-	}
-	return true, nil
-}
-
-func (lwi *LocalWebInfo) GetModuleName() string {
-	return lwi.name
-}
-func setSizeNoop(_ int64) {}
-
-func (lwi *LocalWebInfo) EnsureExternalPush(gid iface.GroupKey) error {
-	// generate random uuid
-	guuid := uuid.New().String()
-	// ensure we don't have a file by that name on target
-	target := path.Join(getLocalWebPath(), guuid)
-	if _, err := os.Stat(target); err == nil {
-		return xerrors.Errorf("XYZ: LocalWeb: Random generated UUID for localweb cach already exists: %s", guuid)
-	}
-	// Write the carfile there
-	carfile, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+// HasCar implements ribs.StagingStorageProvider.
+func (r *ribsStagingProvider) HasCar(ctx context.Context, group iface.GroupKey) (bool, error) {
+	module, _, err := r.r.db.GetExternalPath(group)
 	if err != nil {
-		return xerrors.Errorf("XYZ: opening carfile: %w", err)
+		return false, xerrors.Errorf("XYZ: External: fail to get ext path: %w", err)
 	}
-
-	ctx := context.TODO()
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	err = lwi.r.RBS.Storage().ReadCar(ctx, gid, setSizeNoop, carfile)
-	if err != nil {
-		return xerrors.Errorf("XYZ: failed to dump carfile: %w", err)
-	}
-	if err := carfile.Sync(); err != nil {
-		return xerrors.Errorf("XYZ: failed to sync carfile: %w", err)
-	}
-	if err := carfile.Close(); err != nil {
-		return xerrors.Errorf("XYZ: failed to close carfile: %w", err)
-	}
-
-	// store file name in db
-	err = lwi.r.db.AddExternalPath(gid, lwi.name, guuid)
-	if err != nil {
-		return xerrors.Errorf("XYZ: LocalWeb: Failed to store localpath: %w", err)
-	}
-
-	return nil
-}
-func (lwi *LocalWebInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
-	url := fmt.Sprintf("%s/%s", lwi.url, lpath)
-	return &url, nil
+	return module != nil, nil
 }
 
-func (lwi *LocalWebInfo) CleanExternal(gid iface.GroupKey, lpath string) error {
-	// remove file in target
-	target := path.Join(getLocalWebPath(), lpath)
-	if err := os.Remove(target); err != nil {
-		return xerrors.Errorf("XYZ: External: failed to remove carfile %s for group %d: %w", target, gid, err)
+// ReadCar implements ribs.StagingStorageProvider.
+func (r *ribsStagingProvider) ReadCar(ctx context.Context, group iface.GroupKey, off int64, size int64) (io.ReadCloser, error) {
+	module, path, err := r.r.db.GetExternalPath(group)
+	if err != nil {
+		return nil, xerrors.Errorf("XYZ: External: fail to get ext path: %w", err)
 	}
-	// remove entry from db
-	if err := lwi.r.db.DropExternalPath(gid); err != nil {
-		return xerrors.Errorf("XYZ: External: failed to remove external path from db for group %d: %w", gid, err)
+
+	if module == nil {
+		return nil, xerrors.Errorf("XYZ: External: group %d has no external path", group)
 	}
-	return nil
+
+	if path == nil {
+		return nil, xerrors.Errorf("XYZ: External: group %d has no external path", group)
+	}
+
+	if r.r.externalOffloader == nil {
+		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but no module loaded", *module)
+	}
+
+	if lmod := r.r.externalOffloader.GetModuleName(); lmod != *module {
+		return nil, xerrors.Errorf("XYZ: External: offloaded to %s, but %s module loaded", *module, lmod)
+	}
+
+	return r.r.externalOffloader.ReadCar(ctx, group, *path, off, size)
+}
+
+// Upload implements ribs.StagingStorageProvider.
+func (r *ribsStagingProvider) Upload(ctx context.Context, group iface.GroupKey, size int64, src func(writer io.Writer) error) error {
+	return (r.r.externalOffloader).EnsureExternalPush(group, func(ctx context.Context, gk iface.GroupKey, f func(int64), w io.Writer) error {
+		return src(w)
+	})
 }

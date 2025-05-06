@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 `
 
+// TODO: MIGRATE offloads_s3 to external_path !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 type schema struct {
 	VersionNumber int
 	Description   string
@@ -1532,7 +1534,7 @@ func DerefOr[T any](v *T, def T) T {
 	return *v
 }
 
-type TransferInfo struct {
+/* type TransferInfo struct {
 	Failed                 int
 	CarTransferAttempts    int
 	CarTransferStartTime   *int64
@@ -1573,7 +1575,7 @@ func (r *ribsDB) UpdateTransferStats(dealUUID uuid.UUID, lastBytes int64, abortE
 	}
 
 	return nil
-}
+} */
 
 type RetrCheckCandidate struct {
 	DealID   string
@@ -1770,44 +1772,6 @@ func (r *ribsDB) GetProviderAddrs(provider int64) (ProviderAddrInfo, error) {
 	}
 
 	return addrInfo, nil
-}
-
-func (r *ribsDB) HasS3Offload(group iface.GroupKey) (bool, error) {
-	var has int
-	err := r.db.QueryRow(`select count(*) from offloads_s3 where group_id = ?`, group).Scan(&has)
-	if err != nil {
-		return false, xerrors.Errorf("query: %w", err)
-	}
-
-	return has > 0, nil
-}
-
-func (r *ribsDB) NeedS3Offload() (bool, error) {
-	var has int
-	err := r.db.QueryRow(`select count(*) from offloads_s3`).Scan(&has)
-	if err != nil {
-		return false, xerrors.Errorf("query: %w", err)
-	}
-
-	return has > 0, nil
-}
-
-func (r *ribsDB) AddS3Offload(group iface.GroupKey) error {
-	_, err := r.db.Exec(`insert into offloads_s3 (group_id) values (?)`, group)
-	if err != nil {
-		return xerrors.Errorf("exec: %w", err)
-	}
-
-	return nil
-}
-
-func (r *ribsDB) DropS3Offload(group iface.GroupKey) error {
-	_, err := r.db.Exec(`delete from offloads_s3 where group_id = ?`, group)
-	if err != nil {
-		return xerrors.Errorf("exec: %w", err)
-	}
-
-	return nil
 }
 
 func (r *ribsDB) NeedExternalModule() (*string, error) {

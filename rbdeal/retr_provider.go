@@ -2,10 +2,8 @@ package rbdeal
 
 import (
 	"context"
-	"github.com/filecoin-project/lassie/pkg/storage"
-	"github.com/ipld/go-car/v2"
-	"github.com/ipld/go-car/v2/storage/deferred"
-	trustlessutils "github.com/ipld/go-trustless-utils"
+	"errors"
+	"github.com/filecoin-project/lassie/pkg/types"
 	pool "github.com/libp2p/go-buffer-pool"
 	"github.com/lotus-web3/ribs/carlog"
 	"io"
@@ -15,23 +13,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/filecoin-project/lassie/pkg/lassie"
-	"github.com/filecoin-project/lassie/pkg/net/host"
-	"github.com/filecoin-project/lassie/pkg/types"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
-	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/lib/must"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-unixfsnode"
-	"github.com/ipld/go-ipld-prime/linking"
-	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipni/go-libipni/metadata"
 	"github.com/libp2p/go-libp2p/core/peer"
 	iface "github.com/lotus-web3/ribs"
 	"github.com/lotus-web3/ribs/ributil"
-	"github.com/multiformats/go-multicodec"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 )
@@ -40,8 +30,6 @@ type mhStr string // multihash bytes in a string
 
 type retrievalProvider struct {
 	r *ribs
-
-	lsi *lassie.Lassie
 
 	reqSourcesLk sync.Mutex
 	requests     map[mhStr]map[iface.GroupKey]int
@@ -276,25 +264,6 @@ func newRetrievalProvider(ctx context.Context, r *ribs) (*retrievalProvider, err
 		candidateCache: must.One(lru.New[iface.GroupKey, cachedRetrCandidates](RetrievalCandidateCacheSize)),
 	}
 
-	retrHost, err := host.InitHost(ctx, nil)
-	if err != nil {
-		return nil, xerrors.Errorf("init lassie host: %w", err)
-	}
-	r.retrHost = retrHost
-
-	lsi, err := lassie.NewLassie(ctx,
-		lassie.WithCandidateSource(rp),
-		lassie.WithConcurrentSPRetrievals(50),
-		lassie.WithBitswapConcurrency(50),
-		//lassie.WithGlobalTimeout(30*time.Second),
-		//lassie.WithProviderTimeout(4*time.Second),
-		lassie.WithHost(retrHost))
-	if err != nil {
-		return nil, xerrors.Errorf("failed to create lassie: %w", err)
-	}
-
-	rp.lsi = lsi
-
 	return rp, nil
 }
 
@@ -487,32 +456,28 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 		r.reqSourcesLk.Unlock()
 	}()
 
-	// todo this is probably horribly inefficient, optimize
-
-	wstor := &ributil.IpldStoreWrapper{BS: blockstore.NewMemorySync()}
-
-	linkSystem := cidlink.DefaultLinkSystem()
-	linkSystem.SetWriteStorage(wstor)
-	linkSystem.SetReadStorage(wstor)
-	linkSystem.TrustedStorage = true
-	unixfsnode.AddUnixFSReificationToLinkSystem(&linkSystem)
-
 	for i, hashToGet := range mh {
 		if hashToGet == nil {
 			continue
 		}
 
-		var err error
-		for j := 0; j < 16; j++ {
-			err = r.fetchOne(ctx, hashToGet, i, linkSystem, wstor, cb, &bytesServed)
-			if err == nil {
-				break
-			}
-			log.Warnw("failed to fetch block", "error", err, "attempt", j, "hash", hashToGet)
-		}
+		cidToGet := cid.NewCidV1(cid.Raw, hashToGet)
+
+		promise, err := r.retrievalPromise(ctx, cidToGet, i, cb)
 		if err != nil {
-			return xerrors.Errorf("fetchOne: %w", err)
+			return err
 		}
+		if promise == nil {
+			// already done
+			continue
+		}
+
+		r.ongoingRequestsLk.Lock()
+		delete(r.ongoingRequests, cidToGet)
+		r.ongoingRequestsLk.Unlock()
+
+		promise.err = errors.New("no lassie, http retrieval failed")
+		close(promise.done)
 	}
 
 	return nil
@@ -613,182 +578,4 @@ func (r *retrievalProvider) retrievalPromise(ctx context.Context, cidToGet cid.C
 	r.ongoingRequestsLk.Unlock()
 
 	return promise, nil
-}
-
-func (r *retrievalProvider) fetchOne(ctx context.Context, hashToGet multihash.Multihash, i int, linkSystem linking.LinkSystem, wstor *ributil.IpldStoreWrapper, cb func(cidx int, data []byte), bytesServed *int64) error {
-	cidToGet := cid.NewCidV1(cid.Raw, hashToGet)
-
-	promise, err := r.retrievalPromise(ctx, cidToGet, i, cb)
-	if err != nil || promise == nil {
-		return err
-	}
-
-	r.r.retrActive.Add(1)
-	defer r.r.retrActive.Add(-1)
-
-	request := types.RetrievalRequest{
-		RetrievalID:       must.One(types.NewRetrievalID()),
-		LinkSystem:        linkSystem,
-		PreloadLinkSystem: linkSystem,
-		Protocols:         []multicodec.Code{multicodec.TransportBitswap, multicodec.TransportGraphsyncFilecoinv1},
-		MaxBlocks:         10,
-
-		Request: trustlessutils.Request{
-			Root:       cidToGet,
-			Path:       "",
-			Scope:      trustlessutils.DagScopeBlock,
-			Bytes:      nil,
-			Duplicates: false,
-		},
-	}
-
-	stat, err := r.lsi.Fetch(ctx, request, types.WithEventsCallback(func(event types.RetrievalEvent) {
-		log.Debugw("retrieval event", "cid", cidToGet, "event", event)
-
-		/*if event.Code() == types.StartedCode && event.StorageProviderId() != "" {
-			r.statLk.Lock()
-			r.attempts[event.StorageProviderId()]++
-			r.statLk.Unlock()
-		}*/
-		if event.Code() == types.FailedCode /* && event.StorageProviderId() != "" */ {
-			log.Warnw("RETR ERROR", "cid", cidToGet, "event", event)
-			/*r.statLk.Lock()
-			r.fails[event.StorageProviderId()]++
-			r.statLk.Unlock()*/
-		}
-		/*if event.Code() == types.SuccessCode && event.StorageProviderId() != "" {
-			r.statLk.Lock()
-			r.success[event.StorageProviderId()]++
-			r.statLk.Unlock()
-		}*/
-	}))
-	if err != nil {
-		log.Errorw("retrieval failed", "cid", cidToGet, "error", err)
-
-		r.ongoingRequestsLk.Lock()
-		delete(r.ongoingRequests, cidToGet)
-		r.ongoingRequestsLk.Unlock()
-
-		promise.err = err
-		close(promise.done)
-
-		r.r.retrFail.Add(1)
-
-		return xerrors.Errorf("failed to fetch %s: %w", cidToGet, err)
-	}
-
-	log.Debugw("retr stat", "dur", stat.Duration, "size", stat.Size, "cid", cidToGet, "provider", stat.StorageProviderId)
-
-	b, err := wstor.BS.Get(ctx, cidToGet)
-	if err != nil {
-		log.Errorw("failed to get block from retrieval store", "error", err)
-
-		r.ongoingRequestsLk.Lock()
-		delete(r.ongoingRequests, cidToGet)
-		r.ongoingRequestsLk.Unlock()
-
-		promise.err = err
-		close(promise.done)
-
-		r.r.retrFail.Add(1)
-
-		return xerrors.Errorf("failed to get block from retrieval store: %w", err)
-	}
-
-	r.ongoingRequestsLk.Lock()
-	delete(r.ongoingRequests, cidToGet)
-	r.ongoingRequestsLk.Unlock()
-
-	r.blockCache.Add(mhStr(hashToGet), b.RawData())
-
-	promise.res = b.RawData()
-	close(promise.done)
-
-	r.r.retrSuccess.Add(1)
-	*bytesServed += int64(len(b.RawData()))
-	cb(i, b.RawData())
-
-	return nil
-}
-
-const maxBlocks = 30_000_000 // max groups blocks default to 20M, 30 here is a bit of a buffer
-
-func (r *retrievalProvider) FetchDeal(ctx context.Context, group iface.GroupKey, root cid.Cid, tempDir, carfile string) error {
-	// setup index
-	m := root.Hash()
-
-	r.reqSourcesLk.Lock()
-	if _, ok := r.requests[mhStr(m)]; !ok {
-		r.requests[mhStr(m)] = map[iface.GroupKey]int{}
-	}
-
-	r.requests[mhStr(m)][group]++
-	r.reqSourcesLk.Unlock()
-
-	defer func() {
-		r.reqSourcesLk.Lock()
-
-		r.requests[mhStr(m)][group]--
-		if r.requests[mhStr(m)][group] == 0 {
-			delete(r.requests[mhStr(m)], group)
-		}
-
-		r.reqSourcesLk.Unlock()
-	}()
-
-	// setup retrieval
-	carOpts := []car.Option{
-		car.WriteAsCarV1(true),
-		car.StoreIdentityCIDs(false),
-		car.UseWholeCIDs(false),
-	}
-
-	carWriter := deferred.NewDeferredCarWriterForPath(carfile, []cid.Cid{root}, carOpts...)
-
-	carWriter.OnPut(func(i int) {}, false)
-
-	tempStore := storage.NewDeferredStorageCar(tempDir, root)
-	carStore := storage.NewCachingTempStore(carWriter.BlockWriteOpener(), tempStore)
-	defer carStore.Close()
-
-	linkSystem := cidlink.DefaultLinkSystem()
-	linkSystem.SetWriteStorage(carStore)
-	linkSystem.SetReadStorage(carStore)
-	linkSystem.TrustedStorage = true
-	unixfsnode.AddUnixFSReificationToLinkSystem(&linkSystem)
-
-	preloadStore := carStore.PreloadStore()
-
-	request := types.RetrievalRequest{
-		RetrievalID:       must.One(types.NewRetrievalID()),
-		LinkSystem:        linkSystem,
-		PreloadLinkSystem: cidlink.DefaultLinkSystem(),
-		Protocols:         []multicodec.Code{multicodec.TransportBitswap, multicodec.TransportGraphsyncFilecoinv1},
-		MaxBlocks:         maxBlocks,
-
-		Request: trustlessutils.Request{
-			Root:       root,
-			Path:       "",
-			Scope:      trustlessutils.DagScopeAll,
-			Bytes:      nil,
-			Duplicates: false,
-		},
-	}
-
-	request.PreloadLinkSystem.SetReadStorage(preloadStore)
-	request.PreloadLinkSystem.SetWriteStorage(preloadStore)
-	request.PreloadLinkSystem.TrustedStorage = true
-
-	stats, err := r.lsi.Fetch(ctx, request)
-	if err != nil {
-		log.Errorw("retrieval failed", "cid", root, "error", err)
-		return err
-	}
-	spid := stats.StorageProviderId.String()
-	if spid == "" {
-		spid = types.BitswapIndentifier
-	}
-
-	log.Debugw("retr stat", "dur", stats.Duration, "size", stats.Size, "cid", root, "provider", spid)
-	return nil
 }

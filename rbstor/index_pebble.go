@@ -44,7 +44,11 @@ func NewPebbleIndex(path string) (*PebbleIndex, error) {
 		db: db,
 		iterPool: sync.Pool{
 			New: func() interface{} {
-				return db.NewIter(nil)
+				it, err := db.NewIter(nil)
+				if err != nil {
+					panic(err)
+				}
+				return it
 			},
 		},
 	}, nil
@@ -92,7 +96,10 @@ func (i *PebbleIndex) GetGroups(ctx context.Context, mh []multihash.Multihash, c
 
 		keyPrefix := append([]byte("i:"), m...)
 		upperBound := append(append([]byte("i:"), m...), 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)
-		iter := i.db.NewIter(nil)
+		iter, err := i.db.NewIter(nil)
+		if err != nil {
+			return err
+		}
 		iter.SetBounds(keyPrefix, upperBound)
 
 		for iter.SeekGE(keyPrefix); iter.Valid(); iter.Next() {

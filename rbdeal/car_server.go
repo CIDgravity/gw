@@ -3,39 +3,31 @@ package rbdeal
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	ma "github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr/net"
 	"io"
 	"net"
 	"net/http"
 	"os"
-	"sort"
+	"path/filepath"
 	"strconv"
-	"strings"
-	"sync/atomic"
 	"time"
+
+	"github.com/mitchellh/go-homedir"
 
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
-	gostream "github.com/libp2p/go-libp2p-gostream"
-	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/libp2p/go-libp2p/core/peer"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/ributil"
+	"github.com/lotus-web3/ribs/configuration"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
 )
 
 var bootTime = time.Now()
 
-func (r *ribs) setupCarServer(ctx context.Context, host host.Host) error {
-	// todo protect incoming streams
-
-	listener, err := gostream.Listen(host, types.DataTransferProtocol)
-	if err != nil {
-		return fmt.Errorf("starting gostream listener: %w", err)
+func (r *ribs) setupCarServer(ctx context.Context) error {
+	cfg := configuration.GetConfig()
+	if !cfg.External.Localweb.BuiltinServer {
+		return nil
 	}
 
 	handler := http.NewServeMux()
@@ -48,40 +40,51 @@ func (r *ribs) setupCarServer(ctx context.Context, host host.Host) error {
 			return ctx
 		},
 	}
+	
+	if cfg.External.Localweb.ServerTLS {
+		repoDir := cfg.Ribs.DataDir
+		repoDir, err := homedir.Expand(repoDir)
+		if err != nil {
+			return xerrors.Errorf("failed to expand repo dir: %w", err)
+		}
+
+		if err := os.MkdirAll(repoDir, 0755); err != nil {
+			return xerrors.Errorf("failed to create repo dir: %w", err)
+		}
+
+		// tls uses letsencrypt autocert and gets the domain from Url
+		certManager := autocert.Manager{
+			Prompt: autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(cfg.External.Localweb.Url),
+			Cache: autocert.DirCache(filepath.Join(repoDir, "acme")),
+		}
+
+		server.TLSConfig = certManager.TLSConfig()
+	}
+
+	listenPort, err := strconv.Atoi(cfg.External.Localweb.ServerPort)
+	if err != nil {
+		return xerrors.Errorf("failed to convert server port to int: %w", err)
+	}
+
+	// always listen on 0.0.0.0
+	server.Addr = fmt.Sprintf("0.0.0.0:%d", listenPort)
+
+
 	go func() {
-		if err := server.Serve(listener); err != nil {
-			log.Errorw("car server failed to start", "error", err)
-			return
+		if cfg.External.Localweb.ServerTLS {
+			server.ListenAndServeTLS("", "")
+		} else {
+			server.ListenAndServe()
 		}
 	}()
 
-	// bootstrap to libp2p.me
-	lmeMaddr := "/dns/libp2p.me/tcp/4001"
-	lmeMa, err := ma.NewMultiaddr(lmeMaddr)
-	if err != nil {
-		return err
-	}
-	lmePid, err := peer.Decode("12D3KooWSM8TT2UFGaXk7fisoiS1UC9MkWc2PVwYyKiWuNWBpqBw")
-	if err != nil {
-		return err
-	}
-
-	err = host.Connect(ctx, peer.AddrInfo{
-		ID:    lmePid,
-		Addrs: []ma.Multiaddr{lmeMa},
-	})
-	if err != nil {
-		log.Errorw("failed to connect to peer", "peer", lmePid, "error", err)
-	}
-
-	go r.carStatsWorker(ctx)
-
-	// todo also serve tcp
+	//go r.carStatsWorker(ctx)
 
 	return nil
 }
 
-func (r *ribs) carStatsWorker(ctx context.Context) {
+/* func (r *ribs) carStatsWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -90,8 +93,8 @@ func (r *ribs) carStatsWorker(ctx context.Context) {
 			r.updateCarStats()
 		}
 	}
-}
-
+} */
+/* 
 func (r *ribs) updateCarStats() {
 	r.uploadStatsLk.Lock()
 	defer r.uploadStatsLk.Unlock()
@@ -124,36 +127,7 @@ func (r *ribs) CarUploadStats() iface.UploadStats {
 		ByGroup:        r.uploadStatsSnap,
 		LastTotalBytes: lastTotalBytes,
 	}
-}
-
-type carStatWriter struct {
-	groupCtr *int64
-	wrote    int64
-
-	w         io.Writer
-	toDiscard int64
-}
-
-func (c *carStatWriter) Write(p []byte) (n int, err error) {
-	defer func() {
-		c.wrote += int64(n)
-	}()
-
-	var discarded int64
-	if c.toDiscard > 0 {
-		if int64(len(p)) <= c.toDiscard {
-			c.toDiscard -= int64(len(p))
-			return len(p), nil
-		}
-		p = p[c.toDiscard:]
-		discarded = c.toDiscard
-		c.toDiscard = 0
-	}
-	n, err = c.w.Write(p)
-	atomic.AddInt64(c.groupCtr, int64(n))
-	n += int(discarded)
-	return
-}
+} */
 
 var jwtKey = func() *jwt.HMACSHA { // todo generate / store
 	return jwt.NewHS256([]byte("this is super safe"))
@@ -192,14 +166,27 @@ func (r *ribs) makeCarRequestToken(group int64, timeout time.Duration, carSize i
 }
 
 func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) (types.Transfer, error) {
+	cfg := configuration.GetConfig()
+	
 	reqToken, err := r.makeCarRequestToken(group, timeout, carSize, deal)
 	if err != nil {
 		return types.Transfer{}, xerrors.Errorf("make car request token: %w", err)
 	}
 
-	prefAddrs := getPreferredAddrs(r.host)
+	if cfg.External.S3.Endpoint != "" {
+		return types.Transfer{}, xerrors.Errorf("s3 endpoint is set, direct to s3 TODO")
+	}
 
-	transferParams := &types.HttpRequest{URL: "libp2p://" + prefAddrs[0].String() + "/p2p/" + r.host.ID().String()} // todo get from autonat / config
+	// external offload
+	extu, err := r.maybeGetExternalURL(group)
+	if err != nil {
+		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url: %w", err)
+	}
+	if extu == nil {
+		return types.Transfer{}, xerrors.Errorf("XYZ: car request: external url is nil")
+	}
+
+	transferParams := &types.HttpRequest{URL: *extu}
 	transferParams.Headers = map[string]string{
 		"Authorization": string(reqToken),
 	}
@@ -210,150 +197,12 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 	}
 
 	transfer := types.Transfer{
-		Type:   "libp2p",
+		Type:   "http",
 		Params: paramsBytes,
 		Size:   uint64(carSize),
 	}
 
-	if os.Getenv("S3_ENDPOINT") != "" {
-		// with s3 we don't need to transfer the data, use a p2p proxy for more reliable connectivity
-		transfer, err = convertLibp2pTransferToProxy(transfer, r.host.ID(), prefAddrs)
-		if err != nil {
-			return types.Transfer{}, fmt.Errorf("convert libp2p transfer to proxy: %w", err)
-		}
-	}
-
 	return transfer, nil
-}
-
-// ConvertLibp2pTransferToProxy takes a libp2p Transfer and outputs a proxied HTTP Transfer
-func convertLibp2pTransferToProxy(transfer types.Transfer, peerid peer.ID, prefAddrs []ma.Multiaddr) (types.Transfer, error) {
-	// Check that the transfer is of Type "libp2p"
-	if transfer.Type != "libp2p" {
-		return types.Transfer{}, fmt.Errorf("transfer is not of type libp2p")
-	}
-
-	// Unmarshal the Params field to get the HttpRequest
-	var httpReq types.HttpRequest
-	err := json.Unmarshal(transfer.Params, &httpReq)
-	if err != nil {
-		return types.Transfer{}, fmt.Errorf("unmarshal transfer Params: %w", err)
-	}
-
-	// Construct new URL pointing to the proxy server
-	proxyURL := fmt.Sprintf("https://libp2p.me/%s/", peerid.String())
-
-	// Create new Headers, including the X-Multiaddr headers
-	headers := httpReq.Headers
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-
-	// Add X-Multiaddr headers
-	headers["X-Multiaddr"] = ""
-	for _, maddr := range prefAddrs {
-		headers["X-Multiaddr"] = headers["X-Multiaddr"] + maddr.String() + ","
-	}
-	headers["X-Multiaddr"] = strings.TrimSuffix(headers["X-Multiaddr"], ",")
-
-	// Add X-P2P-Protocol header
-	headers["X-P2P-Protocol"] = types.DataTransferProtocol
-
-	// Create new HttpRequest with the proxy URL and updated headers
-	newHttpReq := types.HttpRequest{
-		URL:     proxyURL,
-		Headers: headers,
-	}
-
-	// Marshal the new HttpRequest to Params
-	newParams, err := json.Marshal(newHttpReq)
-	if err != nil {
-		return types.Transfer{}, fmt.Errorf("marshal new HttpRequest: %w", err)
-	}
-
-	// Create new Transfer object of type "http"
-	newTransfer := types.Transfer{
-		Type:   "http",
-		Params: newParams,
-		Size:   transfer.Size,
-	}
-
-	return newTransfer, nil
-}
-
-func getPreferredAddrs(h host.Host) []ma.Multiaddr {
-	type addrWithPref struct {
-		addr ma.Multiaddr
-		pref int
-	}
-
-	var addrs []addrWithPref
-
-	for _, addr := range h.Addrs() {
-		// Default preference for 'other' addresses
-		pref := 4
-
-		// Extract the protocols from the multiaddress
-		protocols := addr.Protocols()
-
-		// Flags to identify the type of address
-		isDNS := false
-		isIP4 := false
-		isIP6 := false
-
-		for _, p := range protocols {
-			switch p.Code {
-			case ma.P_DNS, ma.P_DNS4, ma.P_DNS6, ma.P_DNSADDR:
-				isDNS = true
-			case ma.P_IP4:
-				isIP4 = true
-			case ma.P_IP6:
-				isIP6 = true
-			}
-		}
-
-		// Handle DNS addresses
-		if isDNS {
-			pref = 1
-			addrs = append(addrs, addrWithPref{addr: addr, pref: pref})
-			continue
-		}
-
-		// Skip private addresses
-		if manet.IsPrivateAddr(addr) {
-			continue
-		}
-
-		// Handle public IP addresses
-		if isIP4 {
-			pref = 2
-		} else if isIP6 {
-			pref = 3
-		}
-
-		addrs = append(addrs, addrWithPref{addr: addr, pref: pref})
-	}
-
-	if len(addrs) == 0 {
-		for _, a := range h.Addrs() {
-			addrs = append(addrs, addrWithPref{addr: a, pref: 4})
-		}
-
-		log.Errorw("no non-private addresses found, using all addresses", "addrs", h.Addrs())
-	}
-
-	// Sort the addresses based on the preference
-	sort.SliceStable(addrs, func(i, j int) bool {
-		return addrs[i].pref < addrs[j].pref
-	})
-
-	// Extract the sorted multiaddresses
-	var sortedAddrs []ma.Multiaddr
-	for _, ap := range addrs {
-		sortedAddrs = append(sortedAddrs, ap.addr)
-	}
-
-	return sortedAddrs
 }
 
 func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
@@ -370,119 +219,19 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pid, err := peer.Decode(req.RemoteAddr)
-	if err != nil {
-		log.Warnw("data transfer request failed: parsing remote address as peer ID",
-			"remote-addr", req.RemoteAddr, "err", err)
-		http.Error(w, "Failed to parse remote address '"+req.RemoteAddr+"' as peer ID", http.StatusBadRequest)
-		return
-	}
-
-	log := log.With("peer", pid, "deal", reqToken.DealUUID)
-
-	// Protect the libp2p connection for the lifetime of the transfer
-	tag := uuid.New().String()
-	r.host.ConnManager().Protect(pid, tag)
-	defer r.host.ConnManager().Unprotect(pid, tag)
-
-	var toDiscard int64
-	var toLimit int64 = -1 // -1 means no limit, read to the end
-
-	if req.Header.Get("Range") != "" {
-		s1 := strings.Split(req.Header.Get("Range"), "=")
-		if len(s1) != 2 {
-			log.Warnw("invalid content range (1)", "range", req.Header.Get("Content-Range"), "s1", s1)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-		if !strings.HasPrefix(s1[0], "bytes") {
-			log.Errorw("invalid content range (2)", "range", req.Header.Get("Content-Range"), "s1", s1)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		s2 := strings.Split(s1[1], "-")
-		if len(s2) != 2 {
-			log.Warnw("invalid content range (3)", "range", req.Header.Get("Content-Range"), "s2", s2)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		toDiscard, err = strconv.ParseInt(s2[0], 10, 64)
-		if err != nil {
-			log.Warnw("invalid content range (4)", "range", req.Header.Get("Content-Range"), "s2", s2)
-			http.Error(w, "invalid content range", http.StatusBadRequest)
-			return
-		}
-
-		if s2[1] != "" {
-			toLimit, err = strconv.ParseInt(s2[1], 10, 64)
-			if err != nil {
-				log.Warnw("invalid content range (5)", "range", req.Header.Get("Content-Range"), "s2", s2)
-				http.Error(w, "invalid content range", http.StatusBadRequest)
-				return
-			}
-		}
-	}
-
-	gm, err := r.RBS.StorageDiag().GroupMeta(reqToken.Group)
-	if err != nil {
-		log.Errorw("car request: group meta", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if gm.DealCarSize == nil {
-		log.Errorw("car request: no deal car size", "url", req.URL)
-		http.Error(w, "no deal car size", http.StatusInternalServerError)
-		return
-	}
-
-	// todo run more checks here?
-
-	s3u, err := r.maybeGetS3URL(reqToken.Group)
-	if err != nil {
-		log.Errorw("car request: s3 url", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if s3u != "" {
-		// in s3, redirect
-		log.Debugw("car request: redir to s3 url", "error", err, "url", s3u)
-
-		r.s3Redirects.Add(1)
-
-		http.Redirect(w, req, s3u, http.StatusFound)
-		return
-	}
-
-	// external offload
-	extu, err := r.maybeGetExternalURL(reqToken.Group)
-	if err != nil {
-		log.Errorw("XYZ: car request: external url", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if extu != nil {
-		// in s3, redirect
-		log.Infow("XYZ: car request: redir to external url", "error", err, "url", *extu)
-
-		//r.s3Redirects.Add(1)
-
-		http.Redirect(w, req, *extu, http.StatusFound)
-		return
-	}
+	log := log.With("deal", reqToken.DealUUID)
 
 	// this is a local transfer, track stats
 
+/* 
 	r.uploadStatsLk.Lock()
-	if _, found := r.activeUploads[reqToken.DealUUID]; found {
+	if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
 		http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
 		r.uploadStatsLk.Unlock()
 		return
 	}
 
-	r.activeUploads[reqToken.DealUUID] = struct{}{}
+	r.activeUploads[reqToken.DealUUID]++
 
 	if r.uploadStats[reqToken.Group] == nil {
 		r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
@@ -490,17 +239,14 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 	r.uploadStats[reqToken.Group].ActiveRequests++
 
-	sw := &carStatWriter{
-		groupCtr:  &r.uploadStats[reqToken.Group].UploadBytes,
-		w:         w,
-		toDiscard: toDiscard,
-	}
-
 	r.uploadStatsLk.Unlock()
 
 	defer func() {
 		r.uploadStatsLk.Lock()
-		delete(r.activeUploads, reqToken.DealUUID)
+		r.activeUploads[reqToken.DealUUID]--
+		if r.activeUploads[reqToken.DealUUID] == 0 {
+			delete(r.activeUploads, reqToken.DealUUID)
+		}
 		r.uploadStats[reqToken.Group].ActiveRequests--
 		r.uploadStatsLk.Unlock()
 	}()
@@ -526,65 +272,29 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
 		return
 	}
-
-	startTime := DerefOr(transferInfo.CarTransferStartTime, 0)
-
-	if time.Since(bootTime) > transferIdleTimeout && startTime > 0 {
-		if time.Since(time.Unix(DerefOr(transferInfo.CarTransferLastEndTime, 0), 0)) > transferIdleTimeout {
-			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer not restarted for too long")); err != nil {
-				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-				return
-			}
-
-			http.Error(w, "transfer not restarted for too long", http.StatusGone)
-			return
-		}
-
-		// if the transfer was started already, and going on for a while, check the speed
-		elapsedTime := time.Since(time.Unix(startTime, 0))
-		transferredBytes := DerefOr(transferInfo.CarTransferLastBytes, 0)
-		transferSpeedMbps := float64(transferredBytes*8) / 1e6 / elapsedTime.Seconds()
-
-		if transferSpeedMbps < float64(minTransferMbps) {
-			log.Warnw("car request: transfer speed too slow", "url", req.URL, "speed", transferSpeedMbps, "deal", reqToken.DealUUID, "group", reqToken.Group)
-			http.Error(w, "transfer speed too slow", http.StatusGone)
-			return
-		}
-	}
-
-	rc := r.rateCounters.Get(pid)
-	rateWriter := ributil.NewRateEnforcingWriter(sw, rc, transferIdleTimeout)
-	defer rateWriter.Done()
-
-	respLen := *gm.DealCarSize - toDiscard
-	if toLimit != -1 {
-		respLen = toLimit - toDiscard + 1
-	}
-
-	w.Header().Set("Content-Length", strconv.FormatInt(respLen, 10))
+ */
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
-	// limit writer in case we have a range request
-	var errLimitReached = errors.New("byte limit reached")
-	var writerToUse io.Writer = rateWriter
-
-	if toLimit != -1 {
-		writerToUse = &LimitWriter{
-			W:   rateWriter,
-			N:   toLimit - toDiscard + 1,
-			Err: errLimitReached,
-		}
+	cf, err := r.externalOffloader.ReadCarFile(req.Context(), reqToken.Group)
+	if err != nil {
+		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	err = r.RBS.Storage().ReadCar(req.Context(), reqToken.Group, func(int64) {}, writerToUse)
+	defer cf.Close()
+	http.ServeContent(w, req, "gdata.car", time.Time{}, cf)
 
-	defer func() {
-		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, rateWriter.WriteError()); err != nil {
+/* 	defer func() {
+		//werr := rateWriter.WriteError()
+		werr := err
+
+		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
 			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
 			return
 		}
 	}()
-
+ */
 	if err != nil {
 		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

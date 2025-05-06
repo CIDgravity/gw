@@ -18,7 +18,7 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/wallet/key"
 	"github.com/filecoin-project/lotus/lib/sigs"
-	_ "github.com/filecoin-project/lotus/lib/sigs/secp" // enable secp signatures
+	_ "github.com/filecoin-project/lotus/lib/sigs/secp"
 	"github.com/mitchellh/go-homedir"
 	"github.com/whyrusleeping/base32"
 	"golang.org/x/xerrors"
