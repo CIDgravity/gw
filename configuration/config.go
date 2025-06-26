@@ -1,14 +1,14 @@
 package configuration
 
 import (
-	"os"
-	"strings"
-	"time"
+	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/lotus/chain/types"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
-	"github.com/filecoin-project/lotus/chain/types"
-	"github.com/filecoin-project/go-state-types/big"
+	"os"
+	"strings"
+	"time"
 )
 
 var log = logging.Logger("ribs:config")
@@ -18,8 +18,8 @@ type LocalwebConfig struct {
 	Url  string `envconfig:"EXTERNAL_LOCALWEB_URL"`
 
 	BuiltinServer bool   `envconfig:"EXTERNAL_LOCALWEB_BUILTIN_SERVER" default:"true"`
-	ServerPort string `envconfig:"EXTERNAL_LOCALWEB_SERVER_PORT" default:"8443"`
-	ServerTLS  bool   `envconfig:"EXTERNAL_LOCALWEB_SERVER_TLS" default:"true"`
+	ServerPort    string `envconfig:"EXTERNAL_LOCALWEB_SERVER_PORT" default:"8443"`
+	ServerTLS     bool   `envconfig:"EXTERNAL_LOCALWEB_SERVER_TLS" default:"true"`
 
 	MaxConcurrentUploadsPerDeal int `envconfig:"EXTERNAL_LOCALWEB_MAX_CONCURRENT_UPLOADS_PER_DEAL" default:"15"`
 }
@@ -39,13 +39,12 @@ type ExternalConfig struct {
 	S3       S3Config
 }
 
-
 type CidGravityConfig struct {
-	ApiToken                string            `envconfig:"CIDGRAVITY_API_TOKEN"`
-	ApiEndpointGetProviders string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
-	ApiEndpointGetDeals     string            `envconfig:"CIDGRAVITY_API_ENDPOINT_GOCD" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
-	MaxConns                int64             `envconfig:"CIDGRAVITY_MAX_CONNECTIONS" default:"4"`
-	AltClients              []string          `envconfig:"CIDGRAVITY_ALT_CLIENTS"`
+	ApiToken                string   `envconfig:"CIDGRAVITY_API_TOKEN"`
+	ApiEndpointGetProviders string   `envconfig:"CIDGRAVITY_API_ENDPOINT_GBAP" default:"https://service.cidgravity.com/private/v1/get-best-available-providers"`
+	ApiEndpointGetDeals     string   `envconfig:"CIDGRAVITY_API_ENDPOINT_GOCD" default:"https://service.cidgravity.com/private/v1/get-on-chain-deals"`
+	MaxConns                int64    `envconfig:"CIDGRAVITY_MAX_CONNECTIONS" default:"4"`
+	AltClients              []string `envconfig:"CIDGRAVITY_ALT_CLIENTS"`
 	AltTokens               map[string]string
 }
 type RibsConfig struct {
@@ -69,18 +68,25 @@ type DealConfig struct {
 	SkipIPNIAnnounce   bool `envconfig:"RIBS_DEAL_SKIP_IPNI_ANNOUNCE" default:false`
 }
 type WalletConfig struct {
-	MinMarketBalance    big.Int  `envconfig:"RIBS_WALLET_MIN_BALANCE" default:"100_000_000_000_000_000"` // 100 mFil
-	AutoMarketBalance   big.Int  `envconfig:"RIBS_WALLET_AUTO_BALANCE" default:"1_000_000_000_000_000_000"` // 1 Fil
-	UpgradeInterval     time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
+	MinMarketBalance  big.Int       `envconfig:"RIBS_WALLET_MIN_BALANCE" default:"100_000_000_000_000_000"`    // 100 mFil
+	AutoMarketBalance big.Int       `envconfig:"RIBS_WALLET_AUTO_BALANCE" default:"1_000_000_000_000_000_000"` // 1 Fil
+	UpgradeInterval   time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
+}
+
+type YugabyteConfig struct {
+	Hosts    string `envconfig:"RIBS_YUGABYTE_HOSTS" default:"127.0.0.1"`
+	Port     int    `envconfig:"RIBS_YUGABYTE_PORT" default:"9042"`
+	Keyspace string `envconfig:"RIBS_YUGABYTE_KEYSPACE" default:"auroragw"`
 }
 
 type Config struct {
-	External   ExternalConfig
-	CidGravity CidGravityConfig
-	Ribs       RibsConfig
-	Wallet     WalletConfig
-	Deal       DealConfig
-	LogLevel   string           `envconfig:"RIBS_LOGLEVEL"`
+	External       ExternalConfig
+	CidGravity     CidGravityConfig
+	Ribs           RibsConfig
+	Wallet         WalletConfig
+	Deal           DealConfig
+	YugabyteConfig YugabyteConfig
+	LogLevel       string `envconfig:"RIBS_LOGLEVEL"`
 }
 
 var config Config
@@ -121,22 +127,22 @@ func LoadConfig() error {
 		}
 		config.CidGravity.AltTokens[client] = token
 	}
-        if config.LogLevel != "" {
-                for _, kvs := range strings.Split(config.LogLevel, ",") {
-                        kv := strings.SplitN(kvs, "=", 2)
-                        lvl := kv[len(kv)-1]
-                        switch len(kv) {
-                        case 1:
+	if config.LogLevel != "" {
+		for _, kvs := range strings.Split(config.LogLevel, ",") {
+			kv := strings.SplitN(kvs, "=", 2)
+			lvl := kv[len(kv)-1]
+			switch len(kv) {
+			case 1:
 				if err := logging.SetLogLevelRegex("ribs:.*", lvl); err != nil {
 					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
 				}
-                        case 2:
-				if err := logging.SetLogLevelRegex("ribs:" + kv[0], lvl); err != nil {
+			case 2:
+				if err := logging.SetLogLevelRegex("ribs:"+kv[0], lvl); err != nil {
 					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
 				}
-                        }
-                }
-        }
+			}
+		}
+	}
 	if !config.Wallet.AutoMarketBalance.GreaterThan(config.Wallet.MinMarketBalance) {
 		// auto > min
 		// allow auto == min == 0

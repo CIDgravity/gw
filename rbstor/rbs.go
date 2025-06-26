@@ -3,12 +3,13 @@ package rbstor
 import (
 	"context"
 	"github.com/filecoin-project/lotus/lib/must"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/ributil"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -57,7 +58,9 @@ func Open(root string, opts ...OpenOption) (iface.RBS, error) {
 		return nil, xerrors.Errorf("make root dir: %w", err)
 	}
 
-	idx, err := NewPebbleIndex(filepath.Join(root, "index.pebble"))
+	config := configuration.GetConfig()
+	yugabyteHosts := strings.Split(config.YugabyteConfig.Hosts, ",")
+	idx, err := NewYugabyteIndex(yugabyteHosts, config.YugabyteConfig.Port, config.YugabyteConfig.Keyspace)
 	if err != nil {
 		return nil, xerrors.Errorf("open top index: %w", err)
 	}

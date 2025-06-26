@@ -3,6 +3,7 @@ package ribs
 import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
 type FileMetadata struct {
 	// All as ref, so they are optionnal in usage
 	Id              *primitive.ObjectID `bson:"_id"`
@@ -50,4 +51,3 @@ type MetadataDB interface {
 	ListFiles(user string, path string) ([]DirectoryItem, error)
 	GetFileInfo(user string, parent string, name string, ts *int64) (*FileMetadata, error)
 }
-
