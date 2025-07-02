@@ -18,6 +18,7 @@ type ExplorerInfo struct {
 	dag format.DAGService
 	rbs ribs.Storage
 }
+
 func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 	c_, err := cid.Decode(c)
 	if err != nil {
@@ -52,7 +53,7 @@ func (e ExplorerInfo) ListChilds(c string) (map[string]ribs.ChildInfo, error) {
 		for _, child := range node.Links() {
 			if child.Name != "" {
 				ret[child.Name] = ribs.ChildInfo{
-					Cid: child.Cid.String(),
+					Cid:  child.Cid.String(),
 					Size: child.Size,
 				}
 			}
@@ -92,7 +93,7 @@ func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
 				return nil, err
 			}
 		}
-	} else {  // TODO: mutualize cid decode, and get some code here
+	} else { // TODO: mutualize cid decode, and get some code here
 		c_, err := cid.Decode(c)
 		if err != nil {
 			log.Errorw("Failed to decode CID", "cid", c)
@@ -112,7 +113,7 @@ func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
 	return ret, nil
 }
 
-func StartMeta(/* lc fx.Lifecycle, */mdb ribs.MetadataDB, r ribs.RIBS, dag format.DAGService) {
+func StartMeta( /* lc fx.Lifecycle, */ mdb ribs.MetadataDB, r ribs.RIBS, dag format.DAGService) {
 	explorer := ExplorerInfo{
 		dag: dag,
 		rbs: r.Storage(),

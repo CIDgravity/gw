@@ -41,7 +41,7 @@ const EXTERNAL_S3 = "s3"
 
 func (s *S3OffloadInfo) maybeInitExternal(r *ribs) (bool, error) {
 	cfg := configuration.GetConfig()
-	
+
 	if cfg.External.S3.Endpoint == "" {
 		return false, nil
 	}
@@ -426,7 +426,7 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 	return nil
 }
 
-/* 
+/*
 type ribsStagingProvider struct {
 	r *ribs
 }
@@ -522,4 +522,4 @@ func (r *ribs) maybeGetS3URL(gid iface.GroupKey) (string, error) {
 
 	return urlCopy.String(), nil
 }
- */
+*/

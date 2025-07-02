@@ -5,8 +5,8 @@ import (
 	"time"
 
 	iface "github.com/lotus-web3/ribs"
-	"golang.org/x/xerrors"
 	"github.com/lotus-web3/ribs/configuration"
+	"golang.org/x/xerrors"
 )
 
 func (r *rbs) createGroup(ctx context.Context) (iface.GroupKey, *Group, error) {

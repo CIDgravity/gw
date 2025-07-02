@@ -1,16 +1,16 @@
 package cidgravity
 
 import (
-	"sync"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/lotus-web3/ribs/configuration"
 	"golang.org/x/sync/semaphore"
-	logging "github.com/ipfs/go-log/v2"
+	"sync"
 )
 
 var log = logging.Logger("ribs:cidg")
 
 type CIDGravity struct {
-	lk sync.Mutex
+	lk  sync.Mutex
 	sem *semaphore.Weighted
 }
 

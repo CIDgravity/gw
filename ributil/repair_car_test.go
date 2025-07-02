@@ -233,7 +233,7 @@ func testRepairCarWithCorruption(t *testing.T, fuzz bool, corruptOffset []int, c
 		tcCopy[off] = corruptCallback(tcCopy[off], ci)
 	}
 
-	rr, err := NewCarRepairReader(bytes.NewReader(tcCopy), rc, func(c cid.Cid) ([]byte, error) {
+	rr, err := NewCarRepairReader(bytes.NewReader(tcCopy), rc, func(c cid.Cid, _ []byte) ([]byte, error) {
 		if fuzz {
 			// fuzz can break any block
 			b, err := testCarBs.Get(context.Background(), c)
@@ -321,7 +321,7 @@ func fuzzWithRealData(t *testing.T, root cid.Cid, testBs blockstore.Blockstore, 
 		tcCopy[off] = corruptCallback(tcCopy[off], ci)
 	}
 
-	rr, err := NewCarRepairReader(bytes.NewReader(tcCopy), root, func(c cid.Cid) ([]byte, error) {
+	rr, err := NewCarRepairReader(bytes.NewReader(tcCopy), root, func(c cid.Cid, _ []byte) ([]byte, error) {
 		// fuzz can break any block
 		b, err := testBs.Get(context.Background(), c)
 		if err != nil {

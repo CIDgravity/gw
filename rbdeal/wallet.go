@@ -17,7 +17,7 @@ import (
 
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
-        "github.com/lotus-web3/ribs/configuration"
+	"github.com/lotus-web3/ribs/configuration"
 )
 
 func (r *ribs) MarketAdd(ctx context.Context, amount abi.TokenAmount) (cid.Cid, error) {

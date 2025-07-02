@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  checks: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || github.ref }}
@@ -15,6 +17,76 @@ concurrency:
 
 jobs:
   go-test:
-    uses: pl-strflt/uci/.github/workflows/go-test.yml@v0.0
-    with:
-      go-versions: '["this"]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.4
+
+      - name: Set up gotestfmt
+        uses: gotesttools/gotestfmt-action@v2
+
+      - name: Run tests
+        run: |
+          go mod download
+          mkdir -p test-results
+          set -o pipefail
+          go test -json ./... 2>&1 | tee test-results/test-results.json | gotestfmt
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-report
+          path: test-results/test-results.json
+
+      - name: Publish Test Report
+        uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          artifact: unit-test-report
+          name: Go tests
+          path: '*.json'
+          reporter: golang-json
+  go-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.4
+
+      - name: Verify go mod tidy
+        run: |
+          go mod tidy
+          if [[ -n $(git status --porcelain go.mod go.sum) ]]; then
+            echo "::error go.mod or go.sum needs 'go mod tidy'."
+            git --no-pager diff
+            exit 1
+          fi
+
+      - name: Verify go fmt
+        if: always()
+        run: |
+          out=$(gofmt -s -l .)
+          if [[ -n "$out" ]]; then
+            echo "Files is not gofmt-ed."
+            echo $out
+            exit 1
+          fi
+
+      - name: Verify go vet
+        if: always()
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        if: always()
+        with:
+          version: v2.1
+          only-new-issues: 'true'

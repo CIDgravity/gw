@@ -15,10 +15,10 @@ import (
 	verifreg2 "github.com/filecoin-project/lotus/chain/actors/builtin/verifreg"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/lib/must"
+	"github.com/lotus-web3/ribs/configuration"
 	"golang.org/x/xerrors"
 	"strings"
 	"time"
-	"github.com/lotus-web3/ribs/configuration"
 )
 
 func (r *ribs) claimChecker() {

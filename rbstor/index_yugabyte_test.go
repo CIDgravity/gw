@@ -11,14 +11,18 @@ import (
 	"testing"
 )
 
+var testHarness *test.Harness
+
 func TestMain(m *testing.M) {
-	testHarness := test.NewHarness()
+	testHarness = test.NewHarness()
 	defer testHarness.Stop()
 	m.Run()
 }
 
 func TestYugabyteIndex(t *testing.T) {
-	idx, err := NewYugabyteIndex([]string{"127.0.0.1"}, test.YugabytePort, "test")
+	host, err := testHarness.GetYugabyteHost()
+	require.NoError(t, err)
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
@@ -58,7 +62,9 @@ func TestYugabyteIndex(t *testing.T) {
 }
 
 func TestMultipleGroupsPerHash(t *testing.T) {
-	idx, err := NewYugabyteIndex([]string{"127.0.0.1"}, 9042, "test")
+	host, err := testHarness.GetYugabyteHost()
+	require.NoError(t, err)
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
@@ -98,11 +104,16 @@ func TestMultipleGroupsPerHash(t *testing.T) {
 }
 
 func TestEstimateSize(t *testing.T) {
-	idx, err := NewYugabyteIndex([]string{"127.0.0.1"}, test.YugabytePort, "test")
+	host, err := testHarness.GetYugabyteHost()
+	require.NoError(t, err)
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
 	})
+
+	initialSize, err := idx.EstimateSize(context.Background())
+	require.NoError(t, err)
 
 	mhs, sizes := genMhashList(t, 10)
 	testGroup := iface.GroupKey(2)
@@ -112,7 +123,7 @@ func TestEstimateSize(t *testing.T) {
 
 	result, err := idx.EstimateSize(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, int64(10), result)
+	require.Equal(t, initialSize+10, result)
 }
 
 func genMhashList(t testing.TB, count int) ([]multihash.Multihash, []int32) {

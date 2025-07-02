@@ -40,7 +40,7 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 			return ctx
 		},
 	}
-	
+
 	if cfg.External.Localweb.ServerTLS {
 		repoDir := cfg.Ribs.DataDir
 		repoDir, err := homedir.Expand(repoDir)
@@ -54,9 +54,9 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 
 		// tls uses letsencrypt autocert and gets the domain from Url
 		certManager := autocert.Manager{
-			Prompt: autocert.AcceptTOS,
+			Prompt:     autocert.AcceptTOS,
 			HostPolicy: autocert.HostWhitelist(cfg.External.Localweb.Url),
-			Cache: autocert.DirCache(filepath.Join(repoDir, "acme")),
+			Cache:      autocert.DirCache(filepath.Join(repoDir, "acme")),
 		}
 
 		server.TLSConfig = certManager.TLSConfig()
@@ -69,7 +69,6 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 
 	// always listen on 0.0.0.0
 	server.Addr = fmt.Sprintf("0.0.0.0:%d", listenPort)
-
 
 	go func() {
 		if cfg.External.Localweb.ServerTLS {
@@ -94,7 +93,7 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 		}
 	}
 } */
-/* 
+/*
 func (r *ribs) updateCarStats() {
 	r.uploadStatsLk.Lock()
 	defer r.uploadStatsLk.Unlock()
@@ -167,7 +166,7 @@ func (r *ribs) makeCarRequestToken(group int64, timeout time.Duration, carSize i
 
 func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) (types.Transfer, error) {
 	cfg := configuration.GetConfig()
-	
+
 	reqToken, err := r.makeCarRequestToken(group, timeout, carSize, deal)
 	if err != nil {
 		return types.Transfer{}, xerrors.Errorf("make car request token: %w", err)
@@ -223,56 +222,56 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 
 	// this is a local transfer, track stats
 
-/* 
-	r.uploadStatsLk.Lock()
-	if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
-		http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
-		r.uploadStatsLk.Unlock()
-		return
-	}
-
-	r.activeUploads[reqToken.DealUUID]++
-
-	if r.uploadStats[reqToken.Group] == nil {
-		r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
-	}
-
-	r.uploadStats[reqToken.Group].ActiveRequests++
-
-	r.uploadStatsLk.Unlock()
-
-	defer func() {
+	/*
 		r.uploadStatsLk.Lock()
-		r.activeUploads[reqToken.DealUUID]--
-		if r.activeUploads[reqToken.DealUUID] == 0 {
-			delete(r.activeUploads, reqToken.DealUUID)
-		}
-		r.uploadStats[reqToken.Group].ActiveRequests--
-		r.uploadStatsLk.Unlock()
-	}()
-
-	transferInfo, err := r.db.GetTransferStatusByDealUUID(reqToken.DealUUID)
-	if err != nil {
-		log.Errorw("car request: get transfer status by deal uuid", "error", err, "url", req.URL)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if transferInfo.Failed == 1 {
-		http.Error(w, "deal is failed", http.StatusGone)
-		return
-	}
-
-	if transferInfo.CarTransferAttempts >= maxTransferRetries {
-		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer has been retried too much")); err != nil {
-			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
+		if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
+			http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
+			r.uploadStatsLk.Unlock()
 			return
 		}
 
-		http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
-		return
-	}
- */
+		r.activeUploads[reqToken.DealUUID]++
+
+		if r.uploadStats[reqToken.Group] == nil {
+			r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
+		}
+
+		r.uploadStats[reqToken.Group].ActiveRequests++
+
+		r.uploadStatsLk.Unlock()
+
+		defer func() {
+			r.uploadStatsLk.Lock()
+			r.activeUploads[reqToken.DealUUID]--
+			if r.activeUploads[reqToken.DealUUID] == 0 {
+				delete(r.activeUploads, reqToken.DealUUID)
+			}
+			r.uploadStats[reqToken.Group].ActiveRequests--
+			r.uploadStatsLk.Unlock()
+		}()
+
+		transferInfo, err := r.db.GetTransferStatusByDealUUID(reqToken.DealUUID)
+		if err != nil {
+			log.Errorw("car request: get transfer status by deal uuid", "error", err, "url", req.URL)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if transferInfo.Failed == 1 {
+			http.Error(w, "deal is failed", http.StatusGone)
+			return
+		}
+
+		if transferInfo.CarTransferAttempts >= maxTransferRetries {
+			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer has been retried too much")); err != nil {
+				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
+				return
+			}
+
+			http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
+			return
+		}
+	*/
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
 	cf, err := r.externalOffloader.ReadCarFile(req.Context(), reqToken.Group)
@@ -285,16 +284,16 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	defer cf.Close()
 	http.ServeContent(w, req, "gdata.car", time.Time{}, cf)
 
-/* 	defer func() {
-		//werr := rateWriter.WriteError()
-		werr := err
+	/* 	defer func() {
+	   		//werr := rateWriter.WriteError()
+	   		werr := err
 
-		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
-			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-			return
-		}
-	}()
- */
+	   		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
+	   			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
+	   			return
+	   		}
+	   	}()
+	*/
 	if err != nil {
 		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

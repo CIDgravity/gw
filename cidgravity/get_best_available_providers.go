@@ -5,23 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lotus-web3/ribs/configuration"
 	"io/ioutil"
 	"net/http"
 	"time"
-	"github.com/lotus-web3/ribs/configuration"
 )
 
 type CIDgravityGetBestAvailableProvidersRequest struct {
-	PieceCid             string  `json:"pieceCid"`
-	Provider             string  `json:"provider"`
-	StartEpoch           uint64  `json:"startEpoch"`
-	Duration             uint64  `json:"duration"`
-	StoragePricePerEpoch string  `json:"storagePricePerEpoch"`
-	ProviderCollateral   string  `json:"providerCollateral"`
-	VerifiedDeal         *bool   `json:"verifiedDeal"`
-	TransferSize         uint64  `json:"transferSize"`
-	TransferType         string  `json:"transferType"`
-	RemoveUnsealedCopy   *bool   `json:"removeUnsealedCopy"`
+	PieceCid             string `json:"pieceCid"`
+	Provider             string `json:"provider"`
+	StartEpoch           uint64 `json:"startEpoch"`
+	Duration             uint64 `json:"duration"`
+	StoragePricePerEpoch string `json:"storagePricePerEpoch"`
+	ProviderCollateral   string `json:"providerCollateral"`
+	VerifiedDeal         *bool  `json:"verifiedDeal"`
+	TransferSize         uint64 `json:"transferSize"`
+	TransferType         string `json:"transferType"`
+	RemoveUnsealedCopy   *bool  `json:"removeUnsealedCopy"`
 }
 
 type CIDgravityAPIError struct {
@@ -35,8 +35,8 @@ type CIDgravityAPIResult struct {
 }
 
 type CIDgravityAPIResponse struct {
-	Error  CIDgravityAPIError    `json:"error"`
-	Result *CIDgravityAPIResult  `json:"result"`
+	Error  CIDgravityAPIError   `json:"error"`
+	Result *CIDgravityAPIResult `json:"result"`
 }
 
 func (cidg *CIDGravity) GetBestAvailableProviders(params CIDgravityGetBestAvailableProvidersRequest) ([]string, error) {

@@ -24,6 +24,10 @@ func (th *Harness) Stop() {
 	th.stopYugabyte()
 }
 
+func (th *Harness) GetYugabyteHost() (string, error) {
+	return (*th.yugabyte).Host(context.Background())
+}
+
 func (th *Harness) startYugabyte() {
 	ctx := context.Background()
 	req := testcontainers.ContainerRequest{

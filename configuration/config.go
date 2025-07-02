@@ -64,8 +64,8 @@ type RibsConfig struct {
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
 	Duration           int  `envconfig:"RIBS_DEAL_DURATION" default:"530"`  // days
-	RemoveUnsealedCopy bool `envconfig:"RIBS_DEAL_REMOVE_UNSEALED" default:false`
-	SkipIPNIAnnounce   bool `envconfig:"RIBS_DEAL_SKIP_IPNI_ANNOUNCE" default:false`
+	RemoveUnsealedCopy bool `envconfig:"RIBS_DEAL_REMOVE_UNSEALED" default:"false"`
+	SkipIPNIAnnounce   bool `envconfig:"RIBS_DEAL_SKIP_IPNI_ANNOUNCE" default:"false"`
 }
 type WalletConfig struct {
 	MinMarketBalance  big.Int       `envconfig:"RIBS_WALLET_MIN_BALANCE" default:"100_000_000_000_000_000"`    // 100 mFil

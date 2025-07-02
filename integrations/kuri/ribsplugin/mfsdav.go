@@ -21,8 +21,8 @@ import (
 	"github.com/ipfs/boxo/mfs"
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
-	mh "github.com/multiformats/go-multihash"
 	"github.com/lotus-web3/ribs"
+	mh "github.com/multiformats/go-multihash"
 )
 
 func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
@@ -33,7 +33,7 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
 		LockSystem: webdav.NewMemLS(),
 
 		Logger: func(r *http.Request, err error) {
-			if err != nil {	
+			if err != nil {
 				log.Errorw("dav", "err", err, "req", r.URL, "method", r.Method)
 			} else {
 				log.Infow("dav", "req", r.URL, "method", r.Method)
@@ -66,7 +66,7 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
 }
 
 type mfsDavFs struct {
-	mr *mfs.Root
+	mr  *mfs.Root
 	mdb ribs.MetadataDB
 }
 
@@ -89,14 +89,14 @@ type mfsDavFile struct {
 	mode  os.FileMode
 	mtime time.Time
 
-	path string
-	mfi *mfs.File
+	path     string
+	mfi      *mfs.File
 	writable bool
 }
 
 func (m *mfsDavFile) Close() error {
 	ret := m.mfd.Close()
-	if (m.writable) {
+	if m.writable {
 		node, err := m.mfi.GetNode()
 		if err != nil {
 			log.Errorw("Failed to get FileNode on File.Close()", "error", err, "path", m.path)
@@ -276,10 +276,10 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 	var fi *mfs.File
 
 	/*
-	must_be_dir := path[len(path)-1] == '/'
-	if must_be_dir && path != "/" {
-		path = path[:len(path)-1]
-	}
+		must_be_dir := path[len(path)-1] == '/'
+		if must_be_dir && path != "/" {
+			path = path[:len(path)-1]
+		}
 	*/
 	target, err := mfs.Lookup(m.mr, path)
 	switch err {
@@ -290,15 +290,15 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 			return &mfsDavDir{
 				mr:  m.mr,
 				mfd: target.(*mfs.Directory),
-				mdb:  m.mdb,
+				mdb: m.mdb,
 
 				path: path,
 			}, nil
 		}
 	/*
-	if must_be_dir {
-		return nil, xerrors.New("not a directory")
-	}
+		if must_be_dir {
+			return nil, xerrors.New("not a directory")
+		}
 	*/
 
 	case os.ErrNotExist:
@@ -375,13 +375,13 @@ func (m *mfsDavFs) OpenFile(ctx context.Context, name string, flag int, perm os.
 	return &mfsDavFile{
 		mr:  m.mr,
 		mfd: fd,
-		mdb:  m.mdb,
+		mdb: m.mdb,
 
 		mode:  mode,
 		mtime: mtime,
 
-		path: name,
-		mfi: fi,
+		path:     name,
+		mfi:      fi,
 		writable: write,
 	}, nil
 }

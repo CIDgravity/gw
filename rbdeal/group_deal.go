@@ -3,9 +3,8 @@ package rbdeal
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"os/exec"
 	"fmt"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -22,11 +21,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/cidgravity"
+	"github.com/lotus-web3/ribs/configuration"
 	"github.com/lotus-web3/ribs/ributil"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
-	"github.com/lotus-web3/ribs/cidgravity"
-	"github.com/lotus-web3/ribs/configuration"
 )
 
 const DealProtocolv121 = "/fil/storage/mk/1.2.1"
@@ -37,11 +36,6 @@ type ErrRejected struct {
 
 func (e ErrRejected) Error() string {
 	return fmt.Sprintf("deal proposal rejected: %s", e.Reason)
-}
-
-func makeTraceToken(prov dealProvider) (string) {
-	auth := fmt.Sprintf("f0%d-%s:password", prov.id, time.Now().Format("20060102150405"))
-	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(auth)))
 }
 
 func (r *ribs) canSendMoreDeals(since time.Time) bool {
@@ -111,21 +105,21 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	}
 
 	cfg := configuration.GetConfig()
-	max := func(a, b int) (int) {
+	max := func(a, b int) int {
 		if a > b {
 			return a
 		}
 		return b
 	}
-	min := func(a, b int) (int) {
+	min := func(a, b int) int {
 		if a < b {
 			return a
 		}
 		return b
 	}
-	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount - notFailed)
-	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount - (notFailed - unretrievable))
-	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount - notFailed)
+	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount-notFailed)
+	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount-(notFailed-unretrievable))
+	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount-notFailed)
 	log.Debugw("makeMoreDeals", "group", id, "copiesRequired", copiesRequired, "notFailed", notFailed, "unretrievable", unretrievable)
 	if copiesRequired <= 0 {
 		// occasionally in some racy cases we can end up here
@@ -179,7 +173,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return fmt.Errorf("getting chain head: %w", err)
 	}
 
-	startEpoch := head.Height() + abi.ChainEpoch(cfg.Deal.StartTime * builtin.EpochsInDay / 24)
+	startEpoch := head.Height() + abi.ChainEpoch(cfg.Deal.StartTime*builtin.EpochsInDay/24)
 
 	duration := cfg.Deal.Duration * builtin.EpochsInDay
 
@@ -207,8 +201,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 
 	log.Debugw("making more deal", "group", id, "providers", provsIds, "req", req)
 
-        provs := []dealProvider{}
-        for _, prov := range provsIds {
+	provs := []dealProvider{}
+	for _, prov := range provsIds {
 		provid, err := strconv.Atoi(prov[2:])
 		if err != nil {
 			return xerrors.Errorf("invalid selected provider: %s: %w", prov, err)
@@ -227,7 +221,6 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		if err != nil {
 			return xerrors.Errorf("get addr info: %w", err)
 		}
-
 
 		// generate proposal
 		dealUuid := uuid.New()

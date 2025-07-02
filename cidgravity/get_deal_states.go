@@ -5,15 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/lotus-web3/ribs/configuration"
 	"io/ioutil"
 	"net/http"
 	"time"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/filecoin-project/go-state-types/abi"
 )
 
 type Cid struct {
-        Root string `json:"/" cidgravity:"required"`
+	Root string `json:"/" cidgravity:"required"`
 }
 type CIDgravityDealProposalStatus struct {
 	PieceCid             Cid            `json:"PieceCID"`
@@ -36,7 +36,7 @@ type CIDgravityDealProposalState struct {
 }
 type CIDgravityDealStatus struct {
 	Proposal   CIDgravityDealProposalStatus `json:"proposal"`
-	State	   CIDgravityDealProposalState  `json:"state"`
+	State      CIDgravityDealProposalState  `json:"state"`
 	LastUpdate float64                      `json:"lastUpdate"`
 }
 type CIDgravityDealStatesAPIResponse struct {
@@ -74,7 +74,6 @@ func (cidg *CIDGravity) getDealStates(client *http.Client, token string, states 
 
 		// Add authorization header
 		req.Header.Set("X-API-KEY", token)
-
 
 		// Send the request
 		resp, err := client.Do(req)

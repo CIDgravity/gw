@@ -18,9 +18,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	iface "github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
-	"github.com/lotus-web3/ribs/configuration"
 )
 
 type ribsDB struct {
