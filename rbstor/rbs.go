@@ -2,9 +2,10 @@ package rbstor
 
 import (
 	"context"
+	"fmt"
 	"github.com/filecoin-project/lotus/lib/must"
 	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/ributil"
+	"github.com/lotus-web3/ribs/database"
 	"io"
 	"os"
 	"runtime"
@@ -25,12 +26,12 @@ import (
 var log = logging.Logger("ribs:rbs")
 
 type openOptions struct {
-	db *ributil.RetryDB
+	db database.Database
 }
 
 type OpenOption func(*openOptions)
 
-func WithDB(db *ributil.RetryDB) OpenOption {
+func WithDB(db database.Database) OpenOption {
 	return func(o *openOptions) {
 		o.db = db
 	}
@@ -59,8 +60,8 @@ func Open(root string, opts ...OpenOption) (iface.RBS, error) {
 	}
 
 	config := configuration.GetConfig()
-	yugabyteHosts := strings.Split(config.Yugabyte.Hosts, ",")
-	idx, err := NewYugabyteIndex(yugabyteHosts, config.Yugabyte.Port, config.Yugabyte.Keyspace, config.Yugabyte.ForceHosts)
+	yugabyteHosts := strings.Split(config.YugabyteCql.Hosts, ",")
+	idx, err := NewYugabyteIndex(yugabyteHosts, config.YugabyteCql.Port, config.YugabyteCql.Keyspace, config.YugabyteCql.ForceHosts)
 	if err != nil {
 		return nil, xerrors.Errorf("open top index: %w", err)
 	}
@@ -71,14 +72,13 @@ func Open(root string, opts ...OpenOption) (iface.RBS, error) {
 		o(opt)
 	}
 
-	db, err := openRibsDB(root, opt.db)
-	if err != nil {
-		return nil, xerrors.Errorf("open db: %w", err)
+	if opt.db == nil {
+		return nil, fmt.Errorf("database is required")
 	}
 
 	r := &rbs{
 		root:  root,
-		db:    db,
+		db:    newRibsDB(opt.db),
 		index: NewMeteredIndex(idx),
 
 		writableGroups: make(map[iface.GroupKey]*Group),

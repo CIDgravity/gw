@@ -51,7 +51,7 @@ func (yi *YugabyteIndex) Start(keyspace string) error {
 	}
 	statement := `CREATE KEYSPACE IF NOT EXISTS ` + keyspace
 	log.Debugf("Executing CQL statement: %s", statement)
-	if err := session.Query(statement, keyspace).WithContext(yi.ctx).Exec(); err != nil {
+	if err := session.Query(statement).WithContext(yi.ctx).Exec(); err != nil {
 		return fmt.Errorf("create keyspace: %w", err)
 	}
 

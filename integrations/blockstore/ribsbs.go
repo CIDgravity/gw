@@ -221,7 +221,7 @@ func (b *Blockstore) Get(ctx context.Context, c cid.Cid) (blocks.Block, error) {
 }
 
 func (b *Blockstore) GetSize(ctx context.Context, c cid.Cid) (int, error) {
-	var r int32
+	var r int32 = -1
 
 	err := b.sess.GetSize(ctx, cidsToMhs([]cid.Cid{c}), func(sz []int32) error {
 		if len(sz) != 1 {

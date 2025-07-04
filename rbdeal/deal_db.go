@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	types2 "github.com/filecoin-project/lotus/chain/types"
+	"github.com/lotus-web3/ribs/database"
 	"github.com/lotus-web3/ribs/ributil"
 	"github.com/multiformats/go-multiaddr"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -24,7 +24,7 @@ import (
 )
 
 type ribsDB struct {
-	db *ributil.RetryDB
+	db database.Database
 
 	dealSummaryCq *ributil.CachedQuery[iface.DealSummary]
 	reachableCq   *ributil.CachedQuery[[]iface.ProviderMeta]
@@ -32,272 +32,9 @@ type ribsDB struct {
 	lastAnalyzed time.Time
 }
 
-var pragmas = []string{
-	"PRAGMA synchronous = normal",
-	"PRAGMA temp_store = memory",
-	"PRAGMA mmap_size = 30000000000",
-	"PRAGMA page_size = 32768",
-	/*	"PRAGMA auto_vacuum = NONE",
-		"PRAGMA automatic_index = OFF",*/
-	"PRAGMA journal_mode = WAL",
-	"PRAGMA read_uncommitted = ON",
-	"PRAGMA busy_timeout = 50000",
-}
-
-const dbSchema = `
-/* deals */
-create table if not exists deals (
-    uuid text not null constraint deals_pk primary key,
-    start_time integer default (strftime('%s','now')) not null,
-
-    client_addr text not null,
-    provider_addr integer not null,
-
-    group_id integer not null,
-    price_afil_gib_epoch integer not null,
-    verified integer not null,
-    keep_unsealed integer not null,
-
-    start_epoch integer not null,
-    end_epoch integer not null,
-
-    signed_proposal_bytes blob not null,
-
-    deal_id integer,
-    deal_pub_ts text,
-    sector_start_epoch integer,
-
-    /* deal state */
-    proposed integer not null default 0, /* 1 when the deal is successfully proposed */
-    published integer not null default 0, /* publish cid is set, and we have validated the message is landed on chain with some finality */
-    sealed integer not null default 0, /* deal state SectorStartEpoch set */
-
-    failed integer not null default 0, /* 1 when the deal is unsuccessful for ANY reason */
-    rejected integer not null default 0,
-
-    failed_expired integer not null default 0, /* 1 when the deal is failed AND the proposal start has passed TODO */
-
-    error_msg text,
-
-    /* status queries */
-    last_state_query integer default 0 not null,
-    last_state_query_error text,
-
-    /* data transfer */
-    car_transfer_start_time integer,
-    car_transfer_attempts integer not null default 0,
-
-    car_transfer_last_end_time integer,
-    car_transfer_last_bytes integer,
-
-    /* sp deal state */
-    sp_status text, /* boost checkpoint name */
-    sp_sealing_status text,
-    sp_sig_proposal text,
-    sp_pub_msg_cid text,
-
-    sp_recv_bytes integer,
-    sp_txsize integer, /* todo swap for car_size in group? */
-
-    /* market deal state checks */
-    last_deal_state_check integer not null default 0,
-
-    /* retrieval checks */
-    last_retrieval_check integer not null default 0,
-    last_retrieval_check_success integer not null default 0,
-    retrieval_probes_success integer not null default 0,
-    retrieval_probes_fail integer not null default 0,
-
-    retrieval_probe_prev_error text,
-
-    retrieval_probe_prev_ms integer,
-    retrieval_probe_prev_ttfb_ms integer
-);
-
-CREATE TABLE IF NOT EXISTS deals_archive AS SELECT * FROM deals WHERE 0;
-
-/* SP tracker */
-create table if not exists providers (
-    id integer not null constraint providers_pk primary key,
-    
-    in_market integer not null,
-    
-    ping_ok integer not null default 0,
-    
-    boost_deals integer not null default 0,
-    booster_http integer not null default 0,
-    booster_bitswap integer not null default 0,
-    
-    indexed_success integer not null default 0,
-    indexed_fail integer not null default 0,
-
-    retrprobe_success integer not null default 0,
-    retrprobe_fail integer not null default 0,
-    retrprobe_blocks integer not null default 0,
-    retrprobe_bytes integer not null default 0,
-    
-    ask_ok integer not null default 0,
-    ask_price integer not null default 0,
-    ask_verif_price integer not null default 0,
-    ask_min_piece_size integer not null default 0,
-    ask_max_piece_size integer not null default 0,
-
-    addr_info_graphsync text,
-    addr_info_bitswap text,
-    addr_info_http text
-);
-
-create table if not exists offloads_s3
-(
-    group_id integer not null
-        constraint offloads_s3_pk
-            primary key
-);
-create table if not exists external_path
-(
-    group_id integer not null
-        constraint offloads_s3_pk
-            primary key,
-    module text,
-    path text
-);
-
-create table if not exists repairs
-(
-    group_id          integer           not null
-        constraint repairs_pk
-            primary key,
-    retrievable_deals integer           not null,
-    worker            integer,
-    last_attempt      integer default 0 not null
-);
-
-drop view if exists sp_deal_stats_view;
-drop view if exists sp_retr_stats_view;
-drop view if exists bad_providers_new_reject_view;
-drop view if exists good_providers_view;
-
-CREATE VIEW IF NOT EXISTS bad_providers_new_reject_view AS
-    SELECT 
-        d.provider_addr AS sp_id
-    FROM 
-        deals d
-    WHERE 
-        d.start_time >= strftime('%s', 'now', '-2 hours')
-    GROUP BY
-        d.provider_addr
-    HAVING 
-        COUNT(*) > 2
-        AND COUNT(CASE WHEN d.rejected = 1 THEN 1 ELSE NULL END) = COUNT(*);
-
-CREATE VIEW IF NOT EXISTS sp_deal_stats_view AS
-    SELECT
-        d.provider_addr AS sp_id,
-        COUNT(*) AS total_deals,
-        COUNT(CASE WHEN d.published = 1 THEN 1 ELSE NULL END) AS published_deals,
-        COUNT(CASE WHEN d.sealed = 1 THEN 1 ELSE NULL END) AS sealed_deals,
-        COUNT(CASE WHEN d.failed = 1 THEN 1 ELSE NULL END) AS failed_deals,
-        COUNT(CASE WHEN d.rejected = 1 THEN 1 ELSE NULL END) AS rejected_deals,
-        CASE
-            WHEN COUNT(CASE WHEN d.rejected = 0 THEN 1 ELSE NULL END) >= 4 
-                AND COUNT(CASE WHEN d.rejected = 0 THEN 1 ELSE NULL END) * 4 
-                    < COUNT(CASE WHEN d.failed = 1 AND d.rejected = 0 THEN 1 ELSE NULL END) * 5 
-            THEN 1
-            ELSE 0
-            END AS failed_all
-    FROM
-        deals d
-            JOIN
-        groups g ON d.group_id = g.id
-    WHERE
-        d.start_time >= strftime('%s', 'now', '-3 days')
-    GROUP BY
-        d.provider_addr;
-
-CREATE VIEW IF NOT EXISTS sp_retr_stats_view AS
-SELECT
-    d.provider_addr AS sp_id,
-    COUNT(CASE WHEN d.last_retrieval_check < (d.last_retrieval_check_success + 3600*24) THEN 1 ELSE NULL END) AS retrievable_deals,
-    COUNT(CASE WHEN d.last_retrieval_check > (d.last_retrieval_check_success + 3600*24) THEN 1 ELSE NULL END) AS unretrievable_deals
-FROM
-    deals d
-WHERE
-        d.last_retrieval_check > 0
-GROUP BY
-    d.provider_addr;
-
-CREATE TABLE IF NOT EXISTS bad_providers_new_reject AS SELECT * FROM bad_providers_new_reject_view WHERE 0;
-CREATE TABLE IF NOT EXISTS sp_deal_stats AS SELECT * FROM sp_deal_stats_view WHERE 0;
-CREATE TABLE IF NOT EXISTS sp_retr_stats AS SELECT * FROM sp_retr_stats_view WHERE 0;
-
-CREATE TABLE IF NOT EXISTS good_providers (
-	id INTEGER PRIMARY KEY,
-	ping_ok INTEGER,
-	
-	boost_deals INTEGER,
-	booster_http INTEGER,
-	booster_bitswap INTEGER,
-	
-	indexed_success INTEGER,
-	indexed_fail INTEGER,
-	
-	retrprobe_success INTEGER,
-	retrprobe_fail INTEGER,
-	retrprobe_blocks INTEGER, 
-	retrprobe_bytes INTEGER,
-	
-	ask_price INTEGER,
-	ask_verif_price INTEGER,
-	ask_min_piece_size INTEGER,
-	ask_max_piece_size INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_providers_eligible ON providers(in_market, ping_ok, ask_ok, ask_min_piece_size, ask_max_piece_size);
-CREATE INDEX IF NOT EXISTS idx_deals_provider ON deals(provider_addr, group_id, rejected, start_time);
-CREATE INDEX IF NOT EXISTS idx_deals_group ON deals(group_id, rejected, start_time);
-CREATE INDEX IF NOT EXISTS idx_deals_retrieval ON deals(last_retrieval_check, last_retrieval_check_success);
-
-CREATE INDEX IF NOT EXISTS idx_deals_start_time_rejected_failed
-    ON deals (rejected, failed, start_time);
-
-
-CREATE TABLE IF NOT EXISTS schema_version (
-    version_number INTEGER PRIMARY KEY,
-    description TEXT,
-    applied_on DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-`
-
 // TODO: MIGRATE offloads_s3 to external_path !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-type schema struct {
-	VersionNumber int
-	Description   string
-	Schema        string
-}
-
-var schemas = []schema{
-	{
-		VersionNumber: 2,
-		Description:   "Add sector_number to deals table",
-		Schema:        `ALTER TABLE deals ADD COLUMN sector_number INTEGER;`,
-	}}
-
-func openRibsDB(root string) (*ribsDB, error) {
-	rdb, err := sql.Open("sqlite3", filepath.Join(root, "store.db"))
-	if err != nil {
-		return nil, xerrors.Errorf("open db: %w", err)
-	}
-
-	db := ributil.NewRetryDB(rdb)
-
-	for _, pragma := range pragmas {
-		_, err := db.Exec(pragma)
-		if err != nil {
-			return nil, xerrors.Errorf("exec pragma: %w", err)
-		}
-	}
-
+func openRibsDB(db database.Database) (*ribsDB, error) {
 	rd := &ribsDB{
 		db: db,
 
@@ -310,29 +47,6 @@ func openRibsDB(root string) (*ribsDB, error) {
 var analyzeInterval = 6 * time.Hour
 
 func (r *ribsDB) startDB() error {
-	_, err := r.db.Exec(dbSchema)
-	if err != nil {
-		return xerrors.Errorf("exec schema: %w", err)
-	}
-
-	// Apply any pending schema updates
-	for i, s := range schemas {
-		var version int
-		err := r.db.QueryRow("SELECT version_number FROM schema_version WHERE version_number = ?", s.VersionNumber).Scan(&version)
-		if err == sql.ErrNoRows {
-			_, err = r.db.Exec(s.Schema)
-			if err != nil {
-				return xerrors.Errorf("exec schema update %d: %w", i, err)
-			}
-
-			_, err = r.db.Exec("INSERT INTO schema_version (version_number, description) VALUES (?, ?)", s.VersionNumber, s.Description)
-			if err != nil {
-				return xerrors.Errorf("insert schema version %d: %w", i, err)
-			}
-		} else if err != nil {
-			return xerrors.Errorf("query schema version %d: %w", i, err)
-		}
-	}
 
 	r.dealSummaryCq = ributil.NewCachedQuery[iface.DealSummary](1*time.Minute, r.dealSummary)
 	r.reachableCq = ributil.NewCachedQuery[[]iface.ProviderMeta](1*time.Minute, r.reachableProviders)
@@ -367,7 +81,7 @@ func (r *ribsDB) startDB() error {
 			}
 
 			if time.Since(r.lastAnalyzed) > analyzeInterval {
-				_ = timeDBOp("analyze", r.db, func(db *ributil.RetryDB) error {
+				_ = timeDBOp("analyze", r.db, func(db database.Database) error {
 					_, err := db.Exec("ANALYZE")
 					return err
 				})
@@ -379,15 +93,15 @@ func (r *ribsDB) startDB() error {
 	return nil
 }
 
-func timeDBOp(name string, db *ributil.RetryDB, f func(db *ributil.RetryDB) error) error {
+func timeDBOp(name string, db database.Database, f func(db database.Database) error) error {
 	start := time.Now()
 	err := f(db)
 	log.Debugw("DB op time", "name", name, "took", time.Since(start), "error", err)
 	return err
 }
 
-func refreshViewTable(name string) func(db *ributil.RetryDB) error {
-	return func(db *ributil.RetryDB) error {
+func refreshViewTable(name string) func(db database.Database) error {
+	return func(db database.Database) error {
 		tempTable := name + "_tmp"
 		viewTable := name + "_view"
 		targetTable := name
@@ -402,18 +116,32 @@ func refreshViewTable(name string) func(db *ributil.RetryDB) error {
 	}
 }
 
-func refreshGoodProviders() func(db *ributil.RetryDB) error {
-	return func(db *ributil.RetryDB) error {
-		_, err := db.Exec(fmt.Sprintf(`
+func refreshGoodProviders() func(db database.Database) error {
+	return func(db database.Database) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func(tx *sql.Tx) {
+			err := tx.Rollback()
+			if err != nil && !errors.Is(err, sql.ErrTxDone) {
+				log.Errorw("failed to rollback transaction", "error", err)
+			}
+		}(tx)
+
+		_, err = tx.Exec(`
 	CREATE TEMP TABLE good_providers_tmp_imm1 AS SELECT p.* FROM providers p
 		 LEFT JOIN bad_providers_new_reject bp ON p.id = bp.sp_id
-	WHERE p.in_market = 1
-		AND p.ping_ok = 1
-        AND p.ask_ok = 1
-        AND p.ask_min_piece_size <= %d
-        AND p.ask_max_piece_size >= %d
-		AND bp.sp_id IS NULL;  -- Excludes bad providers
-
+	WHERE p.in_market = true
+		AND p.ping_ok = true
+        AND p.ask_ok = true
+        AND p.ask_min_piece_size <= $1
+        AND p.ask_max_piece_size >= $2
+		AND bp.sp_id IS NULL;  -- Excludes bad providers`, maxPieceSize, minPieceSize)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`
 	CREATE TEMP TABLE good_providers_tmp AS SELECT 
         p.id, p.ping_ok, p.boost_deals, p.booster_http, p.booster_bitswap,
         p.indexed_success, p.indexed_fail,
@@ -427,59 +155,30 @@ func refreshGoodProviders() func(db *ributil.RetryDB) error {
         (ds.failed_all IS NULL OR ds.failed_all = 0)
         AND (rs.unretrievable_deals IS NULL OR (rs.unretrievable_deals <= 1 OR rs.retrievable_deals >= 0.7 * (rs.retrievable_deals + rs.unretrievable_deals) )) /* has up to 1 unretrievable deals, or most are retrievable  */
     ORDER BY
-        (p.booster_bitswap + p.booster_http) ASC, p.boost_deals ASC, p.id DESC;
+        (p.booster_bitswap::int + p.booster_http::int) ASC, p.boost_deals ASC, p.id DESC`)
+		if err != nil {
+			return err
+		}
 
-		DROP TABLE good_providers_tmp_imm1;
+		_, err = tx.Exec(`DROP TABLE good_providers_tmp_imm1`)
+		if err != nil {
+			return err
+		}
 
-		DELETE FROM good_providers;
-		INSERT INTO good_providers SELECT * FROM good_providers_tmp;
-		DROP TABLE good_providers_tmp;`, maxPieceSize, minPieceSize))
-
-		return err
+		_, err = tx.Exec(`DELETE FROM good_providers`)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO good_providers SELECT * FROM good_providers_tmp`)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`DROP TABLE good_providers_tmp`)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
-}
-
-func refreshGoodProviders5(db *ributil.RetryDB) error {
-	// Query to populate good_providers table
-	q := `
-    INSERT INTO good_providers
-        SELECT 
-        p.id, p.ping_ok, p.boost_deals, p.booster_http, p.booster_bitswap,
-        p.indexed_success, p.indexed_fail,
-        p.retrprobe_success, p.retrprobe_fail, p.retrprobe_blocks, p.retrprobe_bytes,
-        p.ask_price, p.ask_verif_price, p.ask_min_piece_size, p.ask_max_piece_size
-    FROM 
-        providers p
-        LEFT JOIN sp_deal_stats_view ds ON p.id = ds.sp_id
-        LEFT JOIN sp_retr_stats_view rs ON p.id = rs.sp_id
-        LEFT JOIN bad_providers_new_reject_view bp ON p.id = bp.sp_id
-    WHERE 
-        p.in_market = 1
-        AND p.ping_ok = 1
-        AND p.ask_ok = 1
-        AND p.ask_min_piece_size <= %d
-        AND p.ask_max_piece_size >= %d
-        AND (ds.failed_all IS NULL OR ds.failed_all = 0)
-        AND (rs.unretrievable_deals IS NULL OR (rs.unretrievable_deals <= 1 OR rs.retrievable_deals >= 0.7 * (rs.retrievable_deals + rs.unretrievable_deals) )) /* has up to 1 unretrievable deals, or most are retrievable  */
-        AND bp.sp_id IS NULL  -- Excludes bad providers
-    ORDER BY
-        (p.booster_bitswap + p.booster_http) ASC, p.boost_deals ASC, p.id DESC;
-  `
-
-	// Delete existing rows
-	if _, err := db.Exec("DELETE FROM good_providers"); err != nil {
-		return err
-	}
-
-	// Insert refreshed data
-	if _, err := db.Exec(fmt.Sprintf(q, maxPieceSize, minPieceSize)); err != nil {
-		return err
-	}
-
-	// Refresh indexes
-	_, err := db.Exec("ANALYZE")
-
-	return err
 }
 
 type dealProvider struct {
@@ -500,10 +199,10 @@ func (r *ribsDB) SelectDealProviders(group iface.GroupKey, pieceSize int64, veri
 
 	res, err := r.db.Query(`select id, ask_price, ask_verif_price from good_providers
 									WHERE id NOT IN (
-										SELECT provider_addr FROM deals	WHERE group_id = ?
-										  AND (rejected = 0 OR (rejected = 1 AND start_time >= strftime('%s', 'now', '-24 hours')))
-										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= strftime('%s', 'now', '-100 hours')))
-									) and ask_min_piece_size <= ? and ask_max_piece_size >= ? order by random() limit 15`,
+										SELECT provider_addr FROM deals	WHERE group_id = $1
+										  AND (rejected = 0 OR (rejected = 1 AND start_time >= now() - interval '24 hours'))
+										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= now() - interval '100 hours'))
+									) and ask_min_piece_size <= $2 and ask_max_piece_size >= $3 order by random() limit 15`,
 		group, pieceSize, pieceSize)
 	if err != nil {
 		return nil, xerrors.Errorf("querying providers: %w", err)
@@ -536,10 +235,10 @@ func (r *ribsDB) SelectDealProviders(group iface.GroupKey, pieceSize int64, veri
 
 	res, err = r.db.Query(`select id, ask_price, ask_verif_price from good_providers
 									WHERE id NOT IN (
-										SELECT provider_addr FROM deals	WHERE group_id = ?
-										  AND (rejected = 0 OR (rejected = 1 AND start_time >= strftime('%s', 'now', '-24 hours')))
-										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= strftime('%s', 'now', '-100 hours')))
-									) and booster_http = 1 and ask_min_piece_size <= ? and ask_max_piece_size >= ? order by random() limit 7`, group, pieceSize, pieceSize)
+										SELECT provider_addr FROM deals	WHERE group_id = $1
+										  AND (rejected = 0 OR (rejected = 1 AND start_time >= now() - interval '24 hours'))
+										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= now() - interval '100 hours'))
+									) and booster_http = 1 and ask_min_piece_size <= $2 and ask_max_piece_size >= $3 order by random() limit 7`, group, pieceSize, pieceSize)
 	if err != nil {
 		return nil, xerrors.Errorf("querying providers: %w", err)
 	}
@@ -564,10 +263,10 @@ func (r *ribsDB) SelectDealProviders(group iface.GroupKey, pieceSize int64, veri
 
 	res, err = r.db.Query(`select id, ask_price, ask_verif_price from good_providers
 									WHERE id NOT IN (
-										SELECT provider_addr FROM deals	WHERE group_id = ?
-										  AND (rejected = 0 OR (rejected = 1 AND start_time >= strftime('%s', 'now', '-24 hours')))
-										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= strftime('%s', 'now', '-100 hours')))
-									) and booster_bitswap = 1 and ask_min_piece_size <= ? and ask_max_piece_size >= ? order by random() limit 7`, group, pieceSize, pieceSize)
+										SELECT provider_addr FROM deals	WHERE group_id = $1
+										  AND (rejected = 0 OR (rejected = 1 AND start_time >= now() - interval '24 hours'))
+										  AND (failed = 0 OR (rejected = 0 AND failed = 1 AND  start_time >= now() - interval '100 hours'))
+									) and booster_bitswap = 1 and ask_min_piece_size <= $2 and ask_max_piece_size >= $3 order by random() limit 7`, group, pieceSize, pieceSize)
 	if err != nil {
 		return nil, xerrors.Errorf("querying providers: %w", err)
 	}
@@ -629,7 +328,7 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 	res, err := r.db.Query(`select id, ping_ok, boost_deals, booster_http, booster_bitswap,
        indexed_success, indexed_fail,
        ask_price, ask_verif_price, ask_min_piece_size, ask_max_piece_size
-    from providers where in_market=1 and ping_ok=1`)
+    from providers where in_market=true and ping_ok=true`)
 
 	if err != nil {
 		log.Errorw("querying providers", "error", err)
@@ -672,7 +371,8 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 
 	for res.Next() {
 		var id int64
-		var dealStarted, dealSuccess, dealFail, dealRejected, maxStart int64
+		var dealStarted, dealSuccess, dealFail, dealRejected int64
+		var maxStart time.Time
 		err := res.Scan(&id, &dealStarted, &dealSuccess, &dealFail, &dealRejected, &maxStart)
 		if err != nil {
 			log.Errorw("scanning deal", "error", err)
@@ -685,7 +385,7 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 				out[i].DealSuccess = dealSuccess
 				out[i].DealFail = dealFail
 				out[i].DealRejected = dealRejected
-				out[i].MostRecentDealStart = maxStart
+				out[i].MostRecentDealStart = maxStart.Unix()
 			}
 		}
 	}
@@ -757,7 +457,7 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, int, error) {
 	var count int
 	var unretrievable int
-	err := r.db.QueryRow(`select count(*), COALESCE(sum(last_retrieval_check > (last_retrieval_check_success + 3600*24) and retrieval_probes_fail > 10), 0) from deals where group_id = ? and failed = 0`, group).Scan(&count, &unretrievable)
+	err := r.db.QueryRow(`select count(*), count(*) filter ( where  last_retrieval_check > (last_retrieval_check_success + 3600*24) and retrieval_probes_fail > 10) from deals where group_id = $1 and failed = 0`, group).Scan(&count, &unretrievable)
 	if err != nil {
 		return 0, 0, xerrors.Errorf("querying deal count: %w", err)
 	}
@@ -784,7 +484,7 @@ type dbDealInfo struct {
 
 func (r *ribsDB) StoreDealProposal(d dbDealInfo) error {
 	_, err := r.db.Exec(`insert into deals (uuid, client_addr, provider_addr, group_id, price_afil_gib_epoch, verified, keep_unsealed, start_epoch, end_epoch, signed_proposal_bytes) values
-                                   (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.DealUUID, d.ClientAddr, d.ProviderAddr, d.GroupID, d.PricePerEpoch, d.Verified, d.KeepUnsealed, d.StartEpoch, d.EndEpoch, d.SignedProposalBytes)
+                                   ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, d.DealUUID, d.ClientAddr, d.ProviderAddr, d.GroupID, d.PricePerEpoch, d.Verified, d.KeepUnsealed, d.StartEpoch, d.EndEpoch, d.SignedProposalBytes)
 	if err != nil {
 		return xerrors.Errorf("inserting deal: %w", err)
 	}
@@ -795,7 +495,7 @@ func (r *ribsDB) StoreDealProposal(d dbDealInfo) error {
 func (r *ribsDB) StoreSuccessfullyProposedDeal(d dbDealInfo) error {
 	proposed := 1
 
-	_, err := r.db.Exec(`update deals set proposed = ? where uuid = ?`,
+	_, err := r.db.Exec(`update deals set proposed = $1 where uuid = $2`,
 		proposed, d.DealUUID)
 	if err != nil {
 		return xerrors.Errorf("updating deal: %w", err)
@@ -808,7 +508,7 @@ func (r *ribsDB) StoreRejectedDeal(duuid string, emsg string, proposed int) erro
 	failed, rejected := 1, 1
 	state := "Rejected"
 
-	_, err := r.db.Exec(`update deals set failed = ?, rejected = ?, sp_status = ?, error_msg = ?, proposed = ? where uuid = ?`,
+	_, err := r.db.Exec(`update deals set failed = $1, rejected = $2, sp_status = $3, error_msg = $4, proposed = $5 where uuid = $6`,
 		failed, rejected, state, emsg, proposed, duuid)
 	if err != nil {
 		return xerrors.Errorf("updating deal: %w", err)
@@ -831,8 +531,8 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 		}
 
 		_, err := r.db.Exec(`update deals set
-        last_state_query_error = ?
-        where uuid = ?`, lastError, id)
+        last_state_query_error = $1
+        where uuid = $2`, lastError, id)
 		if err != nil {
 			return xerrors.Errorf("update sp tracker: %w", err)
 		}
@@ -840,11 +540,11 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 		errMsg := fmt.Sprintf("DealStatus is nil (resp err: '%s')", stresp.Error)
 
 		_, err := r.db.Exec(`update deals set
-                 sp_status = ?,
-                 error_msg = ?,
-                 last_state_query_error = ?,
-                 last_state_query = ?
-             where uuid = ?`, "Aborted", errMsg, errMsg, now, id)
+                 sp_status = $1,
+                 error_msg = $2,
+                 last_state_query_error = $3,
+                 last_state_query = $4
+             where uuid = $5`, "Aborted", errMsg, errMsg, now, id)
 		if err != nil {
 			return xerrors.Errorf("update sp tracker: %w", err)
 		}
@@ -856,16 +556,16 @@ func (r *ribsDB) UpdateSPDealState(id uuid.UUID, stresp *types.DealStatusRespons
 		}
 
 		_, err := r.db.Exec(`update deals set
-        sp_status = ?,
-        error_msg = ?,
-        sp_sealing_status = ?,
-        sp_sig_proposal = ?,
-        sp_pub_msg_cid = ?,
-        sp_recv_bytes = CASE WHEN ? > COALESCE(sp_recv_bytes, 0) THEN ? ELSE sp_recv_bytes END,
-        sp_txsize = ?,
-        last_state_query = ?,
-        last_state_query_error = ?
-        where uuid = ?`, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
+        sp_status = $1,
+        error_msg = $2,
+        sp_sealing_status = $3,
+        sp_sig_proposal = $4,
+        sp_pub_msg_cid = $5,
+        sp_recv_bytes = CASE WHEN $6 > COALESCE(sp_recv_bytes, 0) THEN $7 ELSE sp_recv_bytes END,
+        sp_txsize = $8,
+        last_state_query = $9,
+        last_state_query_error = $10
+        where uuid = $11`, stresp.DealStatus.Status, stresp.DealStatus.Error, stresp.DealStatus.SealingStatus,
 			stresp.DealStatus.SignedProposalCid.String(), pubCid,
 			stresp.NBytesReceived, stresp.NBytesReceived, stresp.TransferSize, now, lastError, id)
 		if err != nil {
@@ -933,7 +633,7 @@ func (r *ribsDB) PublishingDeals() ([]publishingDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllUnpublishedDeals() ([]publishingDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, "") from deals where published = 0 and failed = 0`)
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, coalesce(sp_pub_msg_cid, '') from deals where published = 0 and failed = 0`)
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -955,7 +655,7 @@ func (r *ribsDB) AllUnpublishedDeals() ([]publishingDealMeta, error) {
 }
 
 func (r *ribsDB) UpdatePublishedDealLight(id string, dealID abi.DealID) error {
-	_, err := r.db.Exec(`update deals set deal_id = ?, published = 1 where uuid = ?`, dealID, id)
+	_, err := r.db.Exec(`update deals set deal_id = $1, published = 1 where uuid = $2`, dealID, id)
 	if err != nil {
 		return xerrors.Errorf("update activated deal: %w", err)
 	}
@@ -963,7 +663,7 @@ func (r *ribsDB) UpdatePublishedDealLight(id string, dealID abi.DealID) error {
 	return nil
 }
 func (r *ribsDB) UpdatePublishedDeal(id string, dealID abi.DealID, pubTs types2.TipSetKey) error {
-	_, err := r.db.Exec(`update deals set deal_id = ?, deal_pub_ts = ?, published = 1 where uuid = ?`, dealID, pubTs.String(), id)
+	_, err := r.db.Exec(`update deals set deal_id = $1, deal_pub_ts = $2, published = 1 where uuid = $3`, dealID, pubTs.String(), id)
 	if err != nil {
 		return xerrors.Errorf("update activated deal: %w", err)
 	}
@@ -981,7 +681,7 @@ type publishedDealMeta struct {
 }
 
 func (r *ribsDB) PublishedDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, coalesce(sp_pub_msg_cid, ''), deal_id from deals where published = 1 and sealed = 0 and failed = 0 and sp_pub_msg_cid is not null`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -1002,7 +702,7 @@ func (r *ribsDB) PublishedDeals() ([]publishedDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllPublishedUnsealedDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 0 and failed = 0`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, coalesce(sp_pub_msg_cid, ''), deal_id from deals where published = 1 and sealed = 0 and failed = 0`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -1023,7 +723,7 @@ func (r *ribsDB) AllPublishedUnsealedDeals() ([]publishedDealMeta, error) {
 	return out, nil
 }
 func (r *ribsDB) AllActiveDeals() ([]publishedDealMeta, error) {
-	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, IFNULL(sp_pub_msg_cid, ""), deal_id from deals where published = 1 and sealed = 1 and failed = 0`) // todo any reason to re-check failed/rejected deals?
+	res, err := r.db.Query(`select uuid, provider_addr, signed_proposal_bytes, coalesce(sp_pub_msg_cid, ''), deal_id from deals where published = 1 and sealed = 1 and failed = 0`) // todo any reason to re-check failed/rejected deals?
 	if err != nil {
 		return nil, xerrors.Errorf("querying deals: %w", err)
 	}
@@ -1045,7 +745,7 @@ func (r *ribsDB) AllActiveDeals() ([]publishedDealMeta, error) {
 }
 
 func (r *ribsDB) UpdateActivatedDeal(id string, sectorStart abi.ChainEpoch) error {
-	_, err := r.db.Exec(`update deals set sector_start_epoch = ?, sealed = 1 where uuid = ?`, sectorStart, id)
+	_, err := r.db.Exec(`update deals set sector_start_epoch = $1, sealed = 1 where uuid = $2`, sectorStart, id)
 	if err != nil {
 		return xerrors.Errorf("update activated deal: %w", err)
 	}
@@ -1061,10 +761,10 @@ func (r *ribsDB) MarkExpiredDeals(currentEpoch int64) error {
 			published = 0,
 			sp_pub_msg_cid = null
 		WHERE failed = 0 AND sealed = 0
-			AND start_epoch < ?;
+			AND start_epoch < $1;
 	`
 
-	result, err := r.db.Exec(query, currentEpoch, currentEpoch)
+	result, err := r.db.Exec(query, currentEpoch)
 	if err != nil {
 		return fmt.Errorf("error marking expired deals: %w", err)
 	}
@@ -1081,7 +781,7 @@ func (r *ribsDB) MarkExpiredDeals(currentEpoch int64) error {
 
 func (r *ribsDB) GetDealStartEpoch(uuid string) (abi.ChainEpoch, error) {
 	var startEpoch abi.ChainEpoch
-	err := r.db.QueryRow(`SELECT start_epoch FROM deals WHERE uuid = ?`, uuid).Scan(&startEpoch)
+	err := r.db.QueryRow(`SELECT start_epoch FROM deals WHERE uuid = $1`, uuid).Scan(&startEpoch)
 	if err != nil {
 		return 0, xerrors.Errorf("getting start_epoch by uuid: %w", err)
 	}
@@ -1090,7 +790,7 @@ func (r *ribsDB) GetDealStartEpoch(uuid string) (abi.ChainEpoch, error) {
 }
 
 func (r *ribsDB) UpdateExpiredDeal(id string) error {
-	_, err := r.db.Exec(`update deals set failed = 1, failed_expired = 1 where uuid = ?`, id)
+	_, err := r.db.Exec(`update deals set failed = 1, failed_expired = 1 where uuid = $1`, id)
 	if err != nil {
 		return xerrors.Errorf("update activated deal: %w", err)
 	}
@@ -1134,7 +834,7 @@ FROM
     deal_summary
 ;`)
 	if err != nil {
-		return iface.DealSummary{}, xerrors.Errorf("finding writable groups: %w", err)
+		return iface.DealSummary{}, xerrors.Errorf("finding deal summary: %w", err)
 	}
 	defer res.Close()
 
@@ -1158,7 +858,7 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 		SELECT id, ping_ok, boost_deals, booster_http, booster_bitswap,
 		indexed_success, indexed_fail, ask_price, ask_verif_price,
 		ask_min_piece_size, ask_max_piece_size
-		FROM providers WHERE id = ?`, providerID).Scan(
+		FROM providers WHERE id = $1`, providerID).Scan(
 		&pInfo.Meta.ID, &pInfo.Meta.PingOk, &pInfo.Meta.BoostDeals,
 		&pInfo.Meta.BoosterHttp, &pInfo.Meta.BoosterBitswap, &pInfo.Meta.IndexedSuccess,
 		&pInfo.Meta.IndexedFail,
@@ -1167,7 +867,7 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 		return pInfo, xerrors.Errorf("querying provider metadata: %w", err)
 	}
 
-	res, err := r.db.Query("select uuid, provider_addr, sealed, failed, rejected, deal_id, sp_status, sp_sealing_status, error_msg, sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch, start_time from deals where provider_addr = ? ORDER BY start_time DESC LIMIT 100", providerID)
+	res, err := r.db.Query("select uuid, provider_addr, sealed, failed, rejected, deal_id, sp_status, sp_sealing_status, error_msg, sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch, start_time from deals where provider_addr = $1 ORDER BY start_time DESC LIMIT 100", providerID)
 	if err != nil {
 		return pInfo, xerrors.Errorf("getting group meta: %w", err)
 	}
@@ -1228,9 +928,9 @@ type dealParams struct {
 }
 
 func (r *ribsDB) GetDealParams(ctx context.Context, id iface.GroupKey) (out dealParams, err error) {
-	res, err := r.db.QueryContext(ctx, "select commp, root, piece_size, car_size from groups where id = ?", id)
+	res, err := r.db.QueryContext(ctx, "select commp, root, piece_size, car_size from groups where id = $1", id)
 	if err != nil {
-		return dealParams{}, xerrors.Errorf("finding writable groups: %w", err)
+		return dealParams{}, xerrors.Errorf("finding deal params: %w", err)
 	}
 	defer res.Close()
 
@@ -1281,7 +981,7 @@ func (r *ribsDB) UpsertMarketActors(actors []int64) error {
 		return xerrors.Errorf("begin transaction: %w", err)
 	}
 
-	_, err = tx.Exec("update providers set in_market = 0 where in_market = 1")
+	_, err = tx.Exec("update providers set in_market = false where in_market = true")
 	if err != nil {
 		if err := tx.Rollback(); err != nil {
 			log.Errorw("rollback UpsertMarketActors", "error", err)
@@ -1289,7 +989,7 @@ func (r *ribsDB) UpsertMarketActors(actors []int64) error {
 		return xerrors.Errorf("reset in_market: %w", err)
 	}
 
-	stmt, err := tx.Prepare("insert into providers (id, in_market) values (?, 1) on conflict (id) do update set in_market = 1")
+	stmt, err := tx.Prepare("insert into providers (id, in_market) values ($1, true) on conflict (id) do update set in_market = true")
 	if err != nil {
 		if err := tx.Rollback(); err != nil {
 			log.Errorw("rollback UpsertMarketActors", "error", err)
@@ -1344,7 +1044,7 @@ func (r *ribsDB) UpdateProviderProtocols(provider int64, pres providerResult) er
 	}
 
 	_, err := r.db.Exec(`
-	update providers set ping_ok = ?, boost_deals = ?, booster_http = ?, booster_bitswap = ?, addr_info_graphsync = ?, addr_info_bitswap = ?, addr_info_http = ? where id = ?;
+	update providers set ping_ok = $1, boost_deals = $2, booster_http = $3, booster_bitswap = $4, addr_info_graphsync = $5, addr_info_bitswap = $6, addr_info_http = $7 where id = $8;
 	`, pres.PingOk, pres.BoostDeals, pres.BoosterHttp, pres.BoosterBitswap, LibP2PMaddrsJson, BitswapMaddrsJson, HttpMaddrsJson,
 		provider)
 	if err != nil {
@@ -1356,7 +1056,7 @@ func (r *ribsDB) UpdateProviderProtocols(provider int64, pres providerResult) er
 
 func (r *ribsDB) UpdateProviderStorageAsk(provider int64, ask *storagemarket.StorageAsk) error {
 	_, err := r.db.Exec(`
-	update providers set ask_price = ?, ask_verif_price = ?, ask_min_piece_size = ?, ask_max_piece_size = ?, ask_ok = 1 where id = ?;
+	update providers set ask_price = $1, ask_verif_price = $2, ask_min_piece_size = $3, ask_max_piece_size = $4, ask_ok = true where id = $5;
 	`, ask.Price.String(), ask.VerifiedPrice.String(), ask.MinPieceSize, ask.MaxPieceSize, provider)
 	if err != nil {
 		return xerrors.Errorf("update provider: %w", err)
@@ -1372,7 +1072,7 @@ func (r *ribsDB) GroupDeals(gk iface.GroupKey) ([]iface.DealMeta, error) {
 										sp_status, sp_sealing_status, error_msg, sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch,
 										retrieval_probes_success, retrieval_probes_fail, retrieval_probe_prev_ttfb_ms,
 										last_retrieval_check > 0 AND last_retrieval_check > (last_retrieval_check_success + 3600*24) as no_recent_retr
-										from deals where group_id = ?`, gk)
+										from deals where group_id = $1`, gk)
 	if err != nil {
 		return nil, xerrors.Errorf("getting group meta: %w", err)
 	}
@@ -1465,7 +1165,7 @@ func (r *ribsDB) GetSealedDealsWithNoSectorNums() ([]noSectorDealInfo, error) {
 }
 
 func (r *ribsDB) FillDealSectorNumber(uuid string, sectorNum abi.SectorNumber) error {
-	_, err := r.db.Exec(`update deals set sector_number = ? where uuid = ?`, sectorNum, uuid)
+	_, err := r.db.Exec(`update deals set sector_number = $1 where uuid = $2`, sectorNum, uuid)
 	if err != nil {
 		return xerrors.Errorf("updating deal: %w", err)
 	}
@@ -1593,7 +1293,7 @@ func (r *ribsDB) GetRetrievalCheckCandidates() ([]RetrCheckCandidate, error) {
 		SELECT uuid, provider_addr, group_id, verified, keep_unsealed FROM deals 
 		WHERE sealed = 1 
 		AND failed = 0 
-		AND last_retrieval_check <= ?`,
+		AND last_retrieval_check <= $1`,
 		now-secondsIn6Hours)
 	if err != nil {
 		return nil, xerrors.Errorf("getting retrieval check candidates: %w", err)
@@ -1643,16 +1343,17 @@ func (r *ribsDB) RecordRetrievalCheckResult(dealId string, res RetrievalResult) 
 		errMsg = &res.Error
 	}
 
+	//todo
 	_, err := r.db.Exec(`
         UPDATE deals SET
-            last_retrieval_check = strftime('%s', 'now'),
-            last_retrieval_check_success = CASE WHEN ? THEN strftime('%s', 'now') ELSE last_retrieval_check_success END,
-            retrieval_probe_prev_ms = ?,
-            retrieval_probe_prev_ttfb_ms = ?,
-            retrieval_probes_success = retrieval_probes_success + ?,
-            retrieval_probes_fail = retrieval_probes_fail + ?,
-            retrieval_probe_prev_error = ?
-        WHERE uuid = ?`,
+            last_retrieval_check = now(),
+            last_retrieval_check_success = CASE WHEN $1 THEN now() ELSE last_retrieval_check_success END,
+            retrieval_probe_prev_ms = $2,
+            retrieval_probe_prev_ttfb_ms = $3,
+            retrieval_probes_success = retrieval_probes_success + $4,
+            retrieval_probes_fail = retrieval_probes_fail + $5,
+            retrieval_probe_prev_error = $6
+        WHERE uuid = $7`,
 		res.Success, durationMs, ttfbMs, successIncrement, 1-successIncrement, errMsg, dealId)
 
 	if err != nil {
@@ -1673,7 +1374,7 @@ type RetrCandidate struct {
 func (r *ribsDB) GetRetrievalCandidates(group iface.GroupKey) ([]RetrCandidate, error) {
 	rows, err := r.db.Query(`
 		SELECT uuid, provider_addr, verified, keep_unsealed, last_retrieval_check_success FROM deals 
-		WHERE group_id = ? AND sealed = 1 AND failed = 0 order by retrieval_probe_prev_ttfb_ms asc, last_retrieval_check_success desc, keep_unsealed desc`,
+		WHERE group_id = $1 AND sealed = 1 AND failed = 0 order by retrieval_probe_prev_ttfb_ms asc, last_retrieval_check_success desc, keep_unsealed desc`,
 		group)
 	if err != nil {
 		return nil, xerrors.Errorf("getting retrieval candidates: %w", err)
@@ -1718,7 +1419,7 @@ func (r *ribsDB) GetProviderAddrs(provider int64) (ProviderAddrInfo, error) {
 
 	err := r.db.QueryRow(`
 		SELECT addr_info_graphsync, addr_info_bitswap, addr_info_http FROM providers
-		WHERE id = ?`, provider).Scan(&addrInfoGraphsync, &addrInfoBitswap, &addrInfoHttp)
+		WHERE id = $1`, provider).Scan(&addrInfoGraphsync, &addrInfoBitswap, &addrInfoHttp)
 	if err != nil {
 		return addrInfo, xerrors.Errorf("query: %w", err)
 	}
@@ -1788,7 +1489,7 @@ func (r *ribsDB) NeedExternalModule() (*string, error) {
 }
 func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error) {
 	var module, path string
-	err := r.db.QueryRow(`select module, path from external_path where group_id = ?`, group).Scan(&module, &path)
+	err := r.db.QueryRow(`select module, path from external_path where group_id = $1`, group).Scan(&module, &path)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil, nil
@@ -1799,7 +1500,7 @@ func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error)
 	return &module, &path, nil
 }
 func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path string) error {
-	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values (?, ?, ?)`, group, module, path)
+	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values ($1, $2, $3)`, group, module, path)
 	if err != nil {
 		return xerrors.Errorf("XYZ: exec: %w", err)
 	}
@@ -1807,7 +1508,7 @@ func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path strin
 	return nil
 }
 func (r *ribsDB) DropExternalPath(group iface.GroupKey) error {
-	_, err := r.db.Exec(`delete from external_path where group_id = ?`, group)
+	_, err := r.db.Exec(`delete from external_path where group_id = $1`, group)
 	if err != nil {
 		return xerrors.Errorf("XYZ: exec: %w", err)
 	}
@@ -1938,7 +1639,7 @@ func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
 			GROUP BY
 				all_groups.group_id
 			HAVING
-				COALESCE(COUNT(d.group_id), 0) < ?
+				COALESCE(COUNT(d.group_id), 0) < $1
 		ON CONFLICT (group_id) DO UPDATE
 		SET retrievable_deals = EXCLUDED.retrievable_deals;
     `
@@ -1949,7 +1650,7 @@ func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
 func (r *ribsDB) AssignRepairToWorker(workerID int) (*iface.GroupKey, error) {
 	query := `
         UPDATE repairs
-        SET worker = ?
+        SET worker = $1
         WHERE group_id = (
             SELECT group_id FROM repairs
             WHERE worker IS NULL
@@ -1983,7 +1684,7 @@ func (r *ribsDB) GetRepairStats() (out iface.RepairQueueStats, err error) {
 func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface.GroupKey, error) {
 	query := `
         SELECT group_id FROM repairs
-        WHERE worker = ?;
+        WHERE worker = $1;
     `
 
 	rows, err := r.db.Query(query, workerID)
@@ -2011,7 +1712,7 @@ func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface.GroupKey
 func (r *ribsDB) DelRepair(groupID iface.GroupKey) error {
 	query := `
 		DELETE FROM repairs
-		WHERE group_id = ?;
+		WHERE group_id = $1;
 	`
 	_, err := r.db.Exec(query, groupID)
 	return err
@@ -2022,8 +1723,8 @@ func (r *ribsDB) UpdateRepairOnStepNotDone(workerID int) error {
 		UPDATE repairs
 		SET
 		    worker = NULL,
-		    last_attempt = strftime('%s','now')
-		WHERE worker = ?;
+		    last_attempt = now()
+		WHERE worker = $1;
 	`
 
 	_, err := r.db.Exec(query, workerID)

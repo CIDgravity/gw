@@ -9,6 +9,8 @@ services:
       - "9042:9042"
     volumes:
       - yb_data:/root/var
+    environment:
+      YSQL_DB: auroragw
     command: >
       bin/yugabyted start
         --background=false

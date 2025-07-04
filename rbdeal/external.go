@@ -2,6 +2,7 @@ package rbdeal
 
 import (
 	"context"
+	"fmt"
 	iface "github.com/lotus-web3/ribs"
 	"golang.org/x/xerrors"
 	"io"
@@ -147,6 +148,9 @@ func (r *ribsStagingProvider) ReadCar(ctx context.Context, group iface.GroupKey,
 
 // Upload implements ribs.StagingStorageProvider.
 func (r *ribsStagingProvider) Upload(ctx context.Context, group iface.GroupKey, size int64, src func(writer io.Writer) error) error {
+	if r.r.externalOffloader == nil {
+		return fmt.Errorf("no external offloader")
+	}
 	return (r.r.externalOffloader).EnsureExternalPush(group, func(ctx context.Context, gk iface.GroupKey, f func(int64), w io.Writer) error {
 		return src(w)
 	})

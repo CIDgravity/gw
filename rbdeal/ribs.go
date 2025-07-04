@@ -3,6 +3,7 @@ package rbdeal
 import (
 	"context"
 	"fmt"
+	"github.com/lotus-web3/ribs/database"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type openOptions struct {
 	localWalletOpener   func(path string) (*ributil.LocalWallet, error)
 	localWalletPath     string
 	fileCoinAPIEndpoint string
+	db                  database.Database
 }
 
 type OpenOption func(*openOptions)
@@ -69,6 +71,12 @@ func WithLocalWalletPath(wp string) OpenOption {
 func WithFileCoinApiEndpoint(wp string) OpenOption {
 	return func(o *openOptions) {
 		o.fileCoinAPIEndpoint = wp
+	}
+}
+
+func WithDatabase(db database.Database) OpenOption {
+	return func(o *openOptions) {
+		o.db = db
 	}
 }
 
@@ -221,12 +229,16 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		o(opt)
 	}
 
-	db, err := openRibsDB(root)
+	if opt.db == nil {
+		return nil, fmt.Errorf("database is required")
+	}
+
+	db, err := openRibsDB(opt.db)
 	if err != nil {
 		return nil, xerrors.Errorf("open db: %w", err)
 	}
 
-	rbs, err := rbstor.Open(root, rbstor.WithDB(db.db))
+	rbs, err := rbstor.Open(root, rbstor.WithDB(opt.db))
 	if err != nil {
 		return nil, xerrors.Errorf("open RBS: %w", err)
 	}

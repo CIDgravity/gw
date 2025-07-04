@@ -73,24 +73,33 @@ type WalletConfig struct {
 	UpgradeInterval   time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
 }
 
-type YugabyteConfig struct {
-	Hosts    string `envconfig:"RIBS_YUGABYTE_HOSTS" default:"127.0.0.1"`
-	Port     int    `envconfig:"RIBS_YUGABYTE_PORT" default:"9042"`
-	Keyspace string `envconfig:"RIBS_YUGABYTE_KEYSPACE" default:"auroragw"`
+type YugabyteCqlConfig struct {
+	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"127.0.0.1"`
+	Port     int    `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
+	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"auroragw"`
 
 	// Yugabyte deployed in docker on MacOS and Windows WSL will advertise its docker container IP, which will replace the configured host and break the connection.
 	// Set to true for local development on those systems
-	ForceHosts bool `envconfig:"RIBS_YUGABYTE_FORCE_HOSTS" default:"false"`
+	ForceHosts bool `envconfig:"RIBS_YUGABYTE_CQL_FORCE_HOSTS" default:"false"`
+}
+
+type YugabyteSqlConfig struct {
+	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"127.0.0.1"`
+	Port int    `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
+	User string `envconfig:"RIBS_YUGABYTE_SQL_USER" default:"postgres"`
+	Pass string `envconfig:"RIBS_YUGABYTE_SQL_PASS" default:"postgres"`
+	Db   string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"auroragw"`
 }
 
 type Config struct {
-	External   ExternalConfig
-	CidGravity CidGravityConfig
-	Ribs       RibsConfig
-	Wallet     WalletConfig
-	Deal       DealConfig
-	Yugabyte   YugabyteConfig
-	LogLevel   string `envconfig:"RIBS_LOGLEVEL"`
+	External    ExternalConfig
+	CidGravity  CidGravityConfig
+	Ribs        RibsConfig
+	Wallet      WalletConfig
+	Deal        DealConfig
+	YugabyteCql YugabyteCqlConfig
+	YugabyteSql YugabyteSqlConfig
+	LogLevel    string `envconfig:"RIBS_LOGLEVEL"`
 }
 
 var config Config

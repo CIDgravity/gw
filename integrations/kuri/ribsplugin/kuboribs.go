@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/ipfs/boxo/blockservice"
 	"github.com/ipfs/boxo/exchange/offline"
+	"github.com/lotus-web3/ribs/database"
 	"github.com/lotus_web3/ribs/integrations/kuri/ribsplugin/s3"
 	"os"
 
@@ -61,6 +62,7 @@ func (p *ribsPlugin) Init(env *plugin.Environment) error {
 func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 	opts := info.FXOptions
 	opts = append(opts,
+		fx.Provide(makeDb),
 		fx.Provide(makeRibs),
 		fx.Provide(ribsBlockstore),
 		fx.Provide(ribsMetadata),
@@ -91,15 +93,21 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 
 // node.BaseBlocks, blockstore.Blockstore, blockstore.GCLocker, blockstore.GCBlockstore
 
+func makeDb() (database.Database, error) {
+	return database.NewYugabyteDB(configuration.GetConfig().YugabyteSqlConfig)
+}
+
 type ribsIn struct {
 	fx.In
 
 	Lc fx.Lifecycle
 	H  host.Host `optional:"true"`
+	Db database.Database
 }
 
 func makeRibs(ri ribsIn) (ribs.RIBS, error) {
 	var opts []rbdeal.OpenOption
+	opts = append(opts, rbdeal.WithDatabase(ri.Db))
 	if ri.H != nil {
 		opts = append(opts, rbdeal.WithHostGetter(func(...libp2p.Option) (host.Host, error) {
 			return ri.H, nil
