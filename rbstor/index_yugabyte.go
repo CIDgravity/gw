@@ -7,6 +7,7 @@ import (
 	"github.com/lotus-web3/ribs"
 	"github.com/multiformats/go-multihash"
 	"github.com/yugabyte/gocql"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -23,11 +24,17 @@ type YugabyteIndex struct {
 	ctx     context.Context
 }
 
-func NewYugabyteIndex(hosts []string, port int, keyspace string) (*YugabyteIndex, error) {
+func NewYugabyteIndex(hosts []string, port int, keyspace string, forceHosts bool) (*YugabyteIndex, error) {
 	cluster := gocql.NewCluster(hosts...)
 	cluster.Port = port
 	cluster.Consistency = gocql.Quorum
 
+	if forceHosts {
+		cluster.AddressTranslator = gocql.AddressTranslatorFunc(func(addr net.IP, port int) (net.IP, int) {
+			log.Infof("Translating from %s", addr)
+			return net.ParseIP(hosts[0]).To4(), port
+		})
+	}
 	index := &YugabyteIndex{
 		cluster: cluster,
 		ctx:     context.Background(),

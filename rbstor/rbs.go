@@ -59,8 +59,8 @@ func Open(root string, opts ...OpenOption) (iface.RBS, error) {
 	}
 
 	config := configuration.GetConfig()
-	yugabyteHosts := strings.Split(config.YugabyteConfig.Hosts, ",")
-	idx, err := NewYugabyteIndex(yugabyteHosts, config.YugabyteConfig.Port, config.YugabyteConfig.Keyspace)
+	yugabyteHosts := strings.Split(config.Yugabyte.Hosts, ",")
+	idx, err := NewYugabyteIndex(yugabyteHosts, config.Yugabyte.Port, config.Yugabyte.Keyspace, config.Yugabyte.ForceHosts)
 	if err != nil {
 		return nil, xerrors.Errorf("open top index: %w", err)
 	}

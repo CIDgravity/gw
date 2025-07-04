@@ -77,16 +77,20 @@ type YugabyteConfig struct {
 	Hosts    string `envconfig:"RIBS_YUGABYTE_HOSTS" default:"127.0.0.1"`
 	Port     int    `envconfig:"RIBS_YUGABYTE_PORT" default:"9042"`
 	Keyspace string `envconfig:"RIBS_YUGABYTE_KEYSPACE" default:"auroragw"`
+
+	// Yugabyte deployed in docker on MacOS and Windows WSL will advertise its docker container IP, which will replace the configured host and break the connection.
+	// Set to true for local development on those systems
+	ForceHosts bool `envconfig:"RIBS_YUGABYTE_FORCE_HOSTS" default:"false"`
 }
 
 type Config struct {
-	External       ExternalConfig
-	CidGravity     CidGravityConfig
-	Ribs           RibsConfig
-	Wallet         WalletConfig
-	Deal           DealConfig
-	YugabyteConfig YugabyteConfig
-	LogLevel       string `envconfig:"RIBS_LOGLEVEL"`
+	External   ExternalConfig
+	CidGravity CidGravityConfig
+	Ribs       RibsConfig
+	Wallet     WalletConfig
+	Deal       DealConfig
+	Yugabyte   YugabyteConfig
+	LogLevel   string `envconfig:"RIBS_LOGLEVEL"`
 }
 
 var config Config

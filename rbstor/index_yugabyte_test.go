@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 func TestYugabyteIndex(t *testing.T) {
 	host, err := testHarness.GetYugabyteHost()
 	require.NoError(t, err)
-	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test", false)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
@@ -64,7 +64,7 @@ func TestYugabyteIndex(t *testing.T) {
 func TestMultipleGroupsPerHash(t *testing.T) {
 	host, err := testHarness.GetYugabyteHost()
 	require.NoError(t, err)
-	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test", false)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
@@ -106,7 +106,7 @@ func TestMultipleGroupsPerHash(t *testing.T) {
 func TestEstimateSize(t *testing.T) {
 	host, err := testHarness.GetYugabyteHost()
 	require.NoError(t, err)
-	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test")
+	idx, err := NewYugabyteIndex([]string{host}, test.YugabytePort, "test", false)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, idx.Close())
