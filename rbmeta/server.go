@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	iface "github.com/lotus-web3/ribs"
+	iface "github.com/aurorainfra/gw"
 	"golang.org/x/xerrors"
 )
 

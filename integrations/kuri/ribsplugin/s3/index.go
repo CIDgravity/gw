@@ -9,14 +9,14 @@ import (
 )
 
 type Index struct {
-	node     *hamt.Node
-	hamtlock sync.RWMutex
-	store    cbor.IpldStore
+	lk    sync.RWMutex
+	node  *hamt.Node
+	store cbor.IpldStore
 }
 
 func (i *Index) Set(ctx context.Context, key string, cid cid.Cid) error {
-	i.hamtlock.Lock()
-	defer i.hamtlock.Unlock()
+	i.lk.Lock()
+	defer i.lk.Unlock()
 	err := i.node.Set(ctx, key, cid)
 	return err
 }
@@ -24,21 +24,21 @@ func (i *Index) Set(ctx context.Context, key string, cid cid.Cid) error {
 func (i *Index) Get(ctx context.Context, key string) (cid.Cid, error) {
 	var objCid cid.Cid
 
-	i.hamtlock.RLock()
-	defer i.hamtlock.RUnlock()
+	i.lk.RLock()
+	defer i.lk.RUnlock()
 	err := i.node.Find(ctx, key, &objCid)
 	return objCid, err
 }
 
 func (i *Index) Delete(ctx context.Context, key string) error {
-	i.hamtlock.Lock()
-	defer i.hamtlock.Unlock()
+	i.lk.Lock()
+	defer i.lk.Unlock()
 	return i.node.Delete(ctx, key)
 }
 
 func (i *Index) Flush(ctx context.Context) (cid.Cid, error) {
-	i.hamtlock.Lock()
-	defer i.hamtlock.Unlock()
+	i.lk.Lock()
+	defer i.lk.Unlock()
 	err := i.node.Flush(ctx)
 	if err != nil {
 		return cid.Cid{}, err

@@ -23,8 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"golang.org/x/xerrors"
 
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
 )
 
 type S3OffloadInfo struct {

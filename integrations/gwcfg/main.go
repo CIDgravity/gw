@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/rbdeal"
 	"github.com/charmbracelet/huh"
 	"github.com/fatih/color"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/rbdeal"
 )
 
 const defaultEnvFile = "settings.env"

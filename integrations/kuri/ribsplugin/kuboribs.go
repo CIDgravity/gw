@@ -3,10 +3,7 @@ package kuboribs
 import (
 	"context"
 	"fmt"
-	"github.com/ipfs/boxo/blockservice"
-	"github.com/ipfs/boxo/exchange/offline"
-	"github.com/lotus-web3/ribs/database"
-	"github.com/lotus_web3/ribs/integrations/kuri/ribsplugin/s3"
+
 	"os"
 
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
@@ -15,6 +12,8 @@ import (
 	"github.com/ipfs/go-datastore"
 	logging "github.com/ipfs/go-log"
 
+	"github.com/ipfs/boxo/blockservice"
+	"github.com/ipfs/boxo/exchange/offline"
 	"github.com/ipfs/boxo/ipld/merkledag"
 	"github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/boxo/mfs"
@@ -27,14 +26,18 @@ import (
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	"github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
-	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
-	"github.com/lotus-web3/ribs/integrations/web"
-	"github.com/lotus-web3/ribs/rbdeal"
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
+
+	"github.com/aurorainfra/gw"
+	agw_s3 "github.com/aurorainfra/gw/agw/server/s3"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/database"
+	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
+	ribs_s3 "github.com/aurorainfra/gw/integrations/kuri/ribsplugin/s3"
+	"github.com/aurorainfra/gw/integrations/web"
+	"github.com/aurorainfra/gw/rbdeal"
 )
 
 var log = logging.Logger("ribs:plugin")
@@ -66,6 +69,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 		fx.Provide(makeRibs),
 		fx.Provide(ribsBlockstore),
 		fx.Provide(ribsMetadata),
+		fx.Provide(ribs_s3.MakeS3Server),
 
 		fx.Decorate(func(rbs *ribsbstore.Blockstore) node.BaseBlocks {
 			return rbs
@@ -84,8 +88,8 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 		fx.Decorate(RibsFiles),
 
 		fx.Invoke(StartMfsDav),
-		fx.Invoke(s3.StartS3Plugin),
-		fx.Invoke(StartMfsNFSFs),
+		fx.Invoke(agw_s3.StartS3Server),
+		//fx.Invoke(StartMfsNFSFs),
 		fx.Invoke(StartMeta),
 	)
 	return opts, nil
@@ -94,7 +98,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 // node.BaseBlocks, blockstore.Blockstore, blockstore.GCLocker, blockstore.GCBlockstore
 
 func makeDb() (database.Database, error) {
-	return database.NewYugabyteDB(configuration.GetConfig().YugabyteSqlConfig)
+	return database.NewYugabyteDB(configuration.GetConfig().YugabyteSql)
 }
 
 type ribsIn struct {

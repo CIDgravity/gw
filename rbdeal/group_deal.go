@@ -8,6 +8,11 @@ import (
 	"strconv"
 	"time"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/cidgravity"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/ributil"
+	types "github.com/aurorainfra/gw/ributil/boosttypes"
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	commcid "github.com/filecoin-project/go-fil-commcid"
@@ -20,11 +25,6 @@ import (
 	ctypes "github.com/filecoin-project/lotus/chain/types"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/cidgravity"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/ributil"
-	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
 )
 

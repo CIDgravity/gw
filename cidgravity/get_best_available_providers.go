@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/lotus-web3/ribs/configuration"
+	"github.com/aurorainfra/gw/configuration"
 	"io/ioutil"
 	"net/http"
 	"time"

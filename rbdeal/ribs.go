@@ -3,7 +3,7 @@ package rbdeal
 import (
 	"context"
 	"fmt"
-	"github.com/lotus-web3/ribs/database"
+
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,19 +11,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/xerrors"
+
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/cidgravity"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/database"
+	"github.com/aurorainfra/gw/rbmeta"
+	"github.com/aurorainfra/gw/rbstor"
+	"github.com/aurorainfra/gw/ributil"
 	"github.com/aws/aws-sdk-go/service/s3"
+
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/cidgravity"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/rbmeta"
-	"github.com/lotus-web3/ribs/rbstor"
-	"github.com/lotus-web3/ribs/ributil"
-	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("ribs:rbdeal")

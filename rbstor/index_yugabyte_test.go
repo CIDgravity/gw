@@ -3,8 +3,8 @@ package rbstor
 import (
 	"context"
 	"crypto/rand"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/test"
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/test"
 	"github.com/multiformats/go-multihash"
 	"github.com/test-go/testify/require"
 	"math/big"

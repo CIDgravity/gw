@@ -13,6 +13,11 @@ import (
 	"sort"
 	"time"
 
+	ribs2 "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/cidgravity"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/ributil"
+	types "github.com/aurorainfra/gw/ributil/boosttypes"
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	"github.com/filecoin-project/go-fil-markets/shared"
@@ -24,11 +29,6 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	ribs2 "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/cidgravity"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/ributil"
-	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/xerrors"
 )
 

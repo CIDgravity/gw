@@ -91,6 +91,11 @@ type YugabyteSqlConfig struct {
 	Db   string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"auroragw"`
 }
 
+type S3APIConfig struct {
+	Region   string `envconfig:"RIBS_S3API_REGION" default:"EU"`
+	BindAddr string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
+}
+
 type Config struct {
 	External    ExternalConfig
 	CidGravity  CidGravityConfig
@@ -99,6 +104,7 @@ type Config struct {
 	Deal        DealConfig
 	YugabyteCql YugabyteCqlConfig
 	YugabyteSql YugabyteSqlConfig
+	S3API       S3APIConfig
 	LogLevel    string `envconfig:"RIBS_LOGLEVEL"`
 }
 

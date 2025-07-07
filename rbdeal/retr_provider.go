@@ -3,9 +3,9 @@ package rbdeal
 import (
 	"context"
 	"errors"
+	"github.com/aurorainfra/gw/carlog"
 	"github.com/filecoin-project/lassie/pkg/types"
 	pool "github.com/libp2p/go-buffer-pool"
-	"github.com/lotus-web3/ribs/carlog"
 	"io"
 	"math/rand"
 	"net/http"
@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/ributil"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/lib/must"
@@ -20,8 +22,6 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipni/go-libipni/metadata"
 	"github.com/libp2p/go-libp2p/core/peer"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/ributil"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 )

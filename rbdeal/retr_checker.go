@@ -3,10 +3,10 @@ package rbdeal
 import (
 	"context"
 	"fmt"
+	"github.com/aurorainfra/gw/carlog"
 	"github.com/filecoin-project/lassie/pkg/types"
 	lru "github.com/hashicorp/golang-lru/v2"
 	pool "github.com/libp2p/go-buffer-pool"
-	"github.com/lotus-web3/ribs/carlog"
 	"github.com/multiformats/go-multiaddr"
 	"io"
 	"math/rand"
@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/ributil"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/lib/must"
 	"github.com/ipni/go-libipni/metadata"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/ributil"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 

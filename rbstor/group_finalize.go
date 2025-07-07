@@ -6,11 +6,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/carlog"
+	"github.com/aurorainfra/gw/ributil"
 	commcid "github.com/filecoin-project/go-fil-commcid"
 	"github.com/ipfs/go-cid"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/carlog"
-	"github.com/lotus-web3/ribs/ributil"
 	"golang.org/x/xerrors"
 )
 

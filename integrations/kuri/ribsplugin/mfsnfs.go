@@ -9,8 +9,8 @@ import (
 	"github.com/ipfs/boxo/mfs"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/willscott/go-nfs"
-	nfshelper "github.com/willscott/go-nfs/helpers"
-	"go.uber.org/fx"
+	// nfshelper "github.com/willscott/go-nfs/helpers"
+	// "go.uber.org/fx"
 	"golang.org/x/xerrors"
 	"io"
 	"net"
@@ -20,22 +20,24 @@ import (
 	"time"
 )
 
-func StartMfsNFSFs(lc fx.Lifecycle, mr *mfs.Root, ng format.DAGService) error {
-	listener, err := net.Listen("tcp", ":4499")
-	if err != nil {
-		return xerrors.Errorf("failed to listen: %w", err)
-	}
+// This is broken:
+// cannot use handler (variable of type *AuthHandler) as nfs.Handler value in argument to nfshelper.NewCachingHandler: *AuthHandler does not implement nfs.Handler (missing method InvalidateHandle)
+// func StartMfsNFSFs(lc fx.Lifecycle, mr *mfs.Root, ng format.DAGService) error {
+// 	listener, err := net.Listen("tcp", ":4499")
+// 	if err != nil {
+// 		return xerrors.Errorf("failed to listen: %w", err)
+// 	}
 
-	log.Infow("starting mfs nfs server", "addr", listener.Addr())
+// 	log.Infow("starting mfs nfs server", "addr", listener.Addr())
 
-	handler := &AuthHandler{&mfsNfsFs{mr, ng}}
-	cacheHelper := nfshelper.NewCachingHandler(handler, 1024)
-	go func() {
-		fmt.Printf("%v", nfs.Serve(listener, cacheHelper))
-	}()
+// 	handler := &AuthHandler{&mfsNfsFs{mr, ng}}
+// 	cacheHelper := nfshelper.NewCachingHandler(handler, 1024)
+// 	go func() {
+// 		fmt.Printf("%v", nfs.Serve(listener, cacheHelper))
+// 	}()
 
-	return nil
-}
+// 	return nil
+// }
 
 // AuthHandler returns a NFS backing that exposes a given file system in response to all mount requests.
 type AuthHandler struct {

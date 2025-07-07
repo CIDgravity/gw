@@ -4,7 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"github.com/lotus-web3/ribs"
+	"github.com/aurorainfra/gw"
 	"github.com/multiformats/go-multihash"
 	"github.com/yugabyte/gocql"
 	"net"

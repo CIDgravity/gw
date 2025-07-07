@@ -5,11 +5,13 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/yugabytedb"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/lib/pq"
-	"github.com/lotus-web3/ribs/configuration"
+
+	"github.com/aurorainfra/gw/configuration"
 )
 
 //go:embed migrations

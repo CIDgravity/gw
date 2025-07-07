@@ -7,9 +7,9 @@ import (
 	"os"
 	"path"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
 	"github.com/google/uuid"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
 	"github.com/mitchellh/go-homedir"
 	"golang.org/x/xerrors"
 )

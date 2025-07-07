@@ -6,21 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	types2 "github.com/filecoin-project/lotus/chain/types"
-	"github.com/lotus-web3/ribs/database"
-	"github.com/lotus-web3/ribs/ributil"
-	"github.com/multiformats/go-multiaddr"
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
+	"golang.org/x/xerrors"
+
 	"github.com/filecoin-project/go-fil-markets/storagemarket"
 	"github.com/filecoin-project/go-state-types/abi"
-	"github.com/google/uuid"
+	types2 "github.com/filecoin-project/lotus/chain/types"
 	"github.com/ipfs/go-cid"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
-	types "github.com/lotus-web3/ribs/ributil/boosttypes"
-	"golang.org/x/xerrors"
+	"github.com/multiformats/go-multiaddr"
+
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/database"
+	"github.com/aurorainfra/gw/ributil"
+	types "github.com/aurorainfra/gw/ributil/boosttypes"
 )
 
 type ribsDB struct {
@@ -142,12 +144,12 @@ func refreshGoodProviders() func(db database.Database) error {
 			return err
 		}
 		_, err = tx.Exec(`
-	CREATE TEMP TABLE good_providers_tmp AS SELECT 
+	CREATE TEMP TABLE good_providers_tmp AS SELECT
         p.id, p.ping_ok, p.boost_deals, p.booster_http, p.booster_bitswap,
         p.indexed_success, p.indexed_fail,
         p.retrprobe_success, p.retrprobe_fail, p.retrprobe_blocks, p.retrprobe_bytes,
         p.ask_price, p.ask_verif_price, p.ask_min_piece_size, p.ask_max_piece_size
-    FROM 
+    FROM
         good_providers_tmp_imm1 p
         LEFT JOIN sp_deal_stats ds ON p.id = ds.sp_id
         LEFT JOIN sp_retr_stats rs ON p.id = rs.sp_id
@@ -1290,9 +1292,9 @@ func (r *ribsDB) GetRetrievalCheckCandidates() ([]RetrCheckCandidate, error) {
 	now := time.Now().Unix()
 
 	rows, err := r.db.Query(`
-		SELECT uuid, provider_addr, group_id, verified, keep_unsealed FROM deals 
-		WHERE sealed = 1 
-		AND failed = 0 
+		SELECT uuid, provider_addr, group_id, verified, keep_unsealed FROM deals
+		WHERE sealed = 1
+		AND failed = 0
 		AND last_retrieval_check <= $1`,
 		now-secondsIn6Hours)
 	if err != nil {
@@ -1373,7 +1375,7 @@ type RetrCandidate struct {
 
 func (r *ribsDB) GetRetrievalCandidates(group iface.GroupKey) ([]RetrCandidate, error) {
 	rows, err := r.db.Query(`
-		SELECT uuid, provider_addr, verified, keep_unsealed, last_retrieval_check_success FROM deals 
+		SELECT uuid, provider_addr, verified, keep_unsealed, last_retrieval_check_success FROM deals
 		WHERE group_id = $1 AND sealed = 1 AND failed = 0 order by retrieval_probe_prev_ttfb_ms asc, last_retrieval_check_success desc, keep_unsealed desc`,
 		group)
 	if err != nil {

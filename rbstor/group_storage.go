@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
 	"golang.org/x/xerrors"
 )
 

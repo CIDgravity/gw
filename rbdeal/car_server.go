@@ -14,10 +14,10 @@ import (
 
 	"github.com/mitchellh/go-homedir"
 
+	"github.com/aurorainfra/gw/configuration"
+	types "github.com/aurorainfra/gw/ributil/boosttypes"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
-	"github.com/lotus-web3/ribs/configuration"
-	types "github.com/lotus-web3/ribs/ributil/boosttypes"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
 )

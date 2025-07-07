@@ -10,7 +10,7 @@ import (
 
 	"github.com/ipfs/boxo/ipld/merkledag"
 
-	"github.com/lotus-web3/ribs"
+	"github.com/aurorainfra/gw"
 	//"golang.org/x/xerrors"
 )
 

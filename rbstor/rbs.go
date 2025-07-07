@@ -3,9 +3,6 @@ package rbstor
 import (
 	"context"
 	"fmt"
-	"github.com/filecoin-project/lotus/lib/must"
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/database"
 	"io"
 	"os"
 	"runtime"
@@ -14,13 +11,18 @@ import (
 	"sync"
 	"sync/atomic"
 
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/xerrors"
+
+	"github.com/filecoin-project/lotus/lib/must"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
-	iface "github.com/lotus-web3/ribs"
-	_ "github.com/mattn/go-sqlite3"
 	mh "github.com/multiformats/go-multihash"
-	"golang.org/x/xerrors"
+
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
+	"github.com/aurorainfra/gw/database"
 )
 
 var log = logging.Logger("ribs:rbs")

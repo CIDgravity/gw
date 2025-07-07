@@ -6,10 +6,14 @@ import (
 
 const locationXml = `
 <?xml version="1.0" encoding="UTF-8"?>
-<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">EU</LocationConstraint>
+<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{{.Region}}</LocationConstraint>
 `
 
 var locationTemplate = template.Must(template.New("location").Parse(locationXml))
+
+type locationResponseParams struct {
+	Region string
+}
 
 const listObjectsXml = `
 <?xml version="1.0" encoding="UTF-8"?>

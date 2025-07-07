@@ -3,12 +3,14 @@ package rbstor
 import (
 	"context"
 	"database/sql"
-	"github.com/lotus-web3/ribs/database"
+
+	"golang.org/x/xerrors"
 
 	commcid "github.com/filecoin-project/go-fil-commcid"
 	"github.com/ipfs/go-cid"
-	iface "github.com/lotus-web3/ribs"
-	"golang.org/x/xerrors"
+
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/database"
 )
 
 type rbsDB struct {
@@ -306,13 +308,13 @@ func (r *rbsDB) CountNonOffloadedGroups() (count int, err error) {
 
 func (r *rbsDB) GetOffloadCandidate() (id iface.GroupKey, err error) {
 	err = r.db.QueryRow(`
-		SELECT id 
-		FROM groups 
-		LEFT JOIN offloads ON groups.id = offloads.group_id 
-		WHERE offloads.group_id IS NULL AND g_state IN (3, 4) 
-		ORDER BY 
-			CASE WHEN g_state = 4 THEN 0 ELSE 1 END, 
-			id 
+		SELECT id
+		FROM groups
+		LEFT JOIN offloads ON groups.id = offloads.group_id
+		WHERE offloads.group_id IS NULL AND g_state IN (3, 4)
+		ORDER BY
+			CASE WHEN g_state = 4 THEN 0 ELSE 1 END,
+			id
 		LIMIT 1
 	`).Scan(&id)
 	if err != nil {

@@ -14,9 +14,9 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
+	iface "github.com/aurorainfra/gw"
+	"github.com/aurorainfra/gw/configuration"
 	logging "github.com/ipfs/go-log/v2"
-	iface "github.com/lotus-web3/ribs"
-	"github.com/lotus-web3/ribs/configuration"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"

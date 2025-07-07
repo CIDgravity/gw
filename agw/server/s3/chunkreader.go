@@ -14,18 +14,27 @@ type ChunkReader struct {
 	done   bool
 }
 
-func newChunkReader(source io.Reader) *ChunkReader {
+func NewChunkReader(source io.Reader) *ChunkReader {
 	return &ChunkReader{source: bufio.NewReader(source)}
 }
 
-// todo validate chunk signatures
+// TODO validate chunk signatures?
 func (cr *ChunkReader) Read(out []byte) (n int, err error) {
 	if cr.done {
 		return 0, io.EOF
 	}
 
 	for cr.remain == 0 {
-		// todo consider optimization by removing string operations
+		// TODO optimize chunck size reading
+		//      there is no reason whatsoever to read a string here;
+		//      all we need to do is read the hex digits one byte at a time
+		//      and build the length in place
+		//      this may sound like a micro-optimization, but it could make
+		//      a difference in a loaded server as
+		//      1) it is a lot more efficient cpu wise
+		//      2) it avoids allocating strings and putting pressure on the garbage
+		//         collector
+		//      3) it is not hard to implement or lead to unreadable code.
 		line, err := cr.source.ReadString('\n')
 		if err != nil {
 			return 0, fmt.Errorf("reading chunk size: %w", err)

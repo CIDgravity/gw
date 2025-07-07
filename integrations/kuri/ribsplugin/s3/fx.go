@@ -3,6 +3,9 @@ package s3
 import (
 	"context"
 	"errors"
+
+	"go.uber.org/fx"
+
 	"github.com/filecoin-project/go-hamt-ipld"
 	"github.com/ipfs/boxo/blockservice"
 	chunk "github.com/ipfs/boxo/chunker"
@@ -11,28 +14,20 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/ipfs/go-datastore"
 	cbor "github.com/ipfs/go-ipld-cbor"
-	format "github.com/ipfs/go-ipld-format"
 	logging "github.com/ipfs/go-log"
 	"github.com/ipfs/kubo/core/node/helpers"
 	"github.com/ipfs/kubo/repo"
-	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
-	"go.uber.org/fx"
-	"sync"
+
+	agw_s3 "github.com/aurorainfra/gw/agw/server/s3"
+	"github.com/aurorainfra/gw/configuration"
+	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
 )
 
-var log = logging.Logger("ribs:plugin:s3")
+var log = logging.Logger("kuri/s3")
 
-type Context struct {
-	index       Index
-	blockstore  *ribsbstore.Blockstore
-	dag         format.DAGService
-	lctx        context.Context
-	splitterGen chunk.SplitterGen
-	repo        repo.Repo
-}
+func MakeS3Server(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore) (*agw_s3.S3Server, error) {
+	log.Info("Starting S3 plugin")
 
-func StartS3Plugin(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore) error {
-	log.Infow("Starting S3 plugin")
 	lctx := helpers.LifecycleCtx(mctx, lc)
 	bsv := blockservice.New(rbs, offline.Exchange(rbs))
 	dag := merkledag.NewDAGService(bsv)
@@ -40,24 +35,24 @@ func StartS3Plugin(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs
 
 	node, err := loadHamtNode(lctx, repo, ipldStore)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	s3Context := &Context{
-		index: Index{
-			node,
-			sync.RWMutex{},
-			ipldStore,
+	cfg := configuration.GetConfig()
+	region := &Region{
+		name: cfg.S3API.Region,
+		index: &Index{
+			node:  node,
+			store: ipldStore,
 		},
 
 		blockstore:  rbs,
 		dag:         dag,
-		lctx:        lctx,
 		splitterGen: chunk.SizeSplitterGen(1024 * 1024),
 		repo:        repo,
 	}
-	startS3Server(lc, s3Context)
-	return nil
+
+	return agw_s3.NewS3Server(region), nil
 }
 
 func loadHamtNode(ctx context.Context, repo repo.Repo, store cbor.IpldStore) (*hamt.Node, error) {

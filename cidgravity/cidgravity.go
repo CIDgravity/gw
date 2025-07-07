@@ -1,8 +1,8 @@
 package cidgravity
 
 import (
+	"github.com/aurorainfra/gw/configuration"
 	logging "github.com/ipfs/go-log/v2"
-	"github.com/lotus-web3/ribs/configuration"
 	"golang.org/x/sync/semaphore"
 	"sync"
 )

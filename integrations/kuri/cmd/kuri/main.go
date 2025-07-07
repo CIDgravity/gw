@@ -7,9 +7,9 @@ import (
 	"github.com/ipfs/kubo/cmd/ipfs/kubo"
 	"github.com/ipfs/kubo/plugin/loader"
 
-	"github.com/lotus-web3/ribs/configuration"
-	"github.com/lotus-web3/ribs/ributil"
-	kuboribs "github.com/lotus_web3/ribs/integrations/kuri/ribsplugin"
+	"github.com/aurorainfra/gw/configuration"
+	kuboribs "github.com/aurorainfra/gw/integrations/kuri/ribsplugin"
+	"github.com/aurorainfra/gw/ributil"
 )
 
 func main() {
@@ -21,9 +21,9 @@ func mainRet() (exitCode int) {
 	defer mw()
 
 	if err := configuration.LoadConfig(); err != nil {
-		fmt.Fprintln(os.Stderr, "Configuration load failed: %w\n", err)
+		fmt.Fprintln(os.Stderr, "Configuration load failed: %w", err)
 	} else {
-		fmt.Fprintln(os.Stderr, "Configuration loaded\n")
+		fmt.Fprintln(os.Stderr, "Configuration loaded")
 	}
 	return kubo.Start(kubo.BuildEnv(func(loader *loader.PluginLoader) error {
 		return loader.Load(kuboribs.Plugin)

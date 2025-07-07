@@ -3,9 +3,11 @@ package rbdeal
 import (
 	"context"
 	"fmt"
-	iface "github.com/lotus-web3/ribs"
-	"golang.org/x/xerrors"
 	"io"
+
+	"golang.org/x/xerrors"
+
+	iface "github.com/aurorainfra/gw"
 )
 
 type CarSource func(context.Context, iface.GroupKey, func(int64), io.Writer) error

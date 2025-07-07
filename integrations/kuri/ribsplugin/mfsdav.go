@@ -16,12 +16,12 @@ import (
 	"golang.org/x/net/webdav"
 	"golang.org/x/xerrors"
 
+	"github.com/aurorainfra/gw"
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	ft "github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/boxo/mfs"
 	"github.com/ipfs/go-cid"
 	ipld "github.com/ipfs/go-ipld-format"
-	"github.com/lotus-web3/ribs"
 	mh "github.com/multiformats/go-multihash"
 )
 
@@ -150,7 +150,6 @@ func (m *mfsDavFile) Stat() (fs.FileInfo, error) {
 }
 
 func (m *mfsDavFile) Write(p []byte) (n int, err error) {
-	return m.mfd.Write(p)
 	n, err = m.mfd.Write(p)
 	log.Debugw("mfsDavFile.Write", "path", m.path, "size", n)
 	return
