@@ -3,7 +3,6 @@ package kuboribs
 import (
 	"context"
 	"fmt"
-
 	"os"
 
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
@@ -31,6 +30,7 @@ import (
 	"golang.org/x/xerrors"
 
 	"github.com/aurorainfra/gw"
+	agw_metrics "github.com/aurorainfra/gw/agw/server/metrics"
 	agw_s3 "github.com/aurorainfra/gw/agw/server/s3"
 	"github.com/aurorainfra/gw/configuration"
 	"github.com/aurorainfra/gw/database"
@@ -88,6 +88,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 		fx.Decorate(RibsFiles),
 
 		fx.Invoke(StartMfsDav),
+		fx.Invoke(agw_metrics.StartPrometheusServer),
 		fx.Invoke(agw_s3.StartS3Server),
 		//fx.Invoke(StartMfsNFSFs),
 		fx.Invoke(StartMeta),

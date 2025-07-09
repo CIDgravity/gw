@@ -4,14 +4,24 @@ import (
 	"context"
 	"sync/atomic"
 
-	iface "github.com/aurorainfra/gw"
 	"github.com/multiformats/go-multihash"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	iface "github.com/aurorainfra/gw"
+)
+
+const (
+	write string = "write"
+	read  string = "read"
 )
 
 type MeteredIndex struct {
 	sub iface.Index
 
-	reads, writes int64
+	counters *prometheus.CounterVec
+	reads    int64
+	writes   int64
 }
 
 func (m *MeteredIndex) Close() error {
@@ -23,17 +33,17 @@ func (m *MeteredIndex) EstimateSize(ctx context.Context) (int64, error) {
 }
 
 func (m *MeteredIndex) GetGroups(ctx context.Context, mh []multihash.Multihash, cb func(cidx int, gk iface.GroupKey) (more bool, err error)) error {
-	atomic.AddInt64(&m.reads, int64(len(mh)))
+	m.incrementCounter("GetGroups", read)
 	return m.sub.GetGroups(ctx, mh, cb)
 }
 
 func (m *MeteredIndex) GetSizes(ctx context.Context, mh []multihash.Multihash, cb func([]int32) error) error {
-	atomic.AddInt64(&m.reads, int64(len(mh)))
+	m.incrementCounter("GetSizes", read)
 	return m.sub.GetSizes(ctx, mh, cb)
 }
 
 func (m *MeteredIndex) AddGroup(ctx context.Context, mh []multihash.Multihash, sizes []int32, group iface.GroupKey) error {
-	atomic.AddInt64(&m.writes, int64(len(mh)))
+	m.incrementCounter("AddGroup", write)
 	return m.sub.AddGroup(ctx, mh, sizes, group)
 }
 
@@ -42,12 +52,32 @@ func (m *MeteredIndex) Sync(ctx context.Context) error {
 }
 
 func (m *MeteredIndex) DropGroup(ctx context.Context, mh []multihash.Multihash, group iface.GroupKey) error {
-	atomic.AddInt64(&m.writes, int64(len(mh)))
+	m.incrementCounter("DropGroup", write)
 	return m.sub.DropGroup(ctx, mh, group)
 }
 
+func (m *MeteredIndex) incrementCounter(operation string, t string) {
+	switch t {
+	case read:
+		atomic.AddInt64(&m.reads, 1)
+	case write:
+		atomic.AddInt64(&m.writes, 1)
+	}
+
+	m.counters.With(prometheus.Labels{
+		"operation": operation,
+		"type":      t,
+	}).Inc()
+}
+
 func NewMeteredIndex(sub iface.Index) *MeteredIndex {
-	return &MeteredIndex{sub: sub}
+	return &MeteredIndex{sub: sub,
+		counters: promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "agw",
+			Subsystem: "group_index",
+			Name:      "operations_total",
+		}, []string{"operation", "type"}),
+	}
 }
 
 var _ iface.Index = &MeteredIndex{}

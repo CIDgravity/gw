@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync/atomic"
 
-	iface "github.com/aurorainfra/gw"
 	"golang.org/x/xerrors"
+
+	iface "github.com/aurorainfra/gw"
 )
 
 func (r *rbs) StorageDiag() iface.RBSDiag {

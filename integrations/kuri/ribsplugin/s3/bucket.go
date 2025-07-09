@@ -34,8 +34,14 @@ type Bucket struct {
 	region *Region
 }
 
+var _ agw_iface.Bucket = (*Bucket)(nil)
+
 func (b *Bucket) objectKey(name string) string {
 	return fmt.Sprintf("/%s/%s", b.name, name)
+}
+
+func (b *Bucket) Name() string {
+	return b.name
 }
 
 func (b *Bucket) List(ctx context.Context) ([]string, error) {

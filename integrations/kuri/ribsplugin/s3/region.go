@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	chunk "github.com/ipfs/boxo/chunker"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
@@ -15,6 +16,7 @@ import (
 	"github.com/ipfs/kubo/repo"
 
 	agw_iface "github.com/aurorainfra/gw/agw/iface"
+	"github.com/aurorainfra/gw/agw/server/metrics"
 	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
 )
 
@@ -25,6 +27,9 @@ type Region struct {
 	dag         format.DAGService
 	splitterGen chunk.SplitterGen
 	repo        repo.Repo
+
+	mx      sync.Mutex
+	buckets map[string]agw_iface.Bucket
 }
 
 var _ agw_iface.Region = (*Region)(nil)
@@ -44,10 +49,19 @@ func (r *Region) CreateBucket(ctx context.Context, name string) error {
 }
 
 func (r *Region) GetBucket(ctx context.Context, name string) (agw_iface.Bucket, error) {
-	return &Bucket{
-		name:   name,
-		region: r,
-	}, nil
+	r.mx.Lock()
+	defer r.mx.Unlock()
+
+	b, ok := r.buckets[name]
+	if !ok {
+		b := metrics.NewMeteredBucket(&Bucket{
+			name:   name,
+			region: r,
+		})
+		r.buckets[name] = b
+	}
+
+	return b, nil
 }
 
 func (r *Region) DeleteBucket(ctx context.Context, name string) error {

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/fx"
 	"go.uber.org/zap/zapcore"
 
@@ -42,6 +45,46 @@ func requestClient(r *http.Request) string {
 	return cli
 }
 
+func RequestMetrics(next http.Handler) http.Handler {
+	reqTotal := promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "auroragw",
+		Subsystem: "s3",
+		Name:      "http_requests_total",
+		Help:      "Total number of S3 HTTP requests.",
+	},
+		[]string{"code", "method"},
+	)
+	reqDuration := promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "agw",
+		Subsystem: "s3",
+		Name:      "http_request_duration_seconds",
+		Help:      "Duration of S3 HTTP requests.",
+		Buckets:   prometheus.DefBuckets,
+	},
+		[]string{"code", "method"},
+	)
+	inFlight := promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "agw",
+		Subsystem: "s3",
+		Name:      "http_requests_in_flight",
+		Help:      "Current number of S3 HTTP requests in flight.",
+	})
+	durationToHeader := promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "agw",
+		Subsystem: "s3",
+		Name:      "http_request_duration_to_header_seconds",
+		Help:      "Duration until the response headers for S3 requests are written",
+		Buckets:   prometheus.DefBuckets,
+	},
+		[]string{"code", "method"})
+
+	next = promhttp.InstrumentHandlerCounter(reqTotal, next)
+	next = promhttp.InstrumentHandlerDuration(reqDuration, next)
+	next = promhttp.InstrumentHandlerInFlight(inFlight, next)
+	next = promhttp.InstrumentHandlerTimeToWriteHeader(durationToHeader, next)
+	return next
+}
+
 func StartS3Server(lc fx.Lifecycle, srv *S3Server) {
 	log.Info("Starting S3 server")
 
@@ -54,7 +97,7 @@ func StartS3Server(lc fx.Lifecycle, srv *S3Server) {
 	cfg := configuration.GetConfig()
 	httpSrv := &http.Server{
 		Addr:    cfg.S3API.BindAddr,
-		Handler: RequestLogger(mux),
+		Handler: RequestMetrics(RequestLogger(mux)),
 	}
 
 	lc.Append(fx.Hook{

@@ -96,6 +96,10 @@ type S3APIConfig struct {
 	BindAddr string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
 }
 
+type PrometheusConfig struct {
+	Port int `envconfig:"RIBS_PROMETHEUS_PORT" default:"2112"`
+}
+
 type Config struct {
 	External    ExternalConfig
 	CidGravity  CidGravityConfig
@@ -105,6 +109,7 @@ type Config struct {
 	YugabyteCql YugabyteCqlConfig
 	YugabyteSql YugabyteSqlConfig
 	S3API       S3APIConfig
+	Prometheus  PrometheusConfig
 	LogLevel    string `envconfig:"RIBS_LOGLEVEL"`
 }
 

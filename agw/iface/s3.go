@@ -16,6 +16,8 @@ type Region interface {
 }
 
 type Bucket interface {
+	Name() string
+
 	// CRUD
 	List(ctx context.Context) ([]string, error)
 	Put(ctx context.Context, name string, input io.Reader) (Stat, error)
