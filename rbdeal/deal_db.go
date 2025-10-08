@@ -9,6 +9,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/database/sqldb"
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/google/uuid"
 	"golang.org/x/xerrors"
 
@@ -18,25 +21,22 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multiaddr"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/database"
-	"github.com/aurorainfra/gw/ributil"
-	types "github.com/aurorainfra/gw/ributil/boosttypes"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
+	types "github.com/CIDgravity/filecoin-gateway/ributil/boosttypes"
 )
 
 type ribsDB struct {
-	db database.Database
+	db sqldb.Database
 
-	dealSummaryCq *ributil.CachedQuery[iface.DealSummary]
-	reachableCq   *ributil.CachedQuery[[]iface.ProviderMeta]
+	dealSummaryCq *ributil.CachedQuery[iface2.DealSummary]
+	reachableCq   *ributil.CachedQuery[[]iface2.ProviderMeta]
 
 	lastAnalyzed time.Time
 }
 
 // TODO: MIGRATE offloads_s3 to external_path !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-func openRibsDB(db database.Database) (*ribsDB, error) {
+func openRibsDB(db sqldb.Database) (*ribsDB, error) {
 	rd := &ribsDB{
 		db: db,
 
@@ -50,8 +50,8 @@ var analyzeInterval = 6 * time.Hour
 
 func (r *ribsDB) startDB() error {
 
-	r.dealSummaryCq = ributil.NewCachedQuery[iface.DealSummary](1*time.Minute, r.dealSummary)
-	r.reachableCq = ributil.NewCachedQuery[[]iface.ProviderMeta](1*time.Minute, r.reachableProviders)
+	r.dealSummaryCq = ributil.NewCachedQuery[iface2.DealSummary](1*time.Minute, r.dealSummary)
+	r.reachableCq = ributil.NewCachedQuery[[]iface2.ProviderMeta](1*time.Minute, r.reachableProviders)
 
 	if err := timeDBOp("refresh_bad_providers_new_reject", r.db, refreshViewTable("bad_providers_new_reject")); err != nil {
 		return err
@@ -83,7 +83,7 @@ func (r *ribsDB) startDB() error {
 			}
 
 			if time.Since(r.lastAnalyzed) > analyzeInterval {
-				_ = timeDBOp("analyze", r.db, func(db database.Database) error {
+				_ = timeDBOp("analyze", r.db, func(db sqldb.Database) error {
 					_, err := db.Exec("ANALYZE")
 					return err
 				})
@@ -95,15 +95,15 @@ func (r *ribsDB) startDB() error {
 	return nil
 }
 
-func timeDBOp(name string, db database.Database, f func(db database.Database) error) error {
+func timeDBOp(name string, db sqldb.Database, f func(db sqldb.Database) error) error {
 	start := time.Now()
 	err := f(db)
 	log.Debugw("DB op time", "name", name, "took", time.Since(start), "error", err)
 	return err
 }
 
-func refreshViewTable(name string) func(db database.Database) error {
-	return func(db database.Database) error {
+func refreshViewTable(name string) func(db sqldb.Database) error {
+	return func(db sqldb.Database) error {
 		tempTable := name + "_tmp"
 		viewTable := name + "_view"
 		targetTable := name
@@ -118,8 +118,8 @@ func refreshViewTable(name string) func(db database.Database) error {
 	}
 }
 
-func refreshGoodProviders() func(db database.Database) error {
-	return func(db database.Database) error {
+func refreshGoodProviders() func(db sqldb.Database) error {
+	return func(db sqldb.Database) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -189,7 +189,7 @@ type dealProvider struct {
 	ask_verif_price float64
 }
 
-func (r *ribsDB) SelectDealProviders(group iface.GroupKey, pieceSize int64, verified bool, maxPrice float64) ([]dealProvider, error) {
+func (r *ribsDB) SelectDealProviders(group iface2.GroupKey, pieceSize int64, verified bool, maxPrice float64) ([]dealProvider, error) {
 	// only reachable, with boost_deals, only ones that don't have deals for this group
 	// 6 at random
 	// 2 of them with booster_http
@@ -317,7 +317,7 @@ func (r *ribsDB) SelectDealProviders(group iface.GroupKey, pieceSize int64, veri
 	return out, nil
 }
 
-func (r *ribsDB) ReachableProviders() []iface.ProviderMeta {
+func (r *ribsDB) ReachableProviders() []iface2.ProviderMeta {
 	rp, err := r.reachableCq.Get()
 	if err != nil {
 		log.Errorw("getting reachable providers", "error", err)
@@ -326,7 +326,7 @@ func (r *ribsDB) ReachableProviders() []iface.ProviderMeta {
 	return rp
 }
 
-func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
+func (r *ribsDB) reachableProviders() ([]iface2.ProviderMeta, error) {
 	res, err := r.db.Query(`select id, ping_ok, boost_deals, booster_http, booster_bitswap,
        indexed_success, indexed_fail,
        ask_price, ask_verif_price, ask_min_piece_size, ask_max_piece_size
@@ -337,10 +337,10 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 		return nil, err
 	}
 
-	out := make([]iface.ProviderMeta, 0)
+	out := make([]iface2.ProviderMeta, 0)
 
 	for res.Next() {
-		var pm iface.ProviderMeta
+		var pm iface2.ProviderMeta
 		err := res.Scan(&pm.ID, &pm.PingOk, &pm.BoostDeals, &pm.BoosterHttp, &pm.BoosterBitswap,
 			&pm.IndexedSuccess, &pm.IndexedFail, // &pm.DealAttempts, &pm.DealSuccess, &pm.DealFail,
 			&pm.AskPrice, &pm.AskVerifiedPrice, &pm.AskMinPieceSize, &pm.AskMaxPieceSize)
@@ -456,7 +456,7 @@ func (r *ribsDB) reachableProviders() ([]iface.ProviderMeta, error) {
 	return out, nil
 }
 
-func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, int, error) {
+func (r *ribsDB) GetNonFailedDealCount(group iface2.GroupKey) (int, int, error) {
 	var count int
 	var unretrievable int
 	err := r.db.QueryRow(`select count(*), count(*) filter ( where  last_retrieval_check > (last_retrieval_check_success + 3600*24) and retrieval_probes_fail > 10) from deals where group_id = $1 and failed = 0`, group).Scan(&count, &unretrievable)
@@ -469,7 +469,7 @@ func (r *ribsDB) GetNonFailedDealCount(group iface.GroupKey) (int, int, error) {
 
 type dbDealInfo struct {
 	DealUUID string
-	GroupID  iface.GroupKey
+	GroupID  iface2.GroupKey
 
 	ClientAddr   string
 	ProviderAddr int64
@@ -800,11 +800,11 @@ func (r *ribsDB) UpdateExpiredDeal(id string) error {
 	return nil
 }
 
-func (r *ribsDB) DealSummary() (iface.DealSummary, error) {
+func (r *ribsDB) DealSummary() (iface2.DealSummary, error) {
 	return r.dealSummaryCq.Get()
 }
 
-func (r *ribsDB) dealSummary() (iface.DealSummary, error) {
+func (r *ribsDB) dealSummary() (iface2.DealSummary, error) {
 
 	res, err := r.db.Query(`WITH deal_summary AS (
     SELECT
@@ -836,26 +836,26 @@ FROM
     deal_summary
 ;`)
 	if err != nil {
-		return iface.DealSummary{}, xerrors.Errorf("finding deal summary: %w", err)
+		return iface2.DealSummary{}, xerrors.Errorf("finding deal summary: %w", err)
 	}
 	defer res.Close()
 
-	var ds iface.DealSummary
+	var ds iface2.DealSummary
 
 	if res.Next() {
 		err := res.Scan(&ds.NonFailed, &ds.TotalDataSize, &ds.TotalDealSize,
 			&ds.StoredDataSize, &ds.StoredDealSize,
 			&ds.InProgress, &ds.Done, &ds.Failed)
 		if err != nil {
-			return iface.DealSummary{}, xerrors.Errorf("scanning group: %w", err)
+			return iface2.DealSummary{}, xerrors.Errorf("scanning group: %w", err)
 		}
 	}
 
 	return ds, nil
 }
 
-func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
-	var pInfo iface.ProviderInfo
+func (r *ribsDB) ProviderInfo(providerID int64) (iface2.ProviderInfo, error) {
+	var pInfo iface2.ProviderInfo
 	err := r.db.QueryRow(`
 		SELECT id, ping_ok, boost_deals, booster_http, booster_bitswap,
 		indexed_success, indexed_fail, ask_price, ask_verif_price,
@@ -879,7 +879,8 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 		var dealUuid string
 		var provider int64
 		var sealed, failed, rejected bool
-		var startEpoch, endEpoch, startTime int64
+		var startEpoch, endEpoch int64
+		var startTime time.Time
 		var status *string
 		var sealStatus *string
 		var errMsg *string
@@ -893,7 +894,7 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 			return pInfo, xerrors.Errorf("scanning deal: %w", err)
 		}
 
-		pInfo.RecentDeals = append(pInfo.RecentDeals, iface.DealMeta{
+		pInfo.RecentDeals = append(pInfo.RecentDeals, iface2.DealMeta{
 			UUID:       dealUuid,
 			Provider:   provider,
 			Sealed:     sealed,
@@ -901,7 +902,7 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 			Rejected:   rejected,
 			StartEpoch: startEpoch,
 			EndEpoch:   endEpoch,
-			StartTime:  startTime,
+			StartTime:  startTime.Unix(),
 			Status:     DerefOr(status, ""),
 			SealStatus: DerefOr(sealStatus, ""),
 			Error:      DerefOr(errMsg, ""),
@@ -913,10 +914,10 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface.ProviderInfo, error) {
 	}
 
 	if err := res.Err(); err != nil {
-		return iface.ProviderInfo{}, err
+		return iface2.ProviderInfo{}, err
 	}
 	if err := res.Close(); err != nil {
-		return iface.ProviderInfo{}, err
+		return iface2.ProviderInfo{}, err
 	}
 
 	return pInfo, nil
@@ -929,7 +930,7 @@ type dealParams struct {
 	CarSize   int64
 }
 
-func (r *ribsDB) GetDealParams(ctx context.Context, id iface.GroupKey) (out dealParams, err error) {
+func (r *ribsDB) GetDealParams(ctx context.Context, id iface2.GroupKey) (out dealParams, err error) {
 	res, err := r.db.QueryContext(ctx, "select commp, root, piece_size, car_size from groups where id = $1", id)
 	if err != nil {
 		return dealParams{}, xerrors.Errorf("finding deal params: %w", err)
@@ -1067,8 +1068,8 @@ func (r *ribsDB) UpdateProviderStorageAsk(provider int64, ask *storagemarket.Sto
 	return nil
 }
 
-func (r *ribsDB) GroupDeals(gk iface.GroupKey) ([]iface.DealMeta, error) {
-	dealMeta := make([]iface.DealMeta, 0)
+func (r *ribsDB) GroupDeals(gk iface2.GroupKey) ([]iface2.DealMeta, error) {
+	dealMeta := make([]iface2.DealMeta, 0)
 
 	res, err := r.db.Query(`select uuid, provider_addr, sealed, failed, rejected, deal_id,
 										sp_status, sp_sealing_status, error_msg, sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch,
@@ -1102,7 +1103,7 @@ func (r *ribsDB) GroupDeals(gk iface.GroupKey) ([]iface.DealMeta, error) {
 			return nil, xerrors.Errorf("scanning deal: %w", err)
 		}
 
-		dealMeta = append(dealMeta, iface.DealMeta{
+		dealMeta = append(dealMeta, iface2.DealMeta{
 			UUID:       dealUuid,
 			Provider:   provider,
 			Sealed:     sealed,
@@ -1177,7 +1178,7 @@ func (r *ribsDB) FillDealSectorNumber(uuid string, sectorNum abi.SectorNumber) e
 
 type GroupDealStats struct {
 	GroupID        int64
-	State          iface.GroupState
+	State          iface2.GroupState
 	TotalDeals     int64
 	PublishedDeals int64
 	SealedDeals    int64
@@ -1348,8 +1349,8 @@ func (r *ribsDB) RecordRetrievalCheckResult(dealId string, res RetrievalResult) 
 	//todo
 	_, err := r.db.Exec(`
         UPDATE deals SET
-            last_retrieval_check = now(),
-            last_retrieval_check_success = CASE WHEN $1 THEN now() ELSE last_retrieval_check_success END,
+            last_retrieval_check = extract(epoch from now())::bigint,
+            last_retrieval_check_success = CASE WHEN $1 THEN extract(epoch from now())::bigint ELSE last_retrieval_check_success END,
             retrieval_probe_prev_ms = $2,
             retrieval_probe_prev_ttfb_ms = $3,
             retrieval_probes_success = retrieval_probes_success + $4,
@@ -1373,7 +1374,7 @@ type RetrCandidate struct {
 	LastRetrievalCheckSuccess int64
 }
 
-func (r *ribsDB) GetRetrievalCandidates(group iface.GroupKey) ([]RetrCandidate, error) {
+func (r *ribsDB) GetRetrievalCandidates(group iface2.GroupKey) ([]RetrCandidate, error) {
 	rows, err := r.db.Query(`
 		SELECT uuid, provider_addr, verified, keep_unsealed, last_retrieval_check_success FROM deals
 		WHERE group_id = $1 AND sealed = 1 AND failed = 0 order by retrieval_probe_prev_ttfb_ms asc, last_retrieval_check_success desc, keep_unsealed desc`,
@@ -1489,7 +1490,7 @@ func (r *ribsDB) NeedExternalModule() (*string, error) {
 
 	return &module, nil
 }
-func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error) {
+func (r *ribsDB) GetExternalPath(group iface2.GroupKey) (*string, *string, error) {
 	var module, path string
 	err := r.db.QueryRow(`select module, path from external_path where group_id = $1`, group).Scan(&module, &path)
 	if err != nil {
@@ -1501,7 +1502,7 @@ func (r *ribsDB) GetExternalPath(group iface.GroupKey) (*string, *string, error)
 
 	return &module, &path, nil
 }
-func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path string) error {
+func (r *ribsDB) AddExternalPath(group iface2.GroupKey, module string, path string) error {
 	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values ($1, $2, $3)`, group, module, path)
 	if err != nil {
 		return xerrors.Errorf("XYZ: exec: %w", err)
@@ -1509,13 +1510,21 @@ func (r *ribsDB) AddExternalPath(group iface.GroupKey, module string, path strin
 
 	return nil
 }
-func (r *ribsDB) DropExternalPath(group iface.GroupKey) error {
+func (r *ribsDB) DropExternalPath(group iface2.GroupKey) error {
 	_, err := r.db.Exec(`delete from external_path where group_id = $1`, group)
 	if err != nil {
 		return xerrors.Errorf("XYZ: exec: %w", err)
 	}
 
 	return nil
+}
+
+func (r *ribsDB) GetStagingGroupCount() (count int, err error) {
+	err = r.db.QueryRow(`SELECT COUNT(*) FROM external_path`).Scan(&count)
+	if err != nil {
+		return 0, xerrors.Errorf("counting staging groups: %w", err)
+	}
+	return
 }
 
 func (r *ribsDB) LastTotalUploadedBytes() (int64, error) {
@@ -1532,7 +1541,7 @@ func (r *ribsDB) LastTotalUploadedBytes() (int64, error) {
 	return *b, nil
 }
 
-func (r *ribsDB) GetRetrievableDealStats() ([]iface.DealCountStats, error) {
+func (r *ribsDB) GetRetrievableDealStats() ([]iface2.DealCountStats, error) {
 	query := `SELECT
     COALESCE(retrievable_count, 0) AS "X retrievable deals",
     COUNT(*) AS "Number of groups"
@@ -1563,9 +1572,9 @@ ORDER BY
 	}
 	defer rows.Close()
 
-	var stats []iface.DealCountStats
+	var stats []iface2.DealCountStats
 	for rows.Next() {
-		var stat iface.DealCountStats
+		var stat iface2.DealCountStats
 		err := rows.Scan(&stat.Count, &stat.Groups)
 		if err != nil {
 			return nil, xerrors.Errorf("scanning deal stats: %w", err)
@@ -1580,7 +1589,7 @@ ORDER BY
 	return stats, nil
 }
 
-func (r *ribsDB) GetSealedDealStats() ([]iface.DealCountStats, error) {
+func (r *ribsDB) GetSealedDealStats() ([]iface2.DealCountStats, error) {
 	query := `SELECT
     COALESCE(retrievable_count, 0) AS "X sealed deals",
     COUNT(*) AS "Number of groups"
@@ -1610,9 +1619,9 @@ ORDER BY
 	}
 	defer rows.Close()
 
-	var stats []iface.DealCountStats
+	var stats []iface2.DealCountStats
 	for rows.Next() {
-		var stat iface.DealCountStats
+		var stat iface2.DealCountStats
 		err := rows.Scan(&stat.Count, &stat.Groups)
 		if err != nil {
 			return nil, xerrors.Errorf("scanning deal stats: %w", err)
@@ -1649,7 +1658,7 @@ func (r *ribsDB) AddRepairsForLowRetrievableDeals() error {
 	return err
 }
 
-func (r *ribsDB) AssignRepairToWorker(workerID int) (*iface.GroupKey, error) {
+func (r *ribsDB) AssignRepairToWorker(workerID int) (*iface2.GroupKey, error) {
 	query := `
         UPDATE repairs
         SET worker = $1
@@ -1661,7 +1670,7 @@ func (r *ribsDB) AssignRepairToWorker(workerID int) (*iface.GroupKey, error) {
         )
         RETURNING group_id;
     `
-	var groupID iface.GroupKey
+	var groupID iface2.GroupKey
 	err := r.db.QueryRow(query, workerID).Scan(&groupID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1674,7 +1683,7 @@ func (r *ribsDB) AssignRepairToWorker(workerID int) (*iface.GroupKey, error) {
 	return &groupID, nil
 }
 
-func (r *ribsDB) GetRepairStats() (out iface.RepairQueueStats, err error) {
+func (r *ribsDB) GetRepairStats() (out iface2.RepairQueueStats, err error) {
 	query := `
         SELECT COUNT(*), COUNT(CASE WHEN worker IS NOT NULL THEN 1 END)
         FROM repairs;
@@ -1683,7 +1692,7 @@ func (r *ribsDB) GetRepairStats() (out iface.RepairQueueStats, err error) {
 	return out, err
 }
 
-func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface.GroupKey, error) {
+func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface2.GroupKey, error) {
 	query := `
         SELECT group_id FROM repairs
         WHERE worker = $1;
@@ -1695,9 +1704,9 @@ func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface.GroupKey
 	}
 	defer rows.Close()
 
-	var groupIDs []iface.GroupKey
+	var groupIDs []iface2.GroupKey
 	for rows.Next() {
-		var groupID iface.GroupKey
+		var groupID iface2.GroupKey
 		if err := rows.Scan(&groupID); err != nil {
 			return nil, err
 		}
@@ -1711,7 +1720,7 @@ func (r *ribsDB) GetAssignedRepairWorkByWorkerID(workerID int) ([]iface.GroupKey
 	return groupIDs, nil
 }
 
-func (r *ribsDB) DelRepair(groupID iface.GroupKey) error {
+func (r *ribsDB) DelRepair(groupID iface2.GroupKey) error {
 	query := `
 		DELETE FROM repairs
 		WHERE group_id = $1;

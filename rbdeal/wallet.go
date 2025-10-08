@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/ipfs/go-cid"
 
-	"github.com/aurorainfra/gw/configuration"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	iface "github.com/aurorainfra/gw"
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	"golang.org/x/xerrors"
 )
 
@@ -106,7 +106,7 @@ func Epoch2Timestamp(epoch int64) int64 {
 	return (epoch * 30) + FILECOIN_GENESIS_UNIX_EPOCH
 }
 
-func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult, error) {
+func (mdb *metaDB) getFileDetails(fi *iface2.FileMetadata) (*verboseDetailResult, error) {
 	var ret verboseDetailResult
 	ret.State = FileStateOffloading
 	if fi.Groups == nil {
@@ -121,30 +121,30 @@ func (mdb *metaDB) getFileDetails(fi *iface.FileMetadata) (*verboseDetailResult,
 			return nil, xerrors.Errorf("Failed to get details")
 		}
 		switch meta.State {
-		case iface.GroupStateWritable:
+		case iface2.GroupStateWritable:
 			// Writable, so no deals
 			grpDetails.State = GroupStateWritable
 			ret.State = FileStateStaging
 			ret.Groups = append(ret.Groups, grpDetails)
 			continue
-		case iface.GroupStateFull:
+		case iface2.GroupStateFull:
 			// full, but not yet uploaded... still mark it as current for now
 			grpDetails.State = GroupStateFull
 			ret.State = FileStateStaging
 			ret.Groups = append(ret.Groups, grpDetails)
 			continue
-		case iface.GroupStateVRCARDone:
+		case iface2.GroupStateVRCARDone:
 			// full, but not yet uploaded... still mark it as current for now
 			grpDetails.State = GroupStateVRCARDone
 			ret.State = FileStateStaging
 			ret.Groups = append(ret.Groups, grpDetails)
 			continue
-		case iface.GroupStateLocalReadyForDeals:
+		case iface2.GroupStateLocalReadyForDeals:
 			grpDetails.State = GroupStateReadyForDeals
-		case iface.GroupStateOffloaded:
+		case iface2.GroupStateOffloaded:
 			grpDetails.State = GroupStateOffloaded
 			grpDetails.isFullyOffloaded = true
-		case iface.GroupStateReload:
+		case iface2.GroupStateReload:
 			grpDetails.State = GroupStateReload
 		}
 		grpDetails.Id = meta.PieceCID
@@ -275,7 +275,7 @@ func (mdb *metaDB) getFileInfoHandler() func(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (mdb *metaDB) buildAndReturnResponse(w http.ResponseWriter, hasError error, filemeta *iface.FileMetadata, isVerbose bool) {
+func (mdb *metaDB) buildAndReturnResponse(w http.ResponseWriter, hasError error, filemeta *iface2.FileMetadata, isVerbose bool) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if hasError != nil {

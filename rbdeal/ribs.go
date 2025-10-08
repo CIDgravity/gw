@@ -3,24 +3,22 @@ package rbdeal
 import (
 	"context"
 	"fmt"
-
-	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/cidgravity"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/database/cqldb"
+	"github.com/CIDgravity/filecoin-gateway/database/sqldb"
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/rbmeta"
+	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	"golang.org/x/xerrors"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/cidgravity"
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/database"
-	"github.com/aurorainfra/gw/rbmeta"
-	"github.com/aurorainfra/gw/rbstor"
-	"github.com/aurorainfra/gw/ributil"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
 
 	"github.com/fatih/color"
 	"github.com/filecoin-project/go-address"
@@ -36,7 +34,9 @@ type openOptions struct {
 	localWalletOpener   func(path string) (*ributil.LocalWallet, error)
 	localWalletPath     string
 	fileCoinAPIEndpoint string
-	db                  database.Database
+	sqldb               sqldb.Database
+	cqldb               cqldb.Database
+	rbstor              iface2.RBS
 }
 
 type OpenOption func(*openOptions)
@@ -77,16 +77,22 @@ func WithFileCoinApiEndpoint(wp string) OpenOption {
 	}
 }
 
-func WithDatabase(db database.Database) OpenOption {
+func WithSqlDatabase(db sqldb.Database) OpenOption {
 	return func(o *openOptions) {
-		o.db = db
+		o.sqldb = db
+	}
+}
+
+func WithRbstor(rbs iface2.RBS) OpenOption {
+	return func(o *openOptions) {
+		o.rbstor = rbs
 	}
 }
 
 type ribs struct {
-	iface.RBS
+	iface2.RBS
 	db  *ribsDB
-	mdb iface.MetadataDB
+	mdb iface2.MetadataDB
 
 	host   host.Host
 	wallet *ributil.LocalWallet
@@ -96,7 +102,7 @@ type ribs struct {
 	msgSendLk sync.Mutex
 
 	marketFundsLk        sync.Mutex
-	cachedWalletInfo     *iface.WalletInfo
+	cachedWalletInfo     *iface2.WalletInfo
 	lastWalletInfoUpdate time.Time
 
 	//
@@ -113,55 +119,39 @@ type ribs struct {
 	crawlHost host.Host
 
 	/* sp tracker */
-	crawlState atomic.Pointer[iface.CrawlState]
+	crawlState atomic.Pointer[iface2.CrawlState]
 
 	/*  */
 	cidg                  cidgravity.CIDGravity
 	canSendDealLastCheck  time.Time
 	canSendDealLastResult bool
 
-	// <todo> move to s3 external module struct
-	s3          *s3.S3
-	s3Bucket    string
-	s3BucketUrl *url.URL
-
-	s3Uploads map[iface.GroupKey]struct{}
-	s3Lk      sync.Mutex
-
-	/* s3 stats */
-
-	s3UploadBytes, s3UploadStarted, s3UploadDone, s3UploadErr, s3Redirects, s3ReadReqs, s3ReadBytes atomic.Int64
-	// </todo>
-
 	/* external modules */
 	externalOffloader ExternalOffloader
 
 	/* dealmaking */
 	dealsLk        sync.Mutex
-	moreDealsLocks map[iface.GroupKey]struct{}
+	moreDealsLocks map[iface2.GroupKey]struct{}
 
 	/* retrieval */
 	retrHost host.Host
 	retrProv *retrievalProvider
 
-	retrSuccess, retrBytes, retrFail, retrCacheHit, retrCacheMiss, retrHttpTries, retrHttpSuccess, retrHttpBytes, retrActive atomic.Int64
-
-	/* retrieval checker */
-	rckToDo, rckStarted, rckSuccess, rckFail, rckSuccessAll, rckFailAll atomic.Int64
+	retrCheckMetrics *retrievalCheckMetrics
 
 	/* repair */
 	repairDir     string
-	repairStats   map[int]*iface.RepairJob // workerid -> repair job
+	repairStats   map[int]*iface2.RepairJob // workerid -> repair job
 	repairStatsLk sync.Mutex
 
-	repairFetchCounters *ributil.RateCounters[iface.GroupKey]
+	repairFetchCounters *ributil.RateCounters[iface2.GroupKey]
 }
 
-func (r *ribs) MetaDB() iface.MetadataDB {
+func (r *ribs) MetaDB() iface2.MetadataDB {
 	return r.mdb
 }
 
-func (r *ribs) Wallet() iface.Wallet {
+func (r *ribs) Wallet() iface2.Wallet {
 	return r
 }
 
@@ -215,7 +205,7 @@ func OpenOrCreateWallet(path string) (*ributil.LocalWallet, address.Address, err
 	return wallet, defWallet, nil
 }
 
-func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
+func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 	if err := os.Mkdir(root, 0755); err != nil && !os.IsExist(err) {
 		return nil, xerrors.Errorf("make root dir: %w", err)
 	}
@@ -232,18 +222,16 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		o(opt)
 	}
 
-	if opt.db == nil {
-		return nil, fmt.Errorf("database is required")
+	if opt.sqldb == nil {
+		return nil, fmt.Errorf("sql database is required")
+	}
+	if opt.rbstor == nil {
+		return nil, fmt.Errorf("rbstor is required")
 	}
 
-	db, err := openRibsDB(opt.db)
+	db, err := openRibsDB(opt.sqldb)
 	if err != nil {
 		return nil, xerrors.Errorf("open db: %w", err)
-	}
-
-	rbs, err := rbstor.Open(root, rbstor.WithDB(opt.db))
-	if err != nil {
-		return nil, xerrors.Errorf("open RBS: %w", err)
 	}
 
 	if err := db.startDB(); err != nil {
@@ -251,7 +239,7 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 	}
 
 	r := &ribs{
-		RBS: rbs,
+		RBS: opt.rbstor,
 		db:  db,
 
 		lotusRPCAddr: opt.fileCoinAPIEndpoint,
@@ -261,19 +249,19 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		//activeUploads:   map[uuid.UUID]int{},
 		//rateCounters:    ributil.NewRateCounters[peer.ID](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps))),
 
-		s3Uploads: map[iface.GroupKey]struct{}{},
-
 		repairDir:   filepath.Join(root, "repair"),
-		repairStats: map[int]*iface.RepairJob{},
+		repairStats: map[int]*iface2.RepairJob{},
 
 		close: make(chan struct{}),
 		//workerClosed: make(chan struct{}),
 		spCrawlClosed:     make(chan struct{}),
 		marketWatchClosed: make(chan struct{}),
 
-		moreDealsLocks: map[iface.GroupKey]struct{}{},
+		moreDealsLocks: map[iface2.GroupKey]struct{}{},
 
-		repairFetchCounters: ributil.NewRateCounters[iface.GroupKey](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps/4))),
+		retrCheckMetrics: newRetrievalCheckMetrics(),
+
+		repairFetchCounters: ributil.NewRateCounters[iface2.GroupKey](ributil.MinAvgGlobalLogPeerRate(float64(minTransferMbps), float64(linkSpeedMbps/4))),
 	}
 
 	rp, err := newRetrievalProvider(context.TODO(), r)
@@ -296,7 +284,7 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 		}
 	}
 
-	if err := r.maybeInitExternal(); err != nil {
+	if err := r.initExternal(); err != nil {
 		return nil, xerrors.Errorf("XYZ: trying to initialize external offload: %w", err)
 	}
 
@@ -341,13 +329,13 @@ func Open(root string, opts ...OpenOption) (iface.RIBS, error) {
 }
 
 func (r *ribs) subGroupChanges() {
-	r.Storage().Subscribe(func(group iface.GroupKey, from, to iface.GroupState) {
+	r.Storage().Subscribe(func(group iface2.GroupKey, from, to iface2.GroupState) {
 		go r.onSub(group, from, to)
 	})
 }
 
-func (r *ribs) onSub(group iface.GroupKey, from, to iface.GroupState) {
-	if to == iface.GroupStateLocalReadyForDeals {
+func (r *ribs) onSub(group iface2.GroupKey, from, to iface2.GroupState) {
+	if to == iface2.GroupStateLocalReadyForDeals {
 		c, _, err := r.db.GetNonFailedDealCount(group)
 		if err != nil {
 			log.Errorf("getting non-failed deal count: %s", err)
@@ -369,20 +357,20 @@ func (r *ribs) onSub(group iface.GroupKey, from, to iface.GroupState) {
 	}
 }
 
-func (r *ribs) RetrStats() (iface.RetrStats, error) {
-	return iface.RetrStats{
-		Success: r.retrSuccess.Load(),
-		Bytes:   r.retrBytes.Load(),
-		Fail:    r.retrFail.Load(),
+func (r *ribs) RetrStats() (iface2.RetrStats, error) {
+	return iface2.RetrStats{
+		Success: int64(metrics.GetCounterValue(r.retrProv.metrics.success)),
+		Bytes:   int64(metrics.GetCounterValue(r.retrProv.metrics.bytes)),
+		Fail:    int64(metrics.GetCounterValue(r.retrProv.metrics.fail)),
 
-		CacheHit:  r.retrCacheHit.Load(),
-		CacheMiss: r.retrCacheMiss.Load(),
+		CacheHit:  int64(metrics.GetCounterValue(r.retrProv.metrics.cacheHit)),
+		CacheMiss: int64(metrics.GetCounterValue(r.retrProv.metrics.cacheMiss)),
 
-		Active: r.retrActive.Load(),
+		Active: 0,
 
-		HTTPTries:   r.retrHttpTries.Load(),
-		HTTPSuccess: r.retrHttpSuccess.Load(),
-		HTTPBytes:   r.retrHttpBytes.Load(),
+		HTTPTries:   int64(metrics.GetCounterValue(r.retrProv.metrics.httpTries)),
+		HTTPSuccess: int64(metrics.GetCounterValue(r.retrProv.metrics.httpSuccess)),
+		HTTPBytes:   int64(metrics.GetCounterValue(r.retrProv.metrics.httpBytes)),
 	}, nil
 }
 

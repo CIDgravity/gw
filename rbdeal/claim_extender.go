@@ -3,7 +3,10 @@ package rbdeal
 import (
 	"context"
 	"fmt"
-	"github.com/aurorainfra/gw/configuration"
+	"strings"
+	"time"
+
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
@@ -17,8 +20,6 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/lib/must"
 	"golang.org/x/xerrors"
-	"strings"
-	"time"
 )
 
 func (r *ribs) claimChecker() {

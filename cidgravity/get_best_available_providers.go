@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/aurorainfra/gw/configuration"
 	"io/ioutil"
 	"net/http"
 	"time"
+
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 )
 
 type CIDgravityGetBestAvailableProvidersRequest struct {

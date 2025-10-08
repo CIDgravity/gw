@@ -1,21 +1,18 @@
 package carlog
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
+	"github.com/CIDgravity/filecoin-gateway/test"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/xerrors"
 )
 
 func TestCarLogBasic(t *testing.T) {
@@ -29,7 +26,9 @@ func TestCarLogBasic(t *testing.T) {
 		}
 	})
 
-	jb, err := Create(nil, filepath.Join(td, "index"), td, nil)
+	tsp := &test.StagingProvider{}
+
+	jb, err := Create(tsp, filepath.Join(td, "index"), td, nil)
 	require.NoError(t, err)
 
 	b := blocks.NewBlock([]byte("hello world"))
@@ -56,7 +55,7 @@ func TestCarLogBasic(t *testing.T) {
 		return nil
 	}
 
-	jb, err = Open(nil, filepath.Join(td, "index"), td, noTrunc)
+	jb, err = Open(tsp, filepath.Join(td, "index"), td, noTrunc)
 	require.NoError(t, err)
 
 	// test that we can read the data back out again
@@ -81,7 +80,7 @@ func TestCarLogBasic(t *testing.T) {
 	err = jb.Close()
 	require.NoError(t, err)
 
-	jb, err = Open(nil, filepath.Join(td, "index"), td, noTrunc)
+	jb, err = Open(tsp, filepath.Join(td, "index"), td, noTrunc)
 	require.NoError(t, err)
 
 	err = jb.View([]multihash.Multihash{h}, func(i int, found bool, b []byte) error {
@@ -109,11 +108,11 @@ func TestCarLogBasic(t *testing.T) {
 
 	s, err := jb.HashSample()
 	require.NoError(t, err)
-	require.Len(t, s, 1)
+	require.Len(t, s, 2)
 
 	require.NoError(t, jb.Close())
 	// test open offloaded
-	jb, err = Open(nil, filepath.Join(td, "index"), td, noTrunc)
+	jb, err = Open(tsp, filepath.Join(td, "index"), td, noTrunc)
 	require.NoError(t, err)
 
 	err = jb.View([]multihash.Multihash{h}, func(i int, found bool, b []byte) error {
@@ -124,7 +123,7 @@ func TestCarLogBasic(t *testing.T) {
 
 	s, err = jb.HashSample()
 	require.NoError(t, err)
-	require.Len(t, s, 1)
+	require.Len(t, s, 2)
 	require.NoError(t, jb.Close())
 }
 
@@ -139,7 +138,9 @@ func TestCarLog3K(t *testing.T) {
 		}
 	})
 
-	jb, err := Create(nil, filepath.Join(td, "index"), td, nil)
+	tsp := &test.StagingProvider{}
+
+	jb, err := Create(tsp, filepath.Join(td, "index"), td, nil)
 	require.NoError(t, err)
 
 	const numBlocks = 3000
@@ -191,7 +192,7 @@ func TestCarLog3K(t *testing.T) {
 		return nil
 	}
 
-	jb, err = Open(nil, filepath.Join(td, "index"), td, noTrunc)
+	jb, err = Open(tsp, filepath.Join(td, "index"), td, noTrunc)
 	require.NoError(t, err)
 
 	err = jb.View(mhList, func(i int, found bool, b []byte) error {
@@ -284,7 +285,7 @@ func TestCarStaging(t *testing.T) {
 		}
 	})
 
-	tsp := &testStagingProvider{}
+	tsp := &test.StagingProvider{}
 
 	jb, err := Create(tsp, filepath.Join(td, "index"), td, nil)
 	require.NoError(t, err)
@@ -367,51 +368,3 @@ func TestCarStaging(t *testing.T) {
 	err = jb.Close()
 	require.NoError(t, err)
 }
-
-var _ CarStorageProvider = (*testStagingProvider)(nil)
-
-type testStagingProvider struct {
-	lk sync.Mutex
-
-	bdata []byte
-}
-
-func (t *testStagingProvider) Upload(ctx context.Context, size int64, src func(writer io.Writer) error) error {
-	t.lk.Lock()
-	defer t.lk.Unlock()
-
-	if len(t.bdata) > 0 {
-		return xerrors.New("had data")
-	}
-
-	var buf bytes.Buffer
-
-	err := src(&buf)
-	if err != nil {
-		return err
-	}
-
-	t.bdata = buf.Bytes()
-
-	return nil
-}
-
-func (t *testStagingProvider) ReadAt(p []byte, off int64) (n int, err error) {
-	t.lk.Lock()
-	defer t.lk.Unlock()
-	n = copy(p, t.bdata[off:])
-	if n != len(p) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (t *testStagingProvider) Has(ctx context.Context) (bool, error) {
-	return true, nil
-}
-
-func (t *testStagingProvider) URL(ctx context.Context) (string, error) {
-	return "http://aaaaaaa", nil
-}
-
-var _ CarStorageProvider = &testStagingProvider{}

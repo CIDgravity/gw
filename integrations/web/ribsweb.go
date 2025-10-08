@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	txtempl "text/template"
 
-	"github.com/aurorainfra/gw"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -20,7 +20,7 @@ var log = logging.Logger("ribsweb")
 var dres embed.FS
 
 type RIBSWeb struct {
-	ribs ribs.RIBS
+	ribs iface.RIBS
 }
 
 func (ri *RIBSWeb) Index(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,7 @@ func (ri *RIBSWeb) Index(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func Serve(ctx context.Context, listen string, ribs ribs.RIBS) error {
+func Serve(ctx context.Context, listen string, ribs iface.RIBS) error {
 	handlers := &RIBSWeb{
 		ribs: ribs,
 	}

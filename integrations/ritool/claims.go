@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
@@ -17,7 +19,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/xerrors"
-	"strings"
 )
 
 var claimsExtendCmd = &cli.Command{
@@ -68,7 +69,7 @@ var claimsExtendCmd = &cli.Command{
 
 		fmt.Printf("Getting claims for %d providers\n", len(provs))
 
-		chain, closer, err := cliutil.GetGatewayAPI(c)
+		chain, closer, err := cliutil.GetGatewayAPIV1(c)
 		if err != nil {
 			return xerrors.Errorf("getting gateway api: %w", err)
 		}

@@ -17,24 +17,35 @@ concurrency:
 
 jobs:
   go-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TESTS_RUNNER }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        env:
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+        if: ${{ env.DOCKER_HUB_TOKEN != '' }}
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Download base images
+        run: |
+          docker pull golang:1.24-alpine
+          docker pull alpine:3.22.0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.4
-
-      - name: Set up gotestfmt
-        uses: gotesttools/gotestfmt-action@v2
+          go-version: 1.24.5
 
       - name: Run tests
         run: |
           go mod download
           mkdir -p test-results
           set -o pipefail
-          go test -json ./... 2>&1 | tee test-results/test-results.json | gotestfmt
+          go test -p ${{ vars.TESTS_PARALLELISM }} -json ./... 2>&1 | tee test-results/test-results.json
 
       - name: Upload test report
         uses: actions/upload-artifact@v4
@@ -52,14 +63,14 @@ jobs:
           path: '*.json'
           reporter: golang-json
   go-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.TESTS_RUNNER }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.4
+          go-version: 1.24.5
 
       - name: Verify go mod tidy
         run: |

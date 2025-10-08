@@ -7,32 +7,34 @@ import (
 	"io"
 	"sync"
 
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/integrations/blockstore"
+	"github.com/CIDgravity/filecoin-gateway/rbstor/cidlocation"
+	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	chunk "github.com/ipfs/boxo/chunker"
+	dag "github.com/ipfs/boxo/ipld/merkledag"
+	ft "github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/balanced"
 	"github.com/ipfs/boxo/ipld/unixfs/importer/helpers"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
 	format "github.com/ipfs/go-ipld-format"
 	"github.com/ipfs/kubo/repo"
-
-	agw_iface "github.com/aurorainfra/gw/agw/iface"
-	"github.com/aurorainfra/gw/agw/server/metrics"
-	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
 )
 
 type Region struct {
 	name        string
-	index       *Index
+	index       iface.S3ObjectIndex
 	blockstore  *ribsbstore.Blockstore
 	dag         format.DAGService
 	splitterGen chunk.SplitterGen
 	repo        repo.Repo
+	cidlocation *cidlocation.Worker
 
 	mx      sync.Mutex
-	buckets map[string]agw_iface.Bucket
+	buckets map[string]iface.Bucket
 }
 
-var _ agw_iface.Region = (*Region)(nil)
+var _ iface.Region = (*Region)(nil)
 
 func (r *Region) Name() string {
 	return r.name
@@ -43,33 +45,33 @@ func (r *Region) ListBuckets(ctx context.Context) ([]string, error) {
 	return nil, errors.New("TODO: Region.ListBuckets")
 }
 
-func (r *Region) CreateBucket(ctx context.Context, name string) error {
+func (r *Region) CreateBucket(ctx context.Context, name iface.BucketName) error {
 	// TODO
 	return errors.New("TODO: Region.CreateBucket")
 }
 
-func (r *Region) GetBucket(ctx context.Context, name string) (agw_iface.Bucket, error) {
+func (r *Region) GetBucket(ctx context.Context, name iface.BucketName) (iface.Bucket, error) {
 	r.mx.Lock()
 	defer r.mx.Unlock()
 
-	b, ok := r.buckets[name]
+	b, ok := r.buckets[name.String()]
 	if !ok {
-		b := metrics.NewMeteredBucket(&Bucket{
+		b = metrics.NewMeteredBucket(&Bucket{
 			name:   name,
 			region: r,
 		})
-		r.buckets[name] = b
+		r.buckets[name.String()] = b
 	}
 
 	return b, nil
 }
 
-func (r *Region) DeleteBucket(ctx context.Context, name string) error {
+func (r *Region) DeleteBucket(ctx context.Context, name iface.BucketName) error {
 	// TODO
 	return errors.New("TODO: Region.DeleteBucket")
 }
 
-func (r *Region) putObject(ctx context.Context, input io.Reader) (cid.Cid, error) {
+func (r *Region) putObject(ctx context.Context, input io.Reader) (cid.Cid, uint64, error) {
 	dbp := helpers.DagBuilderParams{
 		Dagserv:   r.dag,
 		Maxlinks:  1024,
@@ -79,45 +81,36 @@ func (r *Region) putObject(ctx context.Context, input io.Reader) (cid.Cid, error
 	splitter := r.splitterGen(input)
 	db, err := dbp.New(splitter)
 	if err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to create dag builder: %w", err)
+		return cid.Cid{}, 0, fmt.Errorf("failed to create dag builder: %w", err)
 	}
 
 	node, err := balanced.Layout(db)
 	if err != nil {
-		return cid.Cid{}, fmt.Errorf("failed to layout dag: %w", err)
+		return cid.Cid{}, 0, fmt.Errorf("failed to layout dag: %w", err)
+	}
+
+	var size uint64
+	switch n := node.(type) {
+	case *dag.RawNode:
+		size = uint64(len(n.RawData()))
+	case *dag.ProtoNode:
+		fsNode, err := ft.FSNodeFromBytes(n.Data())
+		if err != nil {
+			return cid.Cid{}, 0, fmt.Errorf("failed to parse fsnode: %w", err)
+		}
+		size = fsNode.FileSize()
+	default:
+		return cid.Cid{}, 0, fmt.Errorf("unknown node type: %T", n)
 	}
 
 	log.Debugf("put object %s", node.Cid())
-	return node.Cid(), nil
+	return node.Cid(), size, nil
 }
 
 func (r *Region) flush(ctx context.Context) error {
-	return r._flush(ctx, true)
-}
-
-func (r *Region) flushIndex(ctx context.Context) error {
-	return r._flush(ctx, false)
-}
-
-func (r *Region) _flush(ctx context.Context, flushbs bool) error {
-	// TODO make this transactional if possible
-
-	c, err := r.index.Flush(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to flush hamt: %w", err)
+	if err := r.blockstore.Flush(ctx); err != nil {
+		return fmt.Errorf("failed to flush blockstore: %w", err)
 	}
 
-	if flushbs {
-		if err := r.blockstore.Flush(ctx); err != nil {
-			return fmt.Errorf("failed to flush blockstore: %w", err)
-		}
-	}
-
-	err = r.repo.Datastore().Put(ctx, datastore.NewKey("/local/s3/index"), c.Bytes())
-	if err != nil {
-		return fmt.Errorf("failed to save new hamt cid: %w", err)
-	}
-
-	log.Debugf("flush %s", c.String())
 	return nil
 }

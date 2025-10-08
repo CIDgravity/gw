@@ -4,19 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/carlog"
+	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/sync/errgroup"
-
-	"os"
 
 	"golang.org/x/xerrors"
 )
@@ -31,10 +30,8 @@ var (
 var ErrOffloaded = fmt.Errorf("group is offloaded")
 
 type Group struct {
-	db    *rbsDB
-	index iface.Index
-
-	staging *atomic.Pointer[iface.StagingStorageProvider]
+	db    *RbsDB
+	index iface.GroupIndex
 
 	path string
 	id   int64
@@ -76,7 +73,7 @@ type Group struct {
 	jb *carlog.CarLog
 }
 
-func OpenGroup(ctx context.Context, db *rbsDB, index iface.Index, staging *atomic.Pointer[iface.StagingStorageProvider],
+func OpenGroup(ctx context.Context, db *RbsDB, index iface.GroupIndex, staging *atomic.Pointer[iface.StagingStorageProvider],
 	id, committedBlocks, committedSize, recordedHead int64,
 	path string, state iface.GroupState, create bool) (*Group, error) {
 	groupPath := filepath.Join(path, "grp", strconv.FormatInt(id, 32))
@@ -94,11 +91,12 @@ func OpenGroup(ctx context.Context, db *rbsDB, index iface.Index, staging *atomi
 
 	var stw carlog.CarStorageProvider
 	st := staging.Load()
-	if st != nil {
-		stw = &carStorageWrapper{
-			storage: *st,
-			group:   id,
-		}
+	if st == nil {
+		return nil, fmt.Errorf("no staging provider configured")
+	}
+	stw = &carStorageWrapper{
+		storage: *st,
+		group:   id,
 	}
 
 	jb, err := jbOpenFunc(stw, filepath.Join(groupPath, "blklog.meta"), groupPath, func(to int64, h []mh.Multihash) error {
@@ -113,9 +111,8 @@ func OpenGroup(ctx context.Context, db *rbsDB, index iface.Index, staging *atomi
 	}
 
 	g := &Group{
-		db:      db,
-		index:   index,
-		staging: staging,
+		db:    db,
+		index: index,
 
 		jb: jb,
 
@@ -374,15 +371,3 @@ func (c *carStorageWrapper) Upload(ctx context.Context, size int64, src func(wri
 }
 
 var _ carlog.CarStorageProvider = &carStorageWrapper{}
-
-func (m *Group) WrapStorageProvider() carlog.CarStorageProvider {
-	p := m.staging.Load()
-	if p == nil {
-		return nil
-	}
-
-	return &carStorageWrapper{
-		storage: *p,
-		group:   m.id,
-	}
-}

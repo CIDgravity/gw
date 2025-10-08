@@ -1,10 +1,11 @@
 package cidgravity
 
 import (
-	"github.com/aurorainfra/gw/configuration"
+	"sync"
+
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	logging "github.com/ipfs/go-log/v2"
 	"golang.org/x/sync/semaphore"
-	"sync"
 )
 
 var log = logging.Logger("ribs:cidg")

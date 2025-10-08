@@ -5,16 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/aurorainfra/gw/ributil"
 	"net/http"
 	"path"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/ributil/boostnet"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
+
+	"github.com/CIDgravity/filecoin-gateway/ributil/boostnet"
 	"github.com/filecoin-project/go-address"
 	cborutil "github.com/filecoin-project/go-cbor-util"
 	"github.com/filecoin-project/go-fil-markets/storagemarket/network"
@@ -214,7 +215,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 				defer stlk.Unlock()
 
 				if err != nil {
-					log.Errorw("error querying provider", "actor", actor, "err", err)
+					log.Debugw("error querying provider", "actor", actor, "err", err)
 				}
 
 				if err := r.db.UpdateProviderProtocols(actor, res); err != nil {
@@ -302,7 +303,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 
 					req, err := http.NewRequestWithContext(ctx, "GET", qurl.String(), nil)
 					if err != nil {
-						log.Warnw("error creating http request", "err", err, "provider", maddr, "url", qurl.String())
+						log.Debugw("error creating http request", "err", err, "provider", maddr, "url", qurl.String())
 						cancel()
 						continue
 					}
@@ -311,19 +312,19 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 
 					resp, err := http.DefaultClient.Do(req)
 					if err != nil {
-						log.Warnw("error querying http", "err", err, "provider", maddr, "url", qurl.String())
+						log.Debugw("error querying http", "err", err, "provider", maddr, "url", qurl.String())
 						cancel()
 						continue
 					}
 
 					if resp.ContentLength > 1024 {
-						log.Warnw("http response too large", "provider", maddr, "url", qurl.String(), "size", resp.ContentLength)
+						log.Debugw("http response too large", "provider", maddr, "url", qurl.String(), "size", resp.ContentLength)
 						cancel()
 						continue
 					}
 
 					if err := json.NewDecoder(resp.Body).Decode(&qres); err != nil {
-						log.Warnw("error decoding http response", "err", err, "provider", maddr, "url", qurl.String())
+						log.Debugw("error decoding http response", "err", err, "provider", maddr, "url", qurl.String())
 						cancel()
 						continue
 					}
@@ -338,7 +339,7 @@ func (r *ribs) spCrawlLoop(ctx context.Context, gw api.Gateway, pingP2P host.Hos
 				case "bitswap":
 					bswapPIs, err := peer.AddrInfosFromP2pAddrs(protocol.Addresses...)
 					if err != nil {
-						log.Warnw("error parsing bitswap addrs", "err", err, "provider", maddr, "addrs", protocol.Addresses)
+						log.Debugw("error parsing bitswap addrs", "err", err, "provider", maddr, "addrs", protocol.Addresses)
 						continue
 					}
 

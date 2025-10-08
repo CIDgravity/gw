@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/multiformats/go-multihash"
 	"github.com/stretchr/testify/require"
@@ -29,7 +30,7 @@ func TestBasic(t *testing.T) {
 
 	ctx := context.Background()
 
-	ri, err := Open(td)
+	ri, err := Open(&configuration.RibsConfig{DataDir: td}, nil, nil) // todo fix when enabling this test
 	require.NoError(t, err)
 
 	sess := ri.Session(ctx)
@@ -72,7 +73,7 @@ func TestFullGroup(t *testing.T) {
 	// TODO there is no more worker gate; make this play nice with tests
 	// workerGate := make(chan struct{}, 1)
 	// ri, err := Open(td, WithWorkerGate(workerGate))
-	ri, err := Open(td)
+	ri, err := Open(&configuration.RibsConfig{DataDir: td}, nil, nil) // todo fix when enabling this test
 	require.NoError(t, err)
 
 	sess := ri.Session(ctx)

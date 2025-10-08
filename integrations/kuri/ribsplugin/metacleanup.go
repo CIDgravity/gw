@@ -5,18 +5,17 @@ import (
 	"sort"
 	"strings"
 
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/ipfs/go-cid"
 	format "github.com/ipfs/go-ipld-format"
 
 	"github.com/ipfs/boxo/ipld/merkledag"
-
-	"github.com/aurorainfra/gw"
 	//"golang.org/x/xerrors"
 )
 
 type ExplorerInfo struct {
 	dag format.DAGService
-	rbs ribs.Storage
+	rbs iface2.Storage
 }
 
 func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
@@ -41,18 +40,18 @@ func (e ExplorerInfo) getNode(c string) (*merkledag.ProtoNode, error) {
 	}
 	return pbnd, nil
 }
-func (e ExplorerInfo) ListChilds(c string) (map[string]ribs.ChildInfo, error) {
+func (e ExplorerInfo) ListChilds(c string) (map[string]iface2.ChildInfo, error) {
 	log.Debugw("ListChilds", "cid", c)
 	node, err := e.getNode(c)
 	if err != nil {
 		log.Errorw("Failed to decode CID", "cid", c)
 		return nil, err
 	}
-	ret := make(map[string]ribs.ChildInfo)
+	ret := make(map[string]iface2.ChildInfo)
 	if node != nil {
 		for _, child := range node.Links() {
 			if child.Name != "" {
-				ret[child.Name] = ribs.ChildInfo{
+				ret[child.Name] = iface2.ChildInfo{
 					Cid:  child.Cid.String(),
 					Size: child.Size,
 				}
@@ -113,7 +112,7 @@ func (e ExplorerInfo) ListGroups(c string) ([]int64, error) {
 	return ret, nil
 }
 
-func StartMeta( /* lc fx.Lifecycle, */ mdb ribs.MetadataDB, r ribs.RIBS, dag format.DAGService) {
+func StartMeta( /* lc fx.Lifecycle, */ mdb iface2.MetadataDB, r iface2.RIBS, dag format.DAGService) {
 	explorer := ExplorerInfo{
 		dag: dag,
 		rbs: r.Storage(),

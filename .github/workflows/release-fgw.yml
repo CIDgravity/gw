@@ -1,0 +1,17 @@
+name: Release fgw
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release-fgw:
+    uses: ./.github/workflows/release.yml
+    with:
+      context: '.'
+      dockerfile: 'Dockerfile'
+      service: 'fgw'

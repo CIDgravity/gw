@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/google/uuid"
 	pool "github.com/libp2p/go-buffer-pool"
 	"go.uber.org/multierr"
@@ -22,9 +24,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"golang.org/x/xerrors"
-
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
 )
 
 type S3OffloadInfo struct {
@@ -34,12 +33,21 @@ type S3OffloadInfo struct {
 	Token     string
 	Bucket    string
 
+	s3          *s3.S3
+	s3Bucket    string
+	s3BucketUrl *url.URL
+
+	s3Uploads map[iface.GroupKey]struct{}
+	s3Lk      sync.Mutex
+
 	r *ribs
+
+	metrics *ExternalStorageModuleMetrics
 }
 
 const EXTERNAL_S3 = "s3"
 
-func (s *S3OffloadInfo) maybeInitExternal(r *ribs) (bool, error) {
+func (s *S3OffloadInfo) maybeInitExternal(r *ribs, metrics *ExternalStorageModuleMetrics) (bool, error) {
 	cfg := configuration.GetConfig()
 
 	if cfg.External.S3.Endpoint == "" {
@@ -64,9 +72,11 @@ func (s *S3OffloadInfo) maybeInitExternal(r *ribs) (bool, error) {
 		return false, xerrors.Errorf("failed to create S3 session: %w", err)
 	}
 
-	r.s3 = s3.New(asess)
-	r.s3Bucket = cfg.External.S3.Bucket
-	r.s3BucketUrl = burl
+	s.s3 = s3.New(asess)
+	s.s3Bucket = cfg.External.S3.Bucket
+	s.s3BucketUrl = burl
+	s.s3Uploads = map[iface.GroupKey]struct{}{}
+	s.metrics = metrics
 
 	return true, nil
 }
@@ -78,14 +88,6 @@ func (s *S3OffloadInfo) GetModuleName() string {
 func (s *S3OffloadInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) error {
 	r := s.r
 
-	// check if already uploaded
-	r.s3Lk.Lock()
-	_, ok := r.s3Uploads[gid]
-	if ok {
-		r.s3Lk.Unlock()
-		return xerrors.Errorf("group %d has an ongoing upload", gid)
-	}
-
 	module, _, err := r.db.GetExternalPath(gid)
 	if err != nil {
 		return xerrors.Errorf("XYZ: External: fail to get ext path: %w", err)
@@ -95,14 +97,18 @@ func (s *S3OffloadInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) er
 		return nil
 	}
 
-	r.s3Uploads[gid] = struct{}{}
+	if err := s.acquireExternalPushOpportunity(gid); err != nil {
+		return err
+	}
+
+	s.s3Uploads[gid] = struct{}{}
 
 	defer func() {
-		r.s3Lk.Lock()
-		delete(r.s3Uploads, gid)
-		r.s3Lk.Unlock()
+		s.s3Lk.Lock()
+		delete(s.s3Uploads, gid)
+		s.s3Lk.Unlock()
 	}()
-	r.s3Lk.Unlock()
+	s.s3Lk.Unlock()
 
 	ctx := context.TODO()
 
@@ -142,7 +148,7 @@ func (s *S3OffloadInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) er
 	// generate random uuid
 	fname := fmt.Sprintf("%d-%s.car", gid, uuid.New().String())
 
-	upErr := r.uploadGroupData(gid, fname, size, pr)
+	upErr := s.uploadGroupData(gid, fname, size, pr)
 	if upErr != nil {
 		return xerrors.Errorf("failed to upload group %d: %w", gid, upErr)
 	}
@@ -164,8 +170,52 @@ func (s *S3OffloadInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) er
 	return nil
 }
 
+func (s *S3OffloadInfo) acquireExternalPushOpportunity(gid iface.GroupKey) error {
+	cfg := configuration.GetConfig()
+	maxStagingCount := cfg.Ribs.MaxStagingGroupCount
+
+	// If no limit is set, return immediately
+	if maxStagingCount <= 0 {
+		return nil
+	}
+
+	for {
+		// Check if this group is already uploading
+		s.s3Lk.Lock()
+		_, ok := s.s3Uploads[gid]
+		if ok {
+			s.s3Lk.Unlock()
+			return xerrors.Errorf("group %d has an ongoing upload", gid)
+		}
+
+		// Get current staging count from database
+		stagingCnt, err := s.r.db.GetStagingGroupCount()
+		if err != nil {
+			s.s3Lk.Unlock()
+			return xerrors.Errorf("failed to get staging group count from db: %w", err)
+		}
+
+		// Check if we have space available
+		currentUploads := len(s.s3Uploads)
+		if stagingCnt+currentUploads < maxStagingCount {
+			return nil
+		}
+
+		s.s3Lk.Unlock()
+
+		// Log waiting status
+		log.Infow("staging storage full, waiting for space",
+			"group", gid,
+			"stagingCount", stagingCnt,
+			"currentUploads", currentUploads,
+			"max", maxStagingCount)
+
+		time.Sleep(time.Second)
+	}
+}
+
 func (s *S3OffloadInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
-	base := *s.r.s3BucketUrl
+	base := *s.s3BucketUrl
 	base.Path = path.Join(base.Path, lpath)
 	u := base.String()
 	return &u, nil
@@ -176,8 +226,8 @@ func (s *S3OffloadInfo) CleanExternal(gid iface.GroupKey, lpath string) error {
 
 	objKey := lpath
 
-	_, err := r.s3.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: &r.s3Bucket,
+	_, err := s.s3.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: &s.s3Bucket,
 		Key:    &objKey,
 	})
 
@@ -193,14 +243,11 @@ func (s *S3OffloadInfo) CleanExternal(gid iface.GroupKey, lpath string) error {
 }
 
 func (s *S3OffloadInfo) ReadCar(ctx context.Context, group iface.GroupKey, path string, off int64, size int64) (io.ReadCloser, error) {
-	r := s.r
-
-	r.s3ReadReqs.Add(1)
-	r.s3ReadBytes.Add(size)
+	s.metrics.readBytes.Add(float64(size))
 
 	key := path
 
-	req, _ := r.s3.GetObjectRequest(&s3.GetObjectInput{
+	req, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
 		Bucket: &s.Bucket,
 		Key:    &key,
 	})
@@ -250,20 +297,13 @@ func CalculateChunkSize(fileSize int64) int {
 	return int(chunkSize)
 }
 
-func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src io.Reader) (err error) {
-	r.s3UploadStarted.Add(1)
-	defer func() {
-		if err != nil {
-			r.s3UploadDone.Add(1)
-		} else {
-			r.s3UploadErr.Add(1)
-		}
-	}()
+func (s *S3OffloadInfo) uploadGroupData(gid iface.GroupKey, fname string, size int64, src io.Reader) (err error) {
+	s.metrics.uploadsStarted.Inc()
 
 	objKey := fname
 
-	createResp, err := r.s3.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
-		Bucket: &r.s3Bucket,
+	createResp, err := s.s3.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: &s.s3Bucket,
 		Key:    &objKey,
 	})
 	if err != nil {
@@ -338,15 +378,15 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 
 			maxRetries := 6
 			for i := 0; i < maxRetries; i++ {
-				uploadResp, err := r.s3.UploadPartWithContext(ctx, &s3.UploadPartInput{
+				uploadResp, err := s.s3.UploadPartWithContext(ctx, &s3.UploadPartInput{
 					Body:       bytes.NewReader(part),
-					Bucket:     &r.s3Bucket,
+					Bucket:     &s.s3Bucket,
 					Key:        &objKey,
 					PartNumber: aws.Int64(partNumber),
 					UploadId:   &uploadId,
 				})
 
-				r.s3UploadBytes.Add(int64(len(part)))
+				s.metrics.uploadedBytes.Add(float64(len(part)))
 
 				partsLk.Lock()
 				if err != nil {
@@ -381,8 +421,8 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 
 	if len(errors) > 0 {
 		// remove failed upload
-		_, err2 := r.s3.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
-			Bucket:   &r.s3Bucket,
+		_, err2 := s.s3.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+			Bucket:   &s.s3Bucket,
 			Key:      &objKey,
 			UploadId: &uploadId,
 		})
@@ -399,8 +439,8 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 	})
 
 	// Complete the multipart upload
-	_, err = r.s3.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
-		Bucket:   &r.s3Bucket,
+	_, err = s.s3.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   &s.s3Bucket,
 		Key:      &objKey,
 		UploadId: &uploadId,
 		MultipartUpload: &s3.CompletedMultipartUpload{
@@ -409,8 +449,8 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 	})
 	if err != nil {
 		// remove failed upload
-		_, err2 := r.s3.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
-			Bucket:   &r.s3Bucket,
+		_, err2 := s.s3.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+			Bucket:   &s.s3Bucket,
 			Key:      &objKey,
 			UploadId: &uploadId,
 		})
@@ -423,103 +463,10 @@ func (r *ribs) uploadGroupData(gid iface.GroupKey, fname string, size int64, src
 		return xerrors.Errorf("failed to complete multipart upload: %w", err)
 	}
 
+	s.metrics.uploadsDone.Inc()
 	return nil
 }
 
-/*
-type ribsStagingProvider struct {
-	r *ribs
+func (s *S3OffloadInfo) GetMetrics() *ExternalStorageModuleMetrics {
+	return s.metrics
 }
-
-func (r *ribsStagingProvider) HasCar(ctx context.Context, group iface.GroupKey) (bool, error) {
-	has, err := r.r.db.HasS3Offload(group)
-	if err != nil {
-		return false, xerrors.Errorf("failed to check if group %d has S3 offload: %w", group, err)
-	}
-	return has, nil
-}
-
-func (r *ribsStagingProvider) Upload(ctx context.Context, group iface.GroupKey, size int64, src func(writer io.Writer) error) error {
-	return r.r.maybeDoS3OffloadWithSource(group, func(ctx context.Context, group iface.GroupKey, sz func(int642 int64), out io.Writer) error {
-		sz(size)
-		return src(out)
-	})
-}
-
-func (r *ribsStagingProvider) ReadCar(ctx context.Context, group iface.GroupKey, off, size int64) (io.ReadCloser, error) {
-	has, err := r.r.db.HasS3Offload(group)
-	if err != nil {
-		return nil, xerrors.Errorf("failed to check if group %d has S3 offload: %w", group, err)
-	}
-	if !has {
-		return nil, xerrors.Errorf("group %d does not have S3 offload", group)
-	}
-
-	r.r.s3ReadReqs.Add(1)
-	r.r.s3ReadBytes.Add(size)
-
-	key := fmt.Sprintf("gdata%d.car", group)
-
-	req, _ := r.r.s3.GetObjectRequest(&s3.GetObjectInput{
-		Bucket: &r.r.s3Bucket,
-		Key:    &key,
-	})
-
-	req.HTTPRequest.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", off, off+size-1))
-
-	err = req.Send()
-
-	if err != nil {
-		return nil, xerrors.Errorf("failed to send request: %w", err)
-	}
-
-	return req.HTTPResponse.Body, nil
-	/*
-		///
-
-		u, err := r.URL(ctx, group)
-		if err != nil {
-			return nil, xerrors.Errorf("get url: %w", err)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-		if err != nil {
-			return nil, xerrors.Errorf("new request: %w", err)
-		}
-
-		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", off, off+size-1))
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, xerrors.Errorf("perform request: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-			resp.Body.Close()
-			return nil, xerrors.Errorf("unexpected status code: %d", resp.StatusCode)
-		}
-
-		return resp.Body, nil* /
-}
-
-/*
-func (r *ribsStagingProvider) URL(ctx context.Context, group iface.GroupKey) (string, error) {
-	return r.r.maybeGetS3URL(group)
-}* /
-
-func (r *ribs) maybeGetS3URL(gid iface.GroupKey) (string, error) {
-	has, err := r.db.HasS3Offload(gid)
-	if err != nil {
-		return "", xerrors.Errorf("failed to check if group %d has S3 offload: %w", gid, err)
-	}
-
-	if !has {
-		return "", nil
-	}
-
-	urlCopy := *r.s3BucketUrl
-	urlCopy.Path = path.Join(urlCopy.Path, fmt.Sprintf("gdata%d.car", gid))
-
-	return urlCopy.String(), nil
-}
-*/

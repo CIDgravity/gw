@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/bsst"
 	"github.com/filecoin-project/lotus/lib/must"
 	lru "github.com/hashicorp/golang-lru/v2"
 	cbor "github.com/ipfs/go-ipld-cbor"
@@ -27,7 +28,6 @@ import (
 	"github.com/ipld/go-car"
 	pool "github.com/libp2p/go-buffer-pool"
 
-	"github.com/aurorainfra/gw/bsst"
 	mh "github.com/multiformats/go-multihash"
 )
 
@@ -1045,118 +1045,75 @@ func (j *CarLog) Finalize(ctx context.Context) error {
 	}
 
 	if !fin {
-		if j.staging == nil { // Local, non-s3
-			j.idxLk.Unlock()
-
-			bss, err := CreateBSSTIndex(filepath.Join(j.IndexPath, BsstIndex), j.rIdx)
-			if err != nil {
-				return xerrors.Errorf("creating bsst index: %w", err)
+		j.idxLk.Unlock()
+		// top car
+		if !hasTop {
+			if err := j.genTopCar(); err != nil {
+				return xerrors.Errorf("generating top car: %w", err)
 			}
-
-			if err := SaveMHList(filepath.Join(j.IndexPath, HashSample), bss.bsi.CreateSample); err != nil {
-				return xerrors.Errorf("saving hash sample: %w", err)
-			}
-
-			j.idxLk.Lock()
-			defer j.idxLk.Unlock()
-
-			err = j.mutHead(func(h *Head) error {
-				h.Finalized = true
-				return nil
-			})
-			if err != nil {
-				return xerrors.Errorf("marking as finalized: %w", err)
-			}
-
-			err = j.rIdx.Close()
-			j.rIdx = bss
-			if err != nil {
-				return err
-			}
-			if err := j.dropLevel(); err != nil {
-				return xerrors.Errorf("drop level index: %w", err)
-			}
-
-			if !hasTop {
-				j.idxLk.Unlock()
-				err := j.genTopCar()
-				j.idxLk.Lock()
-				if err != nil {
-					return xerrors.Errorf("generating top car: %w", err)
-				}
-			}
-		} else { // s3 offload
-			j.idxLk.Unlock()
-			// top car
-			if !hasTop {
-				if err := j.genTopCar(); err != nil {
-					return xerrors.Errorf("generating top car: %w", err)
-				}
-			}
-
-			ents, err := j.rIdx.Entries()
-			if err != nil {
-				return xerrors.Errorf("getting ridx ent count: %w", err)
-			}
-
-			// dfs bsst
-			iprov := &carIdxSource{
-				entries:   ents,
-				carSource: j.WriteCar,
-			}
-
-			bss, err := CreateBSSTIndex(filepath.Join(j.IndexPath, BsstIndexCanon), iprov)
-			if err != nil {
-				return xerrors.Errorf("write canonical bsst index: %w", err)
-			}
-
-			if iprov.statReader == nil {
-				return xerrors.Errorf("no stat reader")
-			}
-			if !iprov.statReader.eof {
-				return xerrors.Errorf("didn't read whole file")
-			}
-
-			// mh list
-			if err := SaveMHList(filepath.Join(j.IndexPath, HashSample), bss.bsi.CreateSample); err != nil {
-				return xerrors.Errorf("saving hash sample: %w", err)
-			}
-
-			// send data
-			if err := j.staging.Upload(ctx, iprov.statReader.read, func(writer io.Writer) error {
-				_, _, err := j.WriteCar(writer)
-				return err
-			}); err != nil {
-				return xerrors.Errorf("send car to staging storage: %w", err)
-			}
-
-			j.idxLk.Lock()
-			defer j.idxLk.Unlock()
-
-			// mark fin
-			err = j.mutHead(func(h *Head) error {
-				h.Finalized = true
-				h.External = true
-				return nil
-			})
-			if err != nil {
-				return xerrors.Errorf("marking as finalized: %w", err)
-			}
-
-			// close level
-			err = j.rIdx.Close()
-			j.eIdx = bss
-			j.rIdx = nil
-			if err != nil {
-				return err
-			}
-			if err := j.dropLevel(); err != nil {
-				return xerrors.Errorf("drop level index: %w", err)
-			}
-
-			// local data dropped after CommP
 		}
 
+		ents, err := j.rIdx.Entries()
+		if err != nil {
+			return xerrors.Errorf("getting ridx ent count: %w", err)
+		}
+
+		// dfs bsst
+		iprov := &carIdxSource{
+			entries:   ents,
+			carSource: j.WriteCar,
+		}
+
+		bss, err := CreateBSSTIndex(filepath.Join(j.IndexPath, BsstIndexCanon), iprov)
+		if err != nil {
+			return xerrors.Errorf("write canonical bsst index: %w", err)
+		}
+
+		if iprov.statReader == nil {
+			return xerrors.Errorf("no stat reader")
+		}
+		if !iprov.statReader.eof {
+			return xerrors.Errorf("didn't read whole file")
+		}
+
+		// mh list
+		if err := SaveMHList(filepath.Join(j.IndexPath, HashSample), bss.bsi.CreateSample); err != nil {
+			return xerrors.Errorf("saving hash sample: %w", err)
+		}
+
+		// send data
+		if err := j.staging.Upload(ctx, iprov.statReader.read, func(writer io.Writer) error {
+			_, _, err := j.WriteCar(writer)
+			return err
+		}); err != nil {
+			return xerrors.Errorf("send car to staging storage: %w", err)
+		}
+
+		j.idxLk.Lock()
+		defer j.idxLk.Unlock()
+
+		// mark fin
+		err = j.mutHead(func(h *Head) error {
+			h.Finalized = true
+			h.External = true
+			return nil
+		})
+		if err != nil {
+			return xerrors.Errorf("marking as finalized: %w", err)
+		}
+
+		// close level
+		err = j.rIdx.Close()
+		j.eIdx = bss
+		j.rIdx = nil
+		if err != nil {
+			return err
+		}
+		if err := j.dropLevel(); err != nil {
+			return xerrors.Errorf("drop level index: %w", err)
+		}
+
+		// local data dropped after CommP
 	}
 
 	return nil

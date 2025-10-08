@@ -2,16 +2,18 @@ package rbstor
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mitchellh/go-homedir"
+	"go.uber.org/fx"
 	"golang.org/x/xerrors"
 
 	"github.com/filecoin-project/lotus/lib/must"
@@ -19,25 +21,18 @@ import (
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
 	mh "github.com/multiformats/go-multihash"
-
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/database"
 )
 
 var log = logging.Logger("ribs:rbs")
 
-type openOptions struct {
-	db database.Database
-}
-
-type OpenOption func(*openOptions)
-
-func WithDB(db database.Database) OpenOption {
-	return func(o *openOptions) {
-		o.db = db
-	}
-}
+var Module = fx.Module(
+	"rbstor",
+	fx.Provide(
+		NewCqlIndex,
+		NewRibsDB,
+		Open,
+	),
+)
 
 var workerCount = func() int {
 	var wc int
@@ -55,32 +50,19 @@ var workerCount = func() int {
 	return wc
 }()
 
-// todo root as option, separate data / data index / index (/ staging?) paths
-func Open(root string, opts ...OpenOption) (iface.RBS, error) {
+// todo separate data / data index / index (/ staging?) paths
+func Open(config *configuration.RibsConfig, db *RbsDB, idx iface.GroupIndex) (iface.RBS, error) {
+	root, err := homedir.Expand(config.DataDir)
+	if err != nil {
+		return nil, xerrors.Errorf("expand data dir: %w", err)
+	}
 	if err := os.Mkdir(root, 0755); err != nil && !os.IsExist(err) {
 		return nil, xerrors.Errorf("make root dir: %w", err)
 	}
 
-	config := configuration.GetConfig()
-	yugabyteHosts := strings.Split(config.YugabyteCql.Hosts, ",")
-	idx, err := NewYugabyteIndex(yugabyteHosts, config.YugabyteCql.Port, config.YugabyteCql.Keyspace, config.YugabyteCql.ForceHosts)
-	if err != nil {
-		return nil, xerrors.Errorf("open top index: %w", err)
-	}
-
-	opt := &openOptions{}
-
-	for _, o := range opts {
-		o(opt)
-	}
-
-	if opt.db == nil {
-		return nil, fmt.Errorf("database is required")
-	}
-
 	r := &rbs{
 		root:  root,
-		db:    newRibsDB(opt.db),
+		db:    db,
 		index: NewMeteredIndex(idx),
 
 		writableGroups: make(map[iface.GroupKey]*Group),
@@ -126,7 +108,7 @@ type rbs struct {
 	root string
 
 	// todo hide this db behind an interface
-	db    *rbsDB
+	db    *RbsDB
 	index *MeteredIndex
 
 	lk      sync.Mutex

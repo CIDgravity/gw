@@ -1,7 +1,7 @@
 package carlog
 
 import (
-	"github.com/aurorainfra/gw/bsst"
+	"github.com/CIDgravity/filecoin-gateway/bsst"
 	mh "github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 )

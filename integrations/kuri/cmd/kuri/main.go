@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/integrations/kuri/ribsplugin"
 	"github.com/ipfs/kubo/cmd/ipfs/kubo"
 	"github.com/ipfs/kubo/plugin/loader"
 
-	"github.com/aurorainfra/gw/configuration"
-	kuboribs "github.com/aurorainfra/gw/integrations/kuri/ribsplugin"
-	"github.com/aurorainfra/gw/ributil"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
 )
 
 func main() {

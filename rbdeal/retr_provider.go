@@ -2,10 +2,6 @@ package rbdeal
 
 import (
 	"context"
-	"errors"
-	"github.com/aurorainfra/gw/carlog"
-	"github.com/filecoin-project/lassie/pkg/types"
-	pool "github.com/libp2p/go-buffer-pool"
 	"io"
 	"math/rand"
 	"net/http"
@@ -13,8 +9,12 @@ import (
 	"sync"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/ributil"
+	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/filecoin-project/lassie/pkg/types"
+	pool "github.com/libp2p/go-buffer-pool"
+
+	"github.com/CIDgravity/filecoin-gateway/ributil"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/lib/must"
@@ -50,6 +50,8 @@ type retrievalProvider struct {
 	blockCache *lru.Cache[mhStr, []byte] // todo 2q with large ghost cache?
 
 	candidateCache *lru.Cache[iface.GroupKey, cachedRetrCandidates]
+
+	metrics *RetrievalMetrics
 }
 
 type cachedRetrCandidates struct {
@@ -262,6 +264,8 @@ func newRetrievalProvider(ctx context.Context, r *ribs) (*retrievalProvider, err
 
 		blockCache:     must.One(lru.New[mhStr, []byte](BlockCacheSize)),
 		candidateCache: must.One(lru.New[iface.GroupKey, cachedRetrCandidates](RetrievalCandidateCacheSize)),
+
+		metrics: newRetrievalMetrics(),
 	}
 
 	return rp, nil
@@ -273,7 +277,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 	var bytesServed int64
 
 	defer func() {
-		r.r.retrBytes.Add(bytesServed)
+		r.metrics.AddBytesTotal(bytesServed)
 	}()
 
 	for i, m := range mh {
@@ -285,9 +289,8 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 		}
 	}
 
-	r.r.retrCacheHit.Add(int64(cacheHits))
-	r.r.retrCacheMiss.Add(int64(len(mh) - cacheHits))
-	r.r.retrSuccess.Add(int64(cacheHits))
+	r.metrics.AddCacheHits(int64(cacheHits))
+	r.metrics.AddCacheMisses(int64(len(mh) - cacheHits))
 
 	if cacheHits == len(mh) {
 		return nil
@@ -325,7 +328,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 		}
 
 		if hasHttpCandidates {
-			r.r.retrHttpTries.Add(1)
+			r.metrics.IncHttpTries()
 
 			for i, hashToGet := range mh {
 				if hashToGet == nil {
@@ -413,9 +416,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 				bytesServed += int64(len(promise.res))
 				mh[i] = nil
 				httpHits++
-				r.r.retrSuccess.Add(1)
-				r.r.retrHttpSuccess.Add(1)
-				r.r.retrHttpBytes.Add(int64(len(promise.res)))
+				r.metrics.IncHttpSuccess(int64(len(promise.res)))
 			}
 
 		}
@@ -426,60 +427,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 		return nil
 	}
 
-	// fallback to lassie
-	r.reqSourcesLk.Lock()
-	for _, m := range mh {
-		if m == nil {
-			continue
-		}
-
-		if _, ok := r.requests[mhStr(m)]; !ok {
-			r.requests[mhStr(m)] = map[iface.GroupKey]int{}
-		}
-
-		r.requests[mhStr(m)][group]++
-	}
-	r.reqSourcesLk.Unlock()
-
-	defer func() {
-		r.reqSourcesLk.Lock()
-		for _, m := range mh {
-			if m == nil {
-				continue
-			}
-
-			r.requests[mhStr(m)][group]--
-			if r.requests[mhStr(m)][group] == 0 {
-				delete(r.requests[mhStr(m)], group)
-			}
-		}
-		r.reqSourcesLk.Unlock()
-	}()
-
-	for i, hashToGet := range mh {
-		if hashToGet == nil {
-			continue
-		}
-
-		cidToGet := cid.NewCidV1(cid.Raw, hashToGet)
-
-		promise, err := r.retrievalPromise(ctx, cidToGet, i, cb)
-		if err != nil {
-			return err
-		}
-		if promise == nil {
-			// already done
-			continue
-		}
-
-		r.ongoingRequestsLk.Lock()
-		delete(r.ongoingRequests, cidToGet)
-		r.ongoingRequestsLk.Unlock()
-
-		promise.err = errors.New("no lassie, http retrieval failed")
-		close(promise.done)
-	}
-
+	r.metrics.AddFailed(int64(len(mh) - cacheHits - httpHits))
 	return nil
 }
 

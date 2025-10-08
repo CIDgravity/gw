@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/rbdeal"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/rbdeal"
 	"github.com/charmbracelet/huh"
 	"github.com/fatih/color"
 	"github.com/filecoin-project/lotus/api"

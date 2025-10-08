@@ -1,22 +1,5 @@
 package rbdeal
 
-import (
-	"context"
-	"errors"
-	"fmt"
-	ribs2 "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/ributil"
-	"github.com/ipfs/go-cid"
-	"github.com/multiformats/go-multihash"
-	"golang.org/x/xerrors"
-	"io"
-	"net/url"
-	"os"
-	"path"
-	"path/filepath"
-	"time"
-)
-
 /*
 
 REPAIR WORKERS:
@@ -35,6 +18,9 @@ Tables:
 
 */
 
+// todo repairs are unused currently
+
+/*
 var RepairCheckInterval = time.Minute
 
 func (r *ribs) repairWorker(ctx context.Context, workerID int) { // root, id?
@@ -66,7 +52,7 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 		log.Warnw("repair worker has more than one assigned group", "worker", workerID, "groups", len(assignedGroups))
 	}
 
-	var assigned *ribs2.GroupKey
+	var assigned *fgw.GroupKey
 
 	if len(assignedGroups) == 0 {
 		if err := r.db.AddRepairsForLowRetrievableDeals(); err != nil {
@@ -126,10 +112,10 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 	return nil
 }
 
-func (r *ribs) fetchGroup(ctx context.Context, workerID int, group ribs2.GroupKey) (string, error) {
-	rstat := ribs2.RepairJob{
+func (r *ribs) fetchGroup(ctx context.Context, workerID int, group agw.GroupKey) (string, error) {
+	rstat := agw.RepairJob{
 		GroupKey:      group,
-		State:         ribs2.RepairJobStateFetching,
+		State:         agw.RepairJobStateFetching,
 		FetchProgress: 0,
 		FetchSize:     0,
 	}
@@ -159,14 +145,14 @@ func (r *ribs) fetchGroup(ctx context.Context, workerID int, group ribs2.GroupKe
 	return groupFile, nil
 }
 
-func (r *ribs) updateRepairStats(worker int, cb func(*ribs2.RepairJob)) {
+func (r *ribs) updateRepairStats(worker int, cb func(*agw.RepairJob)) {
 	r.repairStatsLk.Lock()
 	defer r.repairStatsLk.Unlock()
 
 	cb(r.repairStats[worker])
 }
 
-func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.GroupKey, groupFile string) error {
+func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.GroupKey, groupFile string) error {
 	cc, err := r.retrProv.retrievalCandidatesForGroupCached(group)
 	if err != nil {
 		return xerrors.Errorf("failed to get retrieval candidates: %w", err)
@@ -178,7 +164,7 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 		return xerrors.Errorf("failed to get group metadata: %w", err)
 	}
 
-	r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 		r.FetchSize = gm.CarSize
 	})
 
@@ -235,8 +221,8 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 	}
 
 	for _, candidate := range sources {
-		r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
-			r.State = ribs2.RepairJobStateFetching
+		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
+			r.State = agw.RepairJobStateFetching
 		})
 
 		reqUrl := candidate.reqUrl
@@ -249,7 +235,7 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 			return r.repairFetchCounters.Get(group)
 		})
 
-		r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 			r.FetchProgress = 0
 			r.FetchUrl = reqUrl.String()
 		})
@@ -277,7 +263,7 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 					continue
 				}
 
-				r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+				r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 					r.FetchProgress = fi.Size()
 				})
 			}
@@ -294,41 +280,41 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 			}
 
 			log.Errorw("failed to fetch repair block", "err", err, "group", group, "provider", candidate.provider, "url", reqUrl.String())
-			/*
-				// try bitflip repair
-				NOTE: this bit flip repair is not really useful, apparently bitflips tend to come in groups,
-					and we're not fixing more that one bitfilp
-
-				if len(badData) == 0 {
-					return nil, xerrors.Errorf("can't attempt bitflip repair and repair retrieval failed: %w", err)
-				}
-
-				log.Errorw("attempting bitflip repair", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "dataSize", len(badData))
-				for i := 0; i < len(badData)*8; i++ {
-					if i > 0 {
-						// unflip previous bit
-						prevBit := i - 1
-						badData[prevBit/8] ^= 1 << (prevBit % 8)
-					}
-
-					// flip bit
-					badData[i/8] ^= 1 << (i % 8)
-
-					hash, err := b.Prefix().Sum(badData)
-					if err != nil {
-						return nil, xerrors.Errorf("hash data: %w", err)
-					}
-
-					if hash.Equals(b) {
-						log.Errorw("bitflip repair successful", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "flippedBit", i)
-						return badData, nil
-					}
-				}
-
-				// unflip last bit
-				badData[len(badData)-1] ^= 1 << 7
-				log.Errorw("bitflip repair failed", "group", group, "provider", candidate.Provider, "url", reqUrl.String())
-			*/
+				//
+				//// try bitflip repair
+				//NOTE: this bit flip repair is not really useful, apparently bitflips tend to come in groups,
+				//	and we're not fixing more that one bitfilp
+				//
+				//if len(badData) == 0 {
+				//	return nil, xerrors.Errorf("can't attempt bitflip repair and repair retrieval failed: %w", err)
+				//}
+				//
+				//log.Errorw("attempting bitflip repair", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "dataSize", len(badData))
+				//for i := 0; i < len(badData)*8; i++ {
+				//	if i > 0 {
+				//		// unflip previous bit
+				//		prevBit := i - 1
+				//		badData[prevBit/8] ^= 1 << (prevBit % 8)
+				//	}
+				//
+				//	// flip bit
+				//	badData[i/8] ^= 1 << (i % 8)
+				//
+				//	hash, err := b.Prefix().Sum(badData)
+				//	if err != nil {
+				//		return nil, xerrors.Errorf("hash data: %w", err)
+				//	}
+				//
+				//	if hash.Equals(b) {
+				//		log.Errorw("bitflip repair successful", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "flippedBit", i)
+				//		return badData, nil
+				//	}
+				//}
+				//
+				//// unflip last bit
+				//badData[len(badData)-1] ^= 1 << 7
+				//log.Errorw("bitflip repair failed", "group", group, "provider", candidate.Provider, "url", reqUrl.String())
+				//
 			return nil, xerrors.Errorf("repair retrieval failed: %w", err)
 		})
 		if err != nil {
@@ -362,9 +348,9 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 			return xerrors.Errorf("close response body: %w", err)
 		}
 
-		r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 			r.FetchProgress = r.FetchSize
-			r.State = ribs2.RepairJobStateVerifying
+			r.State = agw.RepairJobStateVerifying
 		})
 
 		dc, err := cc.Sum()
@@ -383,9 +369,9 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 			continue
 		}
 
-		r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 			r.FetchProgress = r.FetchSize
-			r.State = ribs2.RepairJobStateImporting
+			r.State = agw.RepairJobStateImporting
 		})
 
 		return nil
@@ -394,7 +380,7 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group ribs2.Gro
 	return xerrors.Errorf("no retrieval candidates")
 }
 
-func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.GroupKey, groupFile string) error {
+func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group agw.GroupKey, groupFile string) error {
 	gm, err := r.Storage().DescibeGroup(ctx, group)
 	if err != nil {
 		return xerrors.Errorf("failed to get group metadata: %w", err)
@@ -415,9 +401,9 @@ func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.G
 		}
 	}()
 
-	r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 		r.FetchProgress = 0
-		r.State = ribs2.RepairJobStateFetching
+		r.State = agw.RepairJobStateFetching
 		r.FetchUrl = "lassie+[bitswap,graphsync]"
 	})
 
@@ -438,7 +424,7 @@ func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.G
 				continue
 			}
 
-			r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+			r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 				r.FetchProgress = fi.Size()
 			})
 		}
@@ -453,9 +439,9 @@ func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.G
 		return xerrors.Errorf("failed to fetch deal: %w", err)
 	}
 
-	r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 		r.FetchProgress = r.FetchSize
-		r.State = ribs2.RepairJobStateVerifying
+		r.State = agw.RepairJobStateVerifying
 	})
 
 	f, err := os.OpenFile(groupFile, os.O_RDONLY, 0644)
@@ -488,10 +474,11 @@ func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group ribs2.G
 		return xerrors.Errorf("piece cid mismatch: %s != %s", dc.PieceCID, gm.PieceCid)
 	}
 
-	r.updateRepairStats(workerID, func(r *ribs2.RepairJob) {
+	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 		r.FetchProgress = r.FetchSize
-		r.State = ribs2.RepairJobStateImporting
+		r.State = agw.RepairJobStateImporting
 	})
 
 	return nil
 }
+*/

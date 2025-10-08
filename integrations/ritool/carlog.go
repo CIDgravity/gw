@@ -2,15 +2,16 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
-	"github.com/multiformats/go-multicodec"
 	"io"
 	"math/bits"
 	"os"
 	"strconv"
 	"time"
 
-	"encoding/binary"
+	"github.com/multiformats/go-multicodec"
+
 	"github.com/cheggaaa/pb"
 	"github.com/fatih/color"
 	"github.com/ipfs/go-cid"

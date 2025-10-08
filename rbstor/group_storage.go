@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	"golang.org/x/xerrors"
 )
 

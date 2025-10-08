@@ -3,19 +3,20 @@ package rbdeal
 import (
 	"context"
 	"fmt"
-	"github.com/aurorainfra/gw/carlog"
-	"github.com/filecoin-project/lassie/pkg/types"
-	lru "github.com/hashicorp/golang-lru/v2"
-	pool "github.com/libp2p/go-buffer-pool"
-	"github.com/multiformats/go-multiaddr"
 	"io"
 	"math/rand"
 	"net/http"
 	"sync"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/ributil"
+	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/filecoin-project/lassie/pkg/types"
+	lru "github.com/hashicorp/golang-lru/v2"
+	pool "github.com/libp2p/go-buffer-pool"
+	"github.com/multiformats/go-multiaddr"
+
+	"github.com/CIDgravity/filecoin-gateway/ributil"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/lib/must"
@@ -62,10 +63,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 		return xerrors.Errorf("failed to get retrieval check candidates: %w", err)
 	}
 
-	r.rckToDo.Store(int64(len(candidates)))
-	r.rckStarted.Store(0)
-	r.rckSuccess.Store(0)
-	r.rckFail.Store(0)
+	r.retrCheckMetrics.Begin(int64(len(candidates)))
 
 	// last retr check candidates
 
@@ -98,7 +96,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 	for _, candidate := range candidates {
 		candidate := candidate
 
-		r.rckStarted.Add(1)
+		r.retrCheckMetrics.IncStarted()
 
 		timeoutLk.Lock()
 
@@ -124,8 +122,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 					return xerrors.Errorf("failed to record retrieval check result: %w", err)
 				}*/
 
-				r.rckFail.Add(1)
-				r.rckFailAll.Add(1)
+				r.retrCheckMetrics.IncFailed()
 
 				timeoutLk.Unlock()
 				continue
@@ -142,8 +139,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 		addrInfo, err := r.db.GetProviderAddrs(candidate.Provider)
 		if err != nil {
 			log.Debugw("failed to get addr info", "error", err)
-			r.rckFail.Add(1)
-			r.rckFailAll.Add(1)
+			r.retrCheckMetrics.IncFailed()
 			continue
 		}
 
@@ -185,15 +181,13 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 			gsAddrInfo, err := peer.AddrInfosFromP2pAddrs(addrInfo.LibP2PMaddrs...)
 			if err != nil {
 				log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-				r.rckFail.Add(1)
-				r.rckFailAll.Add(1)
+				r.retrCheckMetrics.IncFailed()
 				continue
 			}
 
 			if len(gsAddrInfo) == 0 {
 				log.Debugw("no gs addrinfo", "provider", candidate.Provider)
-				r.rckFail.Add(1)
-				r.rckFailAll.Add(1)
+				r.retrCheckMetrics.IncFailed()
 				continue
 			}
 
@@ -203,8 +197,7 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 			fixedPeer, err = peer.AddrInfosFromP2pAddrs(allMaddrs...)
 			if err != nil {
 				log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-				r.rckFail.Add(1)
-				r.rckFailAll.Add(1)
+				r.retrCheckMetrics.IncFailed()
 				continue
 			}
 
@@ -338,16 +331,14 @@ func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckC
 			return xerrors.Errorf("failed to record retrieval check result: %w", err)
 		}
 
-		r.rckSuccess.Add(1)
-		r.rckSuccessAll.Add(1)
+		r.retrCheckMetrics.IncSuccess()
 
 		log.Debugw("http retrieval check success", "provider", candidate.Provider, "group", candidate.Group, "took", time.Since(start))
 		return nil
 	}
 
 	log.Debugw("no http addrs, and lassie disabled", "provider", candidate.Provider)
-	r.rckFail.Add(1)
-	r.rckFailAll.Add(1)
+	r.retrCheckMetrics.IncFailed()
 
 	var res RetrievalResult
 	res.Success = false

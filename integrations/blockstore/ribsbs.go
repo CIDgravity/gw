@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aurorainfra/gw"
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
 	blockstore "github.com/ipfs/boxo/blockstore"
 	blocks "github.com/ipfs/go-block-format"
@@ -29,9 +29,9 @@ func MakeRequest[P, R any](param P) Request[P, R] {
 }
 
 type Blockstore struct {
-	r ribs.RIBS
+	r iface2.RIBS
 
-	sess ribs.Session
+	sess iface2.Session
 
 	puts chan Request[[]blocks.Block, error]
 
@@ -46,7 +46,7 @@ type Blockstore struct {
 var _ blockstore.Blockstore = &Blockstore{}
 var _ lotusbstore.Flusher = &Blockstore{}
 
-func New(ctx context.Context, r ribs.RIBS) *Blockstore {
+func New(ctx context.Context, r iface2.RIBS) *Blockstore {
 	b := &Blockstore{
 		r:    r,
 		sess: r.Session(ctx),
@@ -68,7 +68,7 @@ var (
 )
 
 func (b *Blockstore) start(ctx context.Context) {
-	var bt ribs.Batch
+	var bt iface2.Batch
 	var unflushed int
 
 	defer func() {

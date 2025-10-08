@@ -5,54 +5,58 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	"golang.org/x/xerrors"
-
-	iface "github.com/aurorainfra/gw"
 )
 
 type CarSource func(context.Context, iface.GroupKey, func(int64), io.Writer) error
 
 type ExternalOffloader interface {
-	maybeInitExternal(r *ribs) (bool, error)
+	maybeInitExternal(r *ribs, metrics *ExternalStorageModuleMetrics) (bool, error)
 	GetModuleName() string
 	EnsureExternalPush(gid iface.GroupKey, src CarSource) error
 	GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error)
 	CleanExternal(gid iface.GroupKey, lpath string) error
 	ReadCar(ctx context.Context, group iface.GroupKey, path string, off int64, size int64) (io.ReadCloser, error)
 	ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error)
+	GetMetrics() *ExternalStorageModuleMetrics
 }
 
-func (r *ribs) maybeInitExternal() error {
+func (r *ribs) initExternal() error {
+	metricsBase := newExternalStorageMetrics()
 	modules := []ExternalOffloader{
 		&S3OffloadInfo{},
 		&LocalWebInfo{},
 	}
 	for _, module := range modules {
-		found, err := module.maybeInitExternal(r)
+		metrics := metricsBase.forModule(module.GetModuleName())
+		found, err := module.maybeInitExternal(r, metrics)
 		if err != nil {
 			return err
 		}
 		if found {
 			log.Infow("XYZ: External module configured", "name", module.GetModuleName())
-			r.externalOffloader = module
+			meteredModule := &meteredExternalOffloader{
+				ExternalOffloader: module,
+				metrics:           metrics,
+			}
+			r.externalOffloader = meteredModule
+			r.RBS.StagingStorage().InstallStagingProvider(&ribsStagingProvider{r: r})
 			return nil
 		}
 	}
-
-	r.RBS.StagingStorage().InstallStagingProvider(&ribsStagingProvider{r: r})
-
-	return nil
+	return fmt.Errorf("no external module configured")
 }
 
 func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
+	if r.externalOffloader == nil {
+		return fmt.Errorf("no external offloader configured")
+	}
 	mname, err := r.db.NeedExternalModule()
 	if err != nil {
 		return xerrors.Errorf("XYZ: External: fail to check if external required: %w", err)
 	}
 	if mname != nil {
-		if r.externalOffloader == nil {
-			return nil
-		}
 		if lmod := r.externalOffloader.GetModuleName(); lmod != *mname {
 			return xerrors.Errorf("XYZ: External: need %s module, %s loaded", mname, lmod)
 		}
@@ -63,10 +67,6 @@ func (r *ribs) maybeEnsureEnsureExternalPush(gid iface.GroupKey) error {
 	}
 	if module != nil {
 		// already pushed
-		return nil
-	}
-
-	if r.externalOffloader == nil {
 		return nil
 	}
 

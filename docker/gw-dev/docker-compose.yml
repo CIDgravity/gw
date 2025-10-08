@@ -1,0 +1,18 @@
+services:
+  yugabyte:
+    image: yugabytedb/yugabyte:2024.2.5.0-b59
+    ports:
+      - "7001:7000"
+      - "9200:9000"
+      - "15433:15433"
+      - "5433:5433"
+      - "9042:9042"
+    volumes:
+      - ./data/yb:/root/var
+    environment:
+      YSQL_DB: filecoingw
+      YCQL_KEYSPACE: filecoingw
+    command: >
+      bin/yugabyted start
+        --background=false
+        --advertise_address=yugabyte

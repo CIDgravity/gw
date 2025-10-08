@@ -3,6 +3,13 @@ package kuboribs
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"os"
+	gopath "path"
+	"sync"
+	"time"
+
 	"github.com/go-git/go-billy/v5"
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	ft "github.com/ipfs/boxo/ipld/unixfs"
@@ -12,12 +19,6 @@ import (
 	// nfshelper "github.com/willscott/go-nfs/helpers"
 	// "go.uber.org/fx"
 	"golang.org/x/xerrors"
-	"io"
-	"net"
-	"os"
-	gopath "path"
-	"sync"
-	"time"
 )
 
 // This is broken:

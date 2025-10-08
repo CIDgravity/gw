@@ -3,7 +3,7 @@ package rbstor
 import (
 	"context"
 
-	iface "github.com/aurorainfra/gw"
+	"github.com/CIDgravity/filecoin-gateway/iface"
 )
 
 func (r *rbs) groupWorker(i int) {
@@ -93,7 +93,7 @@ func (r *rbs) Subscribe(sub iface.GroupSub) {
 }
 
 func (r *rbs) resumeGroups(ctx context.Context) {
-	gs, err := r.db.GroupStates()
+	gs, err := r.db.AllGroupStates()
 	if err != nil {
 		panic(err)
 	}

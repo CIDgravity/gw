@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/carlog"
-	"github.com/aurorainfra/gw/ributil"
+	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
 	commcid "github.com/filecoin-project/go-fil-commcid"
 	"github.com/ipfs/go-cid"
 	"golang.org/x/xerrors"

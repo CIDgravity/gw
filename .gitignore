@@ -1,6 +1,7 @@
 /build.sh
 /deploy.sh
-ritool
-gwcfg
+./ritool
+./gwcfg
 settings.env
 *~
+.idea/

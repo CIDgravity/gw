@@ -6,9 +6,11 @@ import (
 	"io"
 	"os"
 	"path"
+	"time"
 
-	iface "github.com/aurorainfra/gw"
-	"github.com/aurorainfra/gw/configuration"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	"github.com/google/uuid"
 	"github.com/mitchellh/go-homedir"
 	"golang.org/x/xerrors"
@@ -18,7 +20,10 @@ type LocalWebInfo struct {
 	name string
 	path string
 	url  string
-	r    *ribs
+
+	r *ribs
+
+	metrics *ExternalStorageModuleMetrics
 }
 
 const EXTERNAL_LOCALWEB = "local-web"
@@ -42,7 +47,7 @@ func getLocalWebPath() (string, error) {
 	return p, nil
 }
 
-func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
+func (lwi *LocalWebInfo) maybeInitExternal(r *ribs, metrics *ExternalStorageModuleMetrics) (bool, error) {
 	var err error
 	cfg := configuration.GetConfig()
 
@@ -61,7 +66,31 @@ func (lwi *LocalWebInfo) maybeInitExternal(r *ribs) (bool, error) {
 		return false, nil
 	}
 
+	lwi.metrics = metrics
+
+	{
+		cnt, err := lwi.getStagingCount()
+		if err != nil {
+			log.Errorf("failed to get staging count. error: %v", err)
+			return false, err
+		} else {
+			lwi.metrics.staging.Set(float64(cnt))
+		}
+	}
+
 	return true, nil
+}
+
+func (lwi *LocalWebInfo) getStagingCount() (int, error) {
+	target, err := getLocalWebPath()
+	if err != nil {
+		return 0, xerrors.Errorf("XYZ: LocalWeb: failed to get local web path: %w", err)
+	}
+	fnames, err := os.ReadDir(target)
+	if err != nil {
+		return 0, xerrors.Errorf("XYZ: LocalWeb: failed to read dir %v, error: %v", target, err)
+	}
+	return len(fnames), nil
 }
 
 func (lwi *LocalWebInfo) GetModuleName() string {
@@ -81,8 +110,30 @@ func (lwi *LocalWebInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) e
 	if _, err := os.Stat(target); err == nil {
 		return xerrors.Errorf("XYZ: LocalWeb: Random generated UUID for localweb cach already exists: %s", fname)
 	}
+
+	lwi.metrics.uploadsWaiting.Inc()
+
+	for {
+		stagingCnt, err := lwi.getStagingCount()
+		if err != nil {
+			return xerrors.Errorf("XYZ: LocalWeb: failed to get staging count, error: %v", err)
+		}
+		waitingCnt := metrics.GetGaugeValue(lwi.metrics.uploadsWaiting)
+		if stagingCnt+int(waitingCnt) <= configuration.GetConfig().Ribs.MaxStagingGroupCount {
+			break
+		}
+		// Log waiting status
+		log.Infow("staging storage full, waiting for space",
+			"group", gid,
+			"staging", stagingCnt,
+			"max", configuration.GetConfig().Ribs.MaxStagingGroupCount)
+		time.Sleep(time.Second)
+	}
+
 	// Write the carfile there
+	lwi.metrics.uploadsStarted.Inc()
 	carfile, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0666)
+	lwi.metrics.uploadsWaiting.Dec()
 	if err != nil {
 		return xerrors.Errorf("XYZ: opening carfile: %w", err)
 	}
@@ -109,8 +160,11 @@ func (lwi *LocalWebInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) e
 		return xerrors.Errorf("XYZ: LocalWeb: Failed to store localpath: %w", err)
 	}
 
+	lwi.metrics.uploadsDone.Inc()
+	lwi.metrics.staging.Inc()
 	return nil
 }
+
 func (lwi *LocalWebInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
 	url := fmt.Sprintf("%s/%s", lwi.url, lpath)
 	return &url, nil
@@ -130,10 +184,13 @@ func (lwi *LocalWebInfo) CleanExternal(gid iface.GroupKey, lpath string) error {
 	if err := lwi.r.db.DropExternalPath(gid); err != nil {
 		return xerrors.Errorf("XYZ: External: failed to remove external path from db for group %d: %w", gid, err)
 	}
+	lwi.metrics.staging.Dec()
 	return nil
 }
 
 func (lwi *LocalWebInfo) ReadCar(ctx context.Context, group iface.GroupKey, pathStr string, off int64, size int64) (io.ReadCloser, error) {
+	lwi.metrics.readBytes.Inc()
+
 	target, err := getLocalWebPath()
 	if err != nil {
 		return nil, xerrors.Errorf("XYZ: LocalWeb: failed to get local web path: %w", err)
@@ -184,4 +241,8 @@ func (lwi *LocalWebInfo) ReadCarFile(ctx context.Context, group iface.GroupKey) 
 	}
 
 	return file, nil
+}
+
+func (lwi *LocalWebInfo) GetMetrics() *ExternalStorageModuleMetrics {
+	return lwi.metrics
 }

@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/iface"
 	"go.uber.org/fx"
 	"golang.org/x/net/webdav"
 	"golang.org/x/xerrors"
 
-	"github.com/aurorainfra/gw"
 	dag "github.com/ipfs/boxo/ipld/merkledag"
 	ft "github.com/ipfs/boxo/ipld/unixfs"
 	"github.com/ipfs/boxo/mfs"
@@ -25,7 +25,7 @@ import (
 	mh "github.com/multiformats/go-multihash"
 )
 
-func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
+func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb iface.MetadataDB) {
 	log.Infow("davfs: Starting davfs")
 	davHandler := &webdav.Handler{
 		Prefix:     "",
@@ -67,7 +67,7 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb ribs.MetadataDB) {
 
 type mfsDavFs struct {
 	mr  *mfs.Root
-	mdb ribs.MetadataDB
+	mdb iface.MetadataDB
 }
 
 func (m *mfsDavFs) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -84,7 +84,7 @@ func (m *mfsDavFs) Mkdir(ctx context.Context, name string, perm os.FileMode) err
 type mfsDavFile struct {
 	mr  *mfs.Root
 	mfd mfs.FileDescriptor
-	mdb ribs.MetadataDB
+	mdb iface.MetadataDB
 
 	mode  os.FileMode
 	mtime time.Time
@@ -158,7 +158,7 @@ func (m *mfsDavFile) Write(p []byte) (n int, err error) {
 type mfsDavDir struct {
 	mr  *mfs.Root
 	mfd *mfs.Directory
-	mdb ribs.MetadataDB
+	mdb iface.MetadataDB
 
 	path string
 }

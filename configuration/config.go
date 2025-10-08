@@ -1,14 +1,16 @@
 package configuration
 
 import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/lotus/chain/types"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
-	"os"
-	"strings"
-	"time"
 )
 
 var log = logging.Logger("ribs:config")
@@ -56,10 +58,12 @@ type RibsConfig struct {
 	MaximumReplicaCount        int           `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
 	RetrievableRepairThreshold int           `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
 	MaxLocalGroupCount         int           `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
+	MaxStagingGroupCount       int           `envconfig:"RIBS_MAX_STAGING_GROUP_COUNT" default:"0"`
 	DealCheckInterval          time.Duration `envconfig:"RIBS_DEAL_CHECK_INTERVAL" default:"30s"`
 	DealCanSendCommand         string        `envconfig:"RIBS_DEAL_CAN_SEND_COMMAND" default:""`
 	MongoDBUri                 string        `envconfig:"RIBS_MONGODB_URI"`
 	RunSpCrawler               bool          `envconfig:"RIBS_RUN_SP_CRAWLER" default:"true"`
+	CidLocationWorkerCount     int           `envconfig:"RIBS_CID_LOCATION_WORKER_COUNT" default:"128"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
@@ -76,11 +80,17 @@ type WalletConfig struct {
 type YugabyteCqlConfig struct {
 	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"127.0.0.1"`
 	Port     int    `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
-	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"auroragw"`
+	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"filecoingw"`
+	User     string `envconfig:"RIBS_YUGABYTE_CQL_USER"`
+	Pass     string `envconfig:"RIBS_YUGABYTE_CQL_PASS"`
 
 	// Yugabyte deployed in docker on MacOS and Windows WSL will advertise its docker container IP, which will replace the configured host and break the connection.
 	// Set to true for local development on those systems
 	ForceHosts bool `envconfig:"RIBS_YUGABYTE_CQL_FORCE_HOSTS" default:"false"`
+
+	Timeout         int `envconfig:"RIBS_YUGABYTE_CQL_TIMEOUT" default:"11"`
+	ConnectTimeout  int `envconfig:"RIBS_YUGABYTE_CQL_CONNECT_TIMEOUT" default:"11"`
+	SocketKeepalive int `envconfig:"RIBS_YUGABYTE_CQL_SOCKET_KEEPALIVE" default:"0"`
 }
 
 type YugabyteSqlConfig struct {
@@ -88,12 +98,15 @@ type YugabyteSqlConfig struct {
 	Port int    `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
 	User string `envconfig:"RIBS_YUGABYTE_SQL_USER" default:"postgres"`
 	Pass string `envconfig:"RIBS_YUGABYTE_SQL_PASS" default:"postgres"`
-	Db   string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"auroragw"`
+	Db   string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"filecoingw"`
 }
 
 type S3APIConfig struct {
-	Region   string `envconfig:"RIBS_S3API_REGION" default:"EU"`
-	BindAddr string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
+	Region          string `envconfig:"RIBS_S3API_REGION" default:"EU"`
+	BindAddr        string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
+	AuthEnabled     bool   `envconfig:"RIBS_S3API_AUTH_ENABLED" default:"false"`
+	RootAccessKeyId string `envconfig:"RIBS_S3API_ROOT_ACCESS_KEY_ID"`
+	RootSecretKey   string `envconfig:"RIBS_S3API_ROOT_SECRET_KEY"`
 }
 
 type PrometheusConfig struct {
@@ -119,12 +132,8 @@ func GetConfig() *Config {
 	return &config
 }
 
-func init() {
-	LoadConfig()
-}
-
 func LoadConfig() error {
-	// neew to initialize those types so they are not nil
+	// need to initialize those types so they are not nil
 	config.Wallet.MinMarketBalance = types.NewInt(0)
 	config.Wallet.AutoMarketBalance = types.NewInt(0)
 	if err := envconfig.Process("", &config); err != nil {
@@ -143,6 +152,9 @@ func LoadConfig() error {
 	if rcfg.RetrievableRepairThreshold < 0 {
 		return xerrors.Errorf("RetrievableRepairThreshold negative: %d < 0\n", rcfg.RetrievableRepairThreshold)
 	}
+	if rcfg.MaxStagingGroupCount == 0 {
+		config.Ribs.MaxStagingGroupCount = rcfg.MaxLocalGroupCount
+	}
 	config.CidGravity.AltTokens = make(map[string]string)
 	for _, client := range config.CidGravity.AltClients {
 		token := os.Getenv("CIDGRAVITY_API_TOKEN_" + client)
@@ -151,21 +163,9 @@ func LoadConfig() error {
 		}
 		config.CidGravity.AltTokens[client] = token
 	}
-	if config.LogLevel != "" {
-		for _, kvs := range strings.Split(config.LogLevel, ",") {
-			kv := strings.SplitN(kvs, "=", 2)
-			lvl := kv[len(kv)-1]
-			switch len(kv) {
-			case 1:
-				if err := logging.SetLogLevelRegex("ribs:.*", lvl); err != nil {
-					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
-				}
-			case 2:
-				if err := logging.SetLogLevelRegex("ribs:"+kv[0], lvl); err != nil {
-					log.Fatal("Failed to initialize ribs loglevel", "error", err.Error())
-				}
-			}
-		}
+	err := config.configureLogLevels()
+	if err != nil {
+		return err
 	}
 	if !config.Wallet.AutoMarketBalance.GreaterThan(config.Wallet.MinMarketBalance) {
 		// auto > min
@@ -175,6 +175,21 @@ func LoadConfig() error {
 		}
 	}
 
-	log.Debugw("Loaded config", "config", config)
+	log.Debugw("Loaded config")
+	return nil
+}
+
+func (c *Config) configureLogLevels() error {
+	levels := strings.Split(c.LogLevel, ",")
+	for _, level := range levels {
+		s := strings.Split(level, "=")
+		if len(s) != 2 {
+			return fmt.Errorf("invalid log level: %s", level)
+		}
+		err := logging.SetLogLevelRegex(s[0], s[1])
+		if err != nil {
+			return fmt.Errorf("invalid log level: %s, error: %w", s[0], err)
+		}
+	}
 	return nil
 }

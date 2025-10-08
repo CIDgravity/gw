@@ -12,10 +12,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/mitchellh/go-homedir"
 
-	"github.com/aurorainfra/gw/configuration"
-	types "github.com/aurorainfra/gw/ributil/boosttypes"
+	types "github.com/CIDgravity/filecoin-gateway/ributil/boosttypes"
 	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/acme/autocert"

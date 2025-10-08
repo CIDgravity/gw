@@ -4,7 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"github.com/aurorainfra/gw/carlog"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/test"
 	"github.com/filecoin-project/lotus/blockstore"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -13,10 +19,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/xerrors"
-	"io"
-	"os"
-	"path/filepath"
-	"testing"
 )
 
 /*
@@ -285,7 +287,8 @@ func prepareCarlogTestData(t TF) ([]byte, cid.Cid, blockstore.Blockstore) {
 	idir, ddir := filepath.Join(td, "ind"), filepath.Join(td, "dat")
 	require.NoError(t, os.MkdirAll(ddir, 0777))
 
-	cl, err := carlog.Create(nil, idir, ddir, nil)
+	tsp := &test.StagingProvider{}
+	cl, err := carlog.Create(tsp, idir, ddir, nil)
 	require.NoError(t, err)
 
 	for i := 0; i < 8000; i++ {

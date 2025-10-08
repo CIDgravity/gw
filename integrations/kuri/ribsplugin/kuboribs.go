@@ -5,6 +5,18 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	cqldb2 "github.com/CIDgravity/filecoin-gateway/database/cqldb"
+	sqldb2 "github.com/CIDgravity/filecoin-gateway/database/sqldb"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/integrations/blockstore"
+	"github.com/CIDgravity/filecoin-gateway/integrations/kuri/ribsplugin/s3"
+	"github.com/CIDgravity/filecoin-gateway/integrations/web"
+	"github.com/CIDgravity/filecoin-gateway/rbdeal"
+	"github.com/CIDgravity/filecoin-gateway/rbstor"
+	cidlocation2 "github.com/CIDgravity/filecoin-gateway/rbstor/cidlocation"
+	fgw_metrics "github.com/CIDgravity/filecoin-gateway/server/metrics"
+	fgw_s3 "github.com/CIDgravity/filecoin-gateway/server/s3"
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
 	blockstore "github.com/ipfs/boxo/blockstore"
 	"github.com/ipfs/go-cid"
@@ -28,16 +40,6 @@ import (
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
-
-	"github.com/aurorainfra/gw"
-	agw_metrics "github.com/aurorainfra/gw/agw/server/metrics"
-	agw_s3 "github.com/aurorainfra/gw/agw/server/s3"
-	"github.com/aurorainfra/gw/configuration"
-	"github.com/aurorainfra/gw/database"
-	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
-	ribs_s3 "github.com/aurorainfra/gw/integrations/kuri/ribsplugin/s3"
-	"github.com/aurorainfra/gw/integrations/web"
-	"github.com/aurorainfra/gw/rbdeal"
 )
 
 var log = logging.Logger("ribs:plugin")
@@ -65,11 +67,16 @@ func (p *ribsPlugin) Init(env *plugin.Environment) error {
 func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 	opts := info.FXOptions
 	opts = append(opts,
-		fx.Provide(makeDb),
+		fx.Provide(makeSqlDb),
+		fx.Provide(makeCqlDb),
+		fx.Provide(provideConfig),
+		rbstor.Module,
+		cidlocation2.Module,
 		fx.Provide(makeRibs),
 		fx.Provide(ribsBlockstore),
 		fx.Provide(ribsMetadata),
-		fx.Provide(ribs_s3.MakeS3Server),
+		fx.Provide(makeS3ObjectIndex),
+		s3.Module,
 
 		fx.Decorate(func(rbs *ribsbstore.Blockstore) node.BaseBlocks {
 			return rbs
@@ -87,32 +94,48 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 
 		fx.Decorate(RibsFiles),
 
-		fx.Invoke(StartMfsDav),
-		fx.Invoke(agw_metrics.StartPrometheusServer),
-		fx.Invoke(agw_s3.StartS3Server),
+		//fx.Invoke(StartMfsDav),
+		fx.Invoke(fgw_metrics.StartPrometheusServer),
+		fx.Invoke(fgw_s3.StartS3Server),
 		//fx.Invoke(StartMfsNFSFs),
 		fx.Invoke(StartMeta),
+		fx.Invoke(cidlocation2.StartWorkers),
 	)
 	return opts, nil
 }
 
 // node.BaseBlocks, blockstore.Blockstore, blockstore.GCLocker, blockstore.GCBlockstore
 
-func makeDb() (database.Database, error) {
-	return database.NewYugabyteDB(configuration.GetConfig().YugabyteSql)
+func makeSqlDb() (sqldb2.Database, error) {
+	return sqldb2.NewYugabyteDB(configuration.GetConfig().YugabyteSql)
+}
+
+func makeCqlDb() (cqldb2.Database, error) {
+	return cqldb2.NewYugabyteCqlDb(configuration.GetConfig().YugabyteCql)
+}
+
+func makeS3ObjectIndex(db cqldb2.Database) iface.S3ObjectIndex {
+	return s3.NewObjectIndexCql(db)
+}
+
+func provideConfig() (*configuration.RibsConfig, *configuration.S3APIConfig) {
+	config := configuration.GetConfig()
+	return &config.Ribs, &config.S3API
 }
 
 type ribsIn struct {
 	fx.In
 
-	Lc fx.Lifecycle
-	H  host.Host `optional:"true"`
-	Db database.Database
+	Lc     fx.Lifecycle
+	H      host.Host `optional:"true"`
+	Rbstor iface.RBS
+	Sqldb  sqldb2.Database
 }
 
-func makeRibs(ri ribsIn) (ribs.RIBS, error) {
+func makeRibs(ri ribsIn) (iface.RIBS, error) {
 	var opts []rbdeal.OpenOption
-	opts = append(opts, rbdeal.WithDatabase(ri.Db))
+	opts = append(opts, rbdeal.WithSqlDatabase(ri.Sqldb))
+	opts = append(opts, rbdeal.WithRbstor(ri.Rbstor))
 	if ri.H != nil {
 		opts = append(opts, rbdeal.WithHostGetter(func(...libp2p.Option) (host.Host, error) {
 			return ri.H, nil
@@ -148,7 +171,7 @@ func makeRibs(ri ribsIn) (ribs.RIBS, error) {
 	return r, nil
 }
 
-func ribsBlockstore(r ribs.RIBS, lc fx.Lifecycle) *ribsbstore.Blockstore {
+func ribsBlockstore(r iface.RIBS, lc fx.Lifecycle) *ribsbstore.Blockstore {
 	rbs := ribsbstore.New(context.TODO(), r)
 
 	// assert interface
@@ -163,7 +186,7 @@ func ribsBlockstore(r ribs.RIBS, lc fx.Lifecycle) *ribsbstore.Blockstore {
 	return rbs
 }
 
-func ribsMetadata(r ribs.RIBS /*, lc fx.Lifecycle */) ribs.MetadataDB {
+func ribsMetadata(r iface.RIBS /*, lc fx.Lifecycle */) iface.MetadataDB {
 	rbmeta := r.MetaDB()
 
 	/*
@@ -213,7 +236,7 @@ var _ blockstore.GCLocker = (*flushingGCLocker)(nil)
 
 // MFS Durability
 
-func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore, mdb ribs.MetadataDB) (*mfs.Root, error) {
+func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore, mdb iface.MetadataDB) (*mfs.Root, error) {
 	bsv := blockservice.New(rbs, offline.Exchange(rbs))
 	dag := merkledag.NewDAGService(bsv)
 

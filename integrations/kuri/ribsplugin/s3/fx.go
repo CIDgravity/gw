@@ -1,76 +1,59 @@
 package s3
 
 import (
-	"context"
-	"errors"
-
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/integrations/blockstore"
+	"github.com/CIDgravity/filecoin-gateway/rbstor/cidlocation"
+	"github.com/CIDgravity/filecoin-gateway/server/s3"
 	"go.uber.org/fx"
 
-	"github.com/filecoin-project/go-hamt-ipld"
 	"github.com/ipfs/boxo/blockservice"
 	chunk "github.com/ipfs/boxo/chunker"
 	"github.com/ipfs/boxo/exchange/offline"
 	"github.com/ipfs/boxo/ipld/merkledag"
-	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
-	cbor "github.com/ipfs/go-ipld-cbor"
 	logging "github.com/ipfs/go-log"
-	"github.com/ipfs/kubo/core/node/helpers"
 	"github.com/ipfs/kubo/repo"
-
-	agw_s3 "github.com/aurorainfra/gw/agw/server/s3"
-	"github.com/aurorainfra/gw/configuration"
-	ribsbstore "github.com/aurorainfra/gw/integrations/blockstore"
 )
 
-var log = logging.Logger("kuri/s3")
+var log = logging.Logger("gw/s3")
 
-func MakeS3Server(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore) (*agw_s3.S3Server, error) {
-	log.Info("Starting S3 plugin")
+var Module = fx.Module(
+	"s3",
+	fx.Provide(
+		MakeS3Server,
+		s3.NewAuthenticator,
+	),
+)
 
-	lctx := helpers.LifecycleCtx(mctx, lc)
-	bsv := blockservice.New(rbs, offline.Exchange(rbs))
-	dag := merkledag.NewDAGService(bsv)
-	ipldStore := cbor.NewCborStore(rbs)
-
-	node, err := loadHamtNode(lctx, repo, ipldStore)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg := configuration.GetConfig()
-	region := &Region{
-		name: cfg.S3API.Region,
-		index: &Index{
-			node:  node,
-			store: ipldStore,
-		},
-
-		blockstore:  rbs,
-		dag:         dag,
-		splitterGen: chunk.SizeSplitterGen(1024 * 1024),
-		repo:        repo,
-	}
-
-	return agw_s3.NewS3Server(region), nil
+type ServerIn struct {
+	fx.In
+	Repo              repo.Repo
+	Rbs               *ribsbstore.Blockstore
+	Index             iface.S3ObjectIndex
+	CidLocationWorker *cidlocation.Worker
+	Auth              *s3.Authenticator
+	Cfg               *configuration.S3APIConfig
 }
 
-func loadHamtNode(ctx context.Context, repo repo.Repo, store cbor.IpldStore) (*hamt.Node, error) {
-	key := datastore.NewKey("/local/s3/index")
-	value, err := repo.Datastore().Get(ctx, key)
+func MakeS3Server(in ServerIn) (*s3.S3Server, error) {
+	log.Info("Starting S3 plugin")
 
-	switch {
-	case errors.Is(err, datastore.ErrNotFound) || value == nil:
-		node := hamt.NewNode(store)
-		return node, nil
-	case err == nil:
-		c, err := cid.Cast(value)
-		if err != nil {
-			return nil, err
-		}
+	bsv := blockservice.New(in.Rbs, offline.Exchange(in.Rbs))
+	dag := merkledag.NewDAGService(bsv)
 
-		return hamt.LoadNode(ctx, store, c)
-	default:
-		return nil, err
+	region := &Region{
+		name:  in.Cfg.Region,
+		index: in.Index,
+
+		blockstore:  in.Rbs,
+		dag:         dag,
+		splitterGen: chunk.SizeSplitterGen(1024 * 1024),
+		repo:        in.Repo,
+		cidlocation: in.CidLocationWorker,
+
+		buckets: map[string]iface.Bucket{},
 	}
+
+	return s3.NewS3Server(region, in.Auth), nil
 }

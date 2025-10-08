@@ -1,0 +1,49 @@
+name: Internal E2E Tests
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-docker-image:
+    if: ${{ vars.INTERNAL_CI_ENABLED }}
+    uses: ./.github/workflows/release.yml
+    with:
+      context: '.'
+      dockerfile: 'Dockerfile'
+      service: 'fgw'
+      tag_override: pr-${{ github.event.number }}
+
+  dispatch:
+    if: ${{ vars.INTERNAL_CI_ENABLED }}
+    needs: build-docker-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.E2E_TRIGGER_APP_ID }}
+          private-key: ${{ secrets.E2E_TRIGGER_APP_PRIVATE_KEY }}
+          owner: aurorainfra
+          repositories: platform
+
+      - name: Trigger e2e tests workflow
+        run: |
+          curl -sSf -X POST \
+            -H "Authorization: Bearer ${{ steps.app-token.outputs.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/aurorainfra/platform/dispatches \
+            -d @- <<'JSON'
+          {
+            "event_type": "run-go-tests",
+            "client_payload": {
+              "fgw_tag": "pr-${{ github.event.number }}",
+              "pr_number": ${{ github.event.number }},
+              "sha": "${{ github.sha }}",
+              "source_repo": "${{ github.repository }}"
+            }
+          }
+          JSON

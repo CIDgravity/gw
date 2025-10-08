@@ -3,22 +3,23 @@ package rbdeal
 import (
 	"context"
 
+	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	"github.com/libp2p/go-libp2p/core/host"
 
-	iface "github.com/aurorainfra/gw"
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 )
 
-func (r *ribs) DealDiag() iface.RIBSDiag {
+func (r *ribs) DealDiag() iface2.RIBSDiag {
 	return r
 }
 
-func (r *ribs) CrawlState() iface.CrawlState {
+func (r *ribs) CrawlState() iface2.CrawlState {
 	cs := r.crawlState.Load()
 	if cs == nil {
-		return iface.CrawlState{
+		return iface2.CrawlState{
 			State: "disabled",
 		}
 	}
@@ -26,31 +27,34 @@ func (r *ribs) CrawlState() iface.CrawlState {
 	return *cs
 }
 
-func (r *ribs) ReachableProviders() []iface.ProviderMeta {
+func (r *ribs) ReachableProviders() []iface2.ProviderMeta {
 	return r.db.ReachableProviders()
 }
 
-func (r *ribs) ProviderInfo(id int64) (iface.ProviderInfo, error) {
+func (r *ribs) ProviderInfo(id int64) (iface2.ProviderInfo, error) {
 	return r.db.ProviderInfo(id)
 }
 
-func (r *ribs) DealSummary() (iface.DealSummary, error) {
+func (r *ribs) DealSummary() (iface2.DealSummary, error) {
 	return r.db.DealSummary()
 }
 
-func (r *ribs) GroupDeals(gk iface.GroupKey) ([]iface.DealMeta, error) {
+func (r *ribs) GroupDeals(gk iface2.GroupKey) ([]iface2.DealMeta, error) {
 	return r.db.GroupDeals(gk)
 }
 
-func (r *ribs) StagingStats() (iface.StagingStats, error) {
-	return iface.StagingStats{
-		UploadBytes:   r.s3UploadBytes.Load(),
-		UploadStarted: r.s3UploadStarted.Load(),
-		UploadDone:    r.s3UploadDone.Load(),
-		UploadErr:     r.s3UploadErr.Load(),
-		Redirects:     r.s3Redirects.Load(),
-		ReadReqs:      r.s3ReadReqs.Load(),
-		ReadBytes:     r.s3ReadBytes.Load(),
+func (r *ribs) StagingStats() (iface2.StagingStats, error) {
+	m := r.externalOffloader.GetMetrics()
+	return iface2.StagingStats{
+		UploadBytes:   int64(metrics.GetCounterValue(m.uploadedBytes)),
+		UploadWaiting: int64(metrics.GetGaugeValue(m.uploadsWaiting)),
+		UploadStarted: int64(metrics.GetCounterValue(m.uploadsStarted)),
+		UploadDone:    int64(metrics.GetCounterValue(m.uploadsDone)),
+		Staging:       int64(metrics.GetGaugeValue(m.staging)),
+		UploadErr:     int64(metrics.GetCounterValue(m.uploadErr)),
+		Redirects:     0,
+		ReadReqs:      int64(metrics.GetCounterValue(m.readReqs)),
+		ReadBytes:     int64(metrics.GetCounterValue(m.readBytes)),
 	}, nil
 }
 
@@ -63,15 +67,15 @@ func (r *ribs) Filecoin(ctx context.Context) (api.Gateway, jsonrpc.ClientCloser,
 	return gw, closer, nil
 }
 
-func getLibP2PInfoForHost(h host.Host) iface.Libp2pInfo {
+func getLibP2PInfoForHost(h host.Host) iface2.Libp2pInfo {
 	if h == nil {
-		return iface.Libp2pInfo{
+		return iface2.Libp2pInfo{
 			Listen: []string{},
 			PeerID: "n/a",
 		}
 	}
 
-	out := iface.Libp2pInfo{
+	out := iface2.Libp2pInfo{
 		PeerID: h.ID().String(),
 		Peers:  len(h.Network().Peers()),
 	}
@@ -83,8 +87,8 @@ func getLibP2PInfoForHost(h host.Host) iface.Libp2pInfo {
 	return out
 }
 
-func (r *ribs) P2PNodes(ctx context.Context) (map[string]iface.Libp2pInfo, error) {
-	out := map[string]iface.Libp2pInfo{}
+func (r *ribs) P2PNodes(ctx context.Context) (map[string]iface2.Libp2pInfo, error) {
+	out := map[string]iface2.Libp2pInfo{}
 
 	out["main"] = getLibP2PInfoForHost(r.host)
 	out["crawl"] = getLibP2PInfoForHost(r.crawlHost)
@@ -93,34 +97,34 @@ func (r *ribs) P2PNodes(ctx context.Context) (map[string]iface.Libp2pInfo, error
 	return out, nil
 }
 
-func (r *ribs) RetrChecker() iface.RetrCheckerStats {
-	return iface.RetrCheckerStats{
-		ToDo:       r.rckToDo.Load(),
-		Started:    r.rckStarted.Load(),
-		Success:    r.rckSuccess.Load(),
-		Fail:       r.rckFail.Load(),
-		SuccessAll: r.rckSuccessAll.Load(),
-		FailAll:    r.rckFailAll.Load(),
+func (r *ribs) RetrChecker() iface2.RetrCheckerStats {
+	return iface2.RetrCheckerStats{
+		ToDo:       int64(metrics.GetGaugeValue(r.retrCheckMetrics.todo)),
+		Started:    int64(metrics.GetGaugeValue(r.retrCheckMetrics.started)),
+		Success:    int64(metrics.GetGaugeValue(r.retrCheckMetrics.success)),
+		Fail:       int64(metrics.GetGaugeValue(r.retrCheckMetrics.failed)),
+		SuccessAll: int64(metrics.GetCounterValue(r.retrCheckMetrics.successAll)),
+		FailAll:    int64(metrics.GetCounterValue(r.retrCheckMetrics.failedAll)),
 	}
 }
 
-func (r *ribs) RetrievableDealCounts() ([]iface.DealCountStats, error) {
+func (r *ribs) RetrievableDealCounts() ([]iface2.DealCountStats, error) {
 	return r.db.GetRetrievableDealStats()
 }
 
-func (r *ribs) SealedDealCounts() ([]iface.DealCountStats, error) {
+func (r *ribs) SealedDealCounts() ([]iface2.DealCountStats, error) {
 	return r.db.GetSealedDealStats()
 }
 
-func (r *ribs) RepairQueue() (iface.RepairQueueStats, error) {
+func (r *ribs) RepairQueue() (iface2.RepairQueueStats, error) {
 	return r.db.GetRepairStats()
 }
 
-func (r *ribs) RepairStats() (map[int]iface.RepairJob, error) {
+func (r *ribs) RepairStats() (map[int]iface2.RepairJob, error) {
 	r.repairStatsLk.Lock()
 	defer r.repairStatsLk.Unlock()
 
-	out := map[int]iface.RepairJob{}
+	out := map[int]iface2.RepairJob{}
 	for k, v := range r.repairStats {
 		out[k] = *v
 	}
