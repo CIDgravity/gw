@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   release-fgw:
+    if: ${{ vars.INTERNAL_CI_ENABLED }}
     uses: ./.github/workflows/release.yml
     with:
       context: '.'

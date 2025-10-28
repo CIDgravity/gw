@@ -1,0 +1,39 @@
+name: Replicate repository
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  replicate:
+    if: ${{ vars.INTERNAL_CI_ENABLED }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: main
+          fetch-depth: 0
+      - name: Create application token
+        uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.REPLICATE_APP_ID }}
+          private-key: ${{ secrets.REPLICATE_APP_PRIVATE_KEY }}
+          owner: CIDgravity
+          repositories: filecoin-gateway
+      - name: Configure git auth
+        shell: bash
+        run: |
+          TOKEN='${{ steps.app-token.outputs.token }}'
+          echo "::add-mask::$TOKEN"
+          AUTH=$(printf "x-access-token:%s" "$TOKEN" | base64 | tr -d '\n')
+          git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic $AUTH"
+          git config --global user.name "aurorainfra-bot"
+          git config --global user.email "github-bot@aurorainfra.ai"
+
+      - name: Push to public repo
+        run: |
+          git remote add public https://github.com/CIDgravity/filecoin-gateway.git
+          git push public HEAD:refs/heads/main --force-with-lease
