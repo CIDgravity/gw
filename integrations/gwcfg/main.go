@@ -30,8 +30,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const defaultEnvFile = "settings.env"
-
 var (
 	cidgHexChallengeRe = regexp.MustCompile(`^[a-f0-9]+$`)
 	cidgLotusSignRe    = regexp.MustCompile(`^lotus wallet sign f1[a-z0-9]+ [a-f0-9]+$`)
@@ -65,8 +63,13 @@ func collectKeys() ([]groupedEnvKey, error) {
 			return "Deals Advanced", true
 		case strings.HasPrefix(env, "RIBS_DEAL_"):
 			return "Deals", false
+		case strings.HasPrefix(env, "RIBS_YUGABYTE_"):
+			return "YugabyteDB", false
+		case strings.HasPrefix(env, "RIBS_S3API_"):
+			return "S3 API", false
 		case strings.HasPrefix(env, "RIBS_"):
 			return "RIBS", true
+
 		default:
 			return "Misc", true
 		}
@@ -741,11 +744,9 @@ func testEndpoint(url string) error {
 }
 
 func main() {
-	var envFile string
-	flag.StringVar(&envFile, "f", defaultEnvFile, "path to environment file")
-	flag.Parse()
+	opts := loadOpts()
 
-	abs, _ := filepath.Abs(envFile)
+	abs, _ := filepath.Abs(opts.envFile)
 
 	switch flag.NArg() {
 	case 0:
@@ -770,9 +771,9 @@ func main() {
 			log.Fatal(err)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "Usage: ribscfg [options]            # interactive wizard")
-		fmt.Fprintln(os.Stderr, "       ribscfg get KEY              # print value")
-		fmt.Fprintln(os.Stderr, "       ribscfg set KEY VAL          # non‑interactive update")
+		fmt.Fprintln(os.Stderr, "Usage: gwcfg [options]            # interactive wizard")
+		fmt.Fprintln(os.Stderr, "       gwcfg get KEY              # print value")
+		fmt.Fprintln(os.Stderr, "       gwcfg set KEY VAL          # non‑interactive update")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
