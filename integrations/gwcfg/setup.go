@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/charmbracelet/huh"
 )
@@ -49,9 +50,19 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 		return err
 	}
 	if fund {
-		if err := EnsureWalletOnChain(ctx, opts.lotusGateway, opts.faucetUrl, addr, "", opts.walletTimeout); err != nil {
+		fmt.Println("Requesting faucet funds...")
+		if err := FundWalletViaFaucet(opts.faucetUrl, addr); err != nil {
 			return err
 		}
+		fmt.Println("✅ Faucet request successful. Waiting for wallet to become visible on-chain...")
+
+		stop := startSpinner(fmt.Sprintf("Waiting for %s to appear on-chain", addr))
+		err := WaitWalletAppearsOnChain(ctx, opts.lotusGateway, addr, opts.walletTimeout)
+		stop()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\n✅ Wallet is now visible on-chain: %s\n", addr)
 	}
 	return nil
 }
@@ -192,4 +203,26 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	}
 
 	return saveConfig(envPath, env)
+}
+
+func startSpinner(message string) func() {
+	stop := make(chan struct{})
+	go func() {
+		frames := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+		i := 0
+		ticker := time.NewTicker(120 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				// Clear the spinner line
+				fmt.Printf("\r%-80s\r", "")
+				return
+			case <-ticker.C:
+				fmt.Printf("\r%c %s", frames[i%len(frames)], message)
+				i++
+			}
+		}
+	}()
+	return func() { close(stop) }
 }

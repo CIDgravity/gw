@@ -49,11 +49,8 @@ func WalletExistsOnChain(ctx context.Context, lotusAPIAddr, addrStr string) (boo
 	return true, nil
 }
 
-func FundWalletViaFaucet(faucetURL, addr string, amount string) error {
-	q := fmt.Sprintf("%s?wallet=%s", faucetURL, addr)
-	if amount != "" {
-		q += "&fil=" + amount
-	}
+func FundWalletViaFaucet(faucetURL, addr string) error {
+	q := fmt.Sprintf("%s?wallet=%s&fil=0.000001", faucetURL, addr)
 	res, err := http.Get(q)
 	if err != nil {
 		return fmt.Errorf("http faucet: %w", err)
@@ -90,18 +87,4 @@ func WaitWalletAppearsOnChain(ctx context.Context, lotusAPIAddr, addr string, ti
 		}
 		time.Sleep(WaitWalletPoll)
 	}
-}
-
-func EnsureWalletOnChain(ctx context.Context, lotusAPIAddr, faucetURL, addr string, amount string, timeout time.Duration) error {
-	exists, err := WalletExistsOnChain(ctx, lotusAPIAddr, addr)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	if err := FundWalletViaFaucet(faucetURL, addr, amount); err != nil {
-		return fmt.Errorf("could not fund via faucet: %w", err)
-	}
-	return WaitWalletAppearsOnChain(ctx, lotusAPIAddr, addr, timeout)
 }
