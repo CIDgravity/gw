@@ -402,108 +402,6 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	return false, nil
 }
 
-func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
-	env := map[string]string{}
-
-	// 1. Set CIDGravity API token
-	for _, k := range keys {
-		if k.Var == "CIDGRAVITY_API_TOKEN" {
-			home, _ := os.UserHomeDir()
-			walletPath := filepath.Join(home, ".ribswallet")
-			val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
-			if err != nil {
-				return err
-			}
-			env[k.Var] = val
-			break
-		}
-	}
-
-	// 2. RIBS_DATA
-	for _, k := range keys {
-		if k.Section == "RIBS" && k.Var == "RIBS_DATA" {
-			val := k.DefaultValue
-			comment := envComment(k.Var)
-			field := huh.NewInput().
-				Title(k.Var).
-				Value(&val).
-				Placeholder(k.DefaultValue)
-			if comment != "" {
-				field = field.Description(comment)
-			}
-			if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-				return err
-			}
-			env[k.Var] = val
-		}
-	}
-
-	// 2. Deal Config
-	for _, k := range keys {
-		if k.Section == "Deals" {
-			val := k.DefaultValue
-			comment := envComment(k.Var)
-			field := huh.NewInput().
-				Title(k.Var).
-				Value(&val).
-				Placeholder(k.DefaultValue)
-			if comment != "" {
-				field = field.Description(comment)
-			}
-			if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-				return err
-			}
-			env[k.Var] = val
-		}
-	}
-
-	// 3. External config: s3/localweb
-	var extType string
-	extOpts := []huh.Option[string]{
-		huh.NewOption("LocalWeb", "localweb"),
-		huh.NewOption("S3", "s3"),
-	}
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().Title("Upload config type").Options(extOpts...).Value(&extType),
-		),
-	).Run(); err != nil {
-		return err
-	}
-
-	switch extType {
-	case "s3":
-		for _, k := range keys {
-			if k.Section == "Upload:S3" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	case "localweb":
-		for _, k := range keys {
-			if k.Section == "Upload:LocalWeb" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	}
-
-	// Save config
-	if err := saveEnv(envPath, env, envComment); err != nil {
-		return err
-	}
-	fmt.Printf("Initial configuration saved to %s\n", envPath)
-	return nil
-}
-
 func wizard(envPath string) error {
 	keys, err := collectKeys()
 	if err != nil {
@@ -754,7 +652,7 @@ func main() {
 		keys, _ := collectKeys()
 		if errors.Is(err, os.ErrNotExist) {
 			// Initial setup wizard
-			if err := initialSetupWizard(abs, keys); err != nil {
+			if err := initialSetupWizard(abs, keys, opts); err != nil {
 				log.Fatalf("initial setup: %v", err)
 			}
 		} else {

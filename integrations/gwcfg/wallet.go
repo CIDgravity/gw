@@ -18,9 +18,7 @@ import (
 )
 
 const (
-	FaucetAPI         = "http://localhost:7788/fil"
-	WaitWalletTimeout = 60 * time.Second
-	WaitWalletPoll    = 2 * time.Second
+	WaitWalletPoll = 10 * time.Second
 )
 
 func EnsureWalletExists(walletPath string) (*ributil.LocalWallet, address.Address, error) {
@@ -51,8 +49,8 @@ func WalletExistsOnChain(ctx context.Context, lotusAPIAddr, addrStr string) (boo
 	return true, nil
 }
 
-func FundWalletViaFaucet(addr string, amount string) error {
-	q := fmt.Sprintf("%s?wallet=%s", FaucetAPI, addr)
+func FundWalletViaFaucet(faucetURL, addr string, amount string) error {
+	q := fmt.Sprintf("%s?wallet=%s", faucetURL, addr)
 	if amount != "" {
 		q += "&fil=" + amount
 	}
@@ -77,8 +75,8 @@ func FundWalletViaFaucet(addr string, amount string) error {
 	return nil
 }
 
-func WaitWalletAppearsOnChain(ctx context.Context, lotusAPIAddr, addr string) error {
-	deadline := time.Now().Add(WaitWalletTimeout)
+func WaitWalletAppearsOnChain(ctx context.Context, lotusAPIAddr, addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	for {
 		exists, err := WalletExistsOnChain(ctx, lotusAPIAddr, addr)
 		if err != nil {
@@ -94,7 +92,7 @@ func WaitWalletAppearsOnChain(ctx context.Context, lotusAPIAddr, addr string) er
 	}
 }
 
-func EnsureWalletOnChain(ctx context.Context, lotusAPIAddr, addr string, amount string) error {
+func EnsureWalletOnChain(ctx context.Context, lotusAPIAddr, faucetURL, addr string, amount string, timeout time.Duration) error {
 	exists, err := WalletExistsOnChain(ctx, lotusAPIAddr, addr)
 	if err != nil {
 		return err
@@ -102,8 +100,8 @@ func EnsureWalletOnChain(ctx context.Context, lotusAPIAddr, addr string, amount 
 	if exists {
 		return nil
 	}
-	if err := FundWalletViaFaucet(addr, amount); err != nil {
+	if err := FundWalletViaFaucet(faucetURL, addr, amount); err != nil {
 		return fmt.Errorf("could not fund via faucet: %w", err)
 	}
-	return WaitWalletAppearsOnChain(ctx, lotusAPIAddr, addr)
+	return WaitWalletAppearsOnChain(ctx, lotusAPIAddr, addr, timeout)
 }

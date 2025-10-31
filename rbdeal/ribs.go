@@ -179,10 +179,6 @@ func OpenOrCreateWallet(path string) (*ributil.LocalWallet, address.Address, err
 			fmt.Println("ADDRESS: ", color.GreenString("%s", a))
 			fmt.Println("")
 			fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", path)
-			fmt.Println("")
-			fmt.Println("Before using Gateway, you must fund your wallet with FIL.")
-			fmt.Println("You can also supply it with DataCap if you want to make")
-			fmt.Println("FIL+ deals.")
 			color.Yellow("--------------------------------------------------------------")
 
 			wl = append(wl, a)
