@@ -67,16 +67,83 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 	return nil
 }
 
-func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string) error {
+func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string, baseURL string) error {
 	for _, k := range keys {
-		if k.Var == "CIDGRAVITY_API_TOKEN" {
-			val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
-			if err != nil {
-				return err
-			}
-			env[k.Var] = val
-			break
+		if k.Var != "CIDGRAVITY_API_TOKEN" {
+			continue
 		}
+		friendly := ""
+		contactEmail := ""
+		entityName := ""
+
+		group := huh.NewGroup(
+			huh.NewInput().Title("Account Friendly Name").Value(&friendly).Placeholder("my-gateway"),
+			huh.NewInput().Title("Contact Email").Value(&contactEmail).Placeholder("you@example.com"),
+			huh.NewInput().Title("Entity Name").Value(&entityName).Placeholder("Your Org / Project"),
+		)
+		if err := huh.NewForm(group).Run(); err != nil {
+			return err
+		}
+
+		_, addr, err := EnsureWalletExists(walletPath)
+		if err != nil {
+			return err
+		}
+
+		client := NewCidGravity(baseURL)
+
+		{
+			stop := startSpinner("Contacting CIDGravity to get challenge...")
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			gc, gcErr := client.GetChallenge(ctx, addr.String())
+			cancel()
+			stop()
+			if gcErr == nil {
+				// Sign challenge
+				sigHex, sigErr := signChallengeWithWallet(walletPath, gc.Challenge)
+				if sigErr == nil {
+					// Create account
+					stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
+					ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+					res, caErr := client.CreateAccount(ctx2, CreateAccountRequest{
+						Challenge:     gc.Challenge,
+						AddressID:     gc.Address,
+						FriendlyName:  friendly,
+						SignedMessage: sigHex,
+						AddressInformation: CreateAccountAddressEntity{
+							EntityName:   entityName,
+							EntityType:   "company",
+							ContactEmail: contactEmail,
+						},
+					})
+					cancel2()
+					stop2()
+					if caErr == nil && res.Token != "" {
+						fmt.Println("\n✅ Obtained CIDGravity API token via API.")
+						env[k.Var] = res.Token
+						return nil
+					}
+					if caErr != nil {
+						fmt.Printf("\n❌ CIDGravity create-account failed: %v\n", caErr)
+					} else {
+						fmt.Println("\n❌ CIDGravity returned empty token")
+					}
+				} else {
+					fmt.Printf("\n❌ Failed to sign challenge: %v\n", sigErr)
+				}
+			} else {
+				fmt.Printf("\n❌ CIDGravity get-challenge failed: %v\n", gcErr)
+			}
+		}
+
+		// Manual fallback
+		fmt.Println("You can enter the token manually or paste a challenge to sign.")
+		val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
+		if err != nil {
+			return err
+		}
+		env[k.Var] = val
+		return nil
 	}
 	return nil
 }
@@ -186,7 +253,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 
 	env := map[string]string{}
 
-	if err := setCIDGravityToken(keys, walletPath, env); err != nil {
+	if err := setCIDGravityToken(keys, walletPath, env, opts.cidgravityUrl); err != nil {
 		return err
 	}
 
