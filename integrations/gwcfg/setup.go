@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/filecoin-project/lotus/api/client"
+	"github.com/filecoin-project/lotus/chain/types"
 )
 
 func resolveWalletPath(opts Opts) string {
@@ -67,7 +69,7 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 	return nil
 }
 
-func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string, baseURL string) error {
+func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string, opts Opts) error {
 	for _, k := range keys {
 		if k.Var != "CIDGRAVITY_API_TOKEN" {
 			continue
@@ -90,12 +92,23 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 			return err
 		}
 
-		client := NewCidGravity(baseURL)
+		gapi, closer, err := client.NewGatewayRPCV1(context.Background(), opts.lotusGateway, nil)
+		if err != nil {
+			return fmt.Errorf("connect lotus: %w", err)
+		}
+		idAddr, err := gapi.StateLookupID(context.Background(), addr, types.EmptyTSK)
+		closer()
+		if err != nil {
+			return fmt.Errorf("lookup id address: %w", err)
+		}
+		idAddrStr := idAddr.String()
+
+		cgClient := NewCidGravity(opts.cidgravityUrl)
 
 		{
 			stop := startSpinner("Contacting CIDGravity to get challenge...")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			gc, gcErr := client.GetChallenge(ctx, addr.String())
+			gc, gcErr := cgClient.GetChallenge(ctx, addr.String())
 			cancel()
 			stop()
 			if gcErr == nil {
@@ -105,9 +118,9 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 					// Create account
 					stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-					res, caErr := client.CreateAccount(ctx2, CreateAccountRequest{
+					res, caErr := cgClient.CreateAccount(ctx2, CreateAccountRequest{
 						Challenge:     gc.Challenge,
-						AddressID:     gc.Address,
+						AddressID:     idAddrStr,
 						FriendlyName:  friendly,
 						SignedMessage: sigHex,
 						AddressInformation: CreateAccountAddressEntity{
@@ -253,7 +266,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 
 	env := map[string]string{}
 
-	if err := setCIDGravityToken(keys, walletPath, env, opts.cidgravityUrl); err != nil {
+	if err := setCIDGravityToken(keys, walletPath, env, opts); err != nil {
 		return err
 	}
 
