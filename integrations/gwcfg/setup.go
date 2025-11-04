@@ -108,7 +108,7 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 		{
 			stop := startSpinner("Contacting CIDGravity to get challenge...")
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			gc, gcErr := cgClient.GetChallenge(ctx, addr.String())
+			gc, gcErr := cgClient.GetChallenge(ctx, idAddrStr)
 			cancel()
 			stop()
 			if gcErr == nil {
