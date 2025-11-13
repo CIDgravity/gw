@@ -136,7 +136,6 @@ type DealMeta struct {
 type Wallet interface {
 	WalletInfo() (WalletInfo, error)
 
-	MarketAdd(ctx context.Context, amount abi.TokenAmount) (cid.Cid, error)
 	MarketWithdraw(ctx context.Context, amount abi.TokenAmount) (cid.Cid, error)
 
 	Withdraw(ctx context.Context, amount abi.TokenAmount, to address.Address) (cid.Cid, error)
