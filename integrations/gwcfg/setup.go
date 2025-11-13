@@ -182,27 +182,6 @@ func setRibsData(keys []groupedEnvKey, env map[string]string) error {
 	return nil
 }
 
-func setDealsConfig(keys []groupedEnvKey, env map[string]string) error {
-	for _, k := range keys {
-		if k.Section == "Deals" {
-			val := k.DefaultValue
-			comment := envComment(k.Var)
-			field := huh.NewInput().
-				Title(k.Var).
-				Value(&val).
-				Placeholder(k.DefaultValue)
-			if comment != "" {
-				field = field.Description(comment)
-			}
-			if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-				return err
-			}
-			env[k.Var] = val
-		}
-	}
-	return nil
-}
-
 func setExternalConfig(keys []groupedEnvKey, env map[string]string) error {
 	var extType string
 	extOpts := []huh.Option[string]{
@@ -271,10 +250,6 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	}
 
 	if err := setRibsData(keys, env); err != nil {
-		return err
-	}
-
-	if err := setDealsConfig(keys, env); err != nil {
 		return err
 	}
 
