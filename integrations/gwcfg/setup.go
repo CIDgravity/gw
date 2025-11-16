@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/dustin/go-humanize"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/chain/types"
 )
@@ -177,9 +179,51 @@ func setRibsData(keys []groupedEnvKey, env map[string]string) error {
 				return err
 			}
 			env[k.Var] = val
+			return configureRibsDiskSpace(env)
 		}
 	}
 	return nil
+}
+
+const (
+	ribsDiskGroupSizeGB = 64
+	minRibsDiskGB       = 128
+)
+
+func configureRibsDiskSpace(env map[string]string) error {
+	var diskInput string
+
+	for {
+		field := huh.NewInput().
+			Title("Disk space for RIBS data (GB)").
+			Description(fmt.Sprintf("Minimum %dGB; roughly %dGB per local group.", minRibsDiskGB, ribsDiskGroupSizeGB)).
+			Value(&diskInput).
+			Placeholder("128GB").
+			Validate(func(val string) error {
+				bytes, err := humanize.ParseBytes(val)
+				if err != nil {
+					return err
+				}
+				gb := bytes / 1e9
+				if gb < minRibsDiskGB {
+					return fmt.Errorf("Disk space must be at least %dGB.\n", minRibsDiskGB)
+				}
+				return err
+			})
+		if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
+			return err
+		}
+
+		bytes, err := humanize.ParseBytes(diskInput)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		gb := bytes / 1e9
+		groupCount := (gb + ribsDiskGroupSizeGB - 1) / ribsDiskGroupSizeGB
+		env["RIBS_MAX_LOCAL_GROUP_COUNT"] = strconv.Itoa(int(groupCount))
+		return nil
+	}
 }
 
 func setExternalConfig(keys []groupedEnvKey, env map[string]string) error {
