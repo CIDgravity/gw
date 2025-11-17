@@ -51,10 +51,8 @@ func collectKeys() ([]groupedEnvKey, error) {
 
 	sectionFor := func(env string) (section string, advanced bool) {
 		switch {
-		case strings.HasPrefix(env, "EXTERNAL_S3_"):
-			return "Upload:S3", false
 		case strings.HasPrefix(env, "EXTERNAL_LOCALWEB_"):
-			return "Upload:LocalWeb", false
+			return "Staging:LocalWeb", false
 		case strings.HasPrefix(env, "CIDGRAVITY_"):
 			return "CIDGravity", false
 		case strings.HasPrefix(env, "RIBS_WALLET_"):
@@ -529,6 +527,8 @@ func envComment(key string) string {
 		return "Whether to run a local web server for deal uploads (true/false)"
 	case "EXTERNAL_LOCALWEB_SERVER_PORT":
 		return "The port to run the local web server on"
+	case "EXTERNAL_LOCALWEB_URL":
+		return "Public URL that storage providers will use to fetch staged data (e.g. https://example.com). You need to configure this domain to point the Filecoin gateway"
 	case "EXTERNAL_LOCALWEB_SERVER_TLS":
 		return "Whether to run the local web server with TLS (true/false)"
 	case "EXTERNAL_LOCALWEB_PATH":

@@ -72,94 +72,92 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 }
 
 func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string, opts Opts) error {
-	for _, k := range keys {
-		if k.Var != "CIDGRAVITY_API_TOKEN" {
-			continue
-		}
-		friendly := ""
-		contactEmail := ""
-		entityName := ""
+	k, ok := findKey("CIDGRAVITY_API_TOKEN", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure the CIDGravity token")
+	}
+	friendly := ""
+	contactEmail := ""
+	entityName := ""
 
-		group := huh.NewGroup(
-			huh.NewInput().Title("Account Friendly Name").Value(&friendly).Placeholder("my-gateway"),
-			huh.NewInput().Title("Contact Email").Value(&contactEmail).Placeholder("you@example.com"),
-			huh.NewInput().Title("Entity Name").Value(&entityName).Placeholder("Your Org / Project"),
-		)
-		if err := huh.NewForm(group).Run(); err != nil {
-			return err
-		}
+	group := huh.NewGroup(
+		huh.NewInput().Title("Account Friendly Name").Value(&friendly).Placeholder("my-gateway"),
+		huh.NewInput().Title("Contact Email").Value(&contactEmail).Placeholder("you@example.com"),
+		huh.NewInput().Title("Entity Name").Value(&entityName).Placeholder("Your Org / Project"),
+	)
+	if err := huh.NewForm(group).Run(); err != nil {
+		return err
+	}
 
-		_, addr, err := EnsureWalletExists(walletPath)
-		if err != nil {
-			return err
-		}
+	_, addr, err := EnsureWalletExists(walletPath)
+	if err != nil {
+		return err
+	}
 
-		gapi, closer, err := client.NewGatewayRPCV1(context.Background(), opts.lotusGateway, nil)
-		if err != nil {
-			return fmt.Errorf("connect lotus: %w", err)
-		}
-		idAddr, err := gapi.StateLookupID(context.Background(), addr, types.EmptyTSK)
-		closer()
-		if err != nil {
-			return fmt.Errorf("lookup id address: %w", err)
-		}
-		idAddrStr := idAddr.String()
+	gapi, closer, err := client.NewGatewayRPCV1(context.Background(), opts.lotusGateway, nil)
+	if err != nil {
+		return fmt.Errorf("connect lotus: %w", err)
+	}
+	idAddr, err := gapi.StateLookupID(context.Background(), addr, types.EmptyTSK)
+	closer()
+	if err != nil {
+		return fmt.Errorf("lookup id address: %w", err)
+	}
+	idAddrStr := idAddr.String()
 
-		cgClient := NewCidGravity(opts.cidgravityUrl)
+	cgClient := NewCidGravity(opts.cidgravityUrl)
 
-		{
-			stop := startSpinner("Contacting CIDGravity to get challenge...")
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			gc, gcErr := cgClient.GetChallenge(ctx, idAddrStr)
-			cancel()
-			stop()
-			if gcErr == nil {
-				// Sign challenge
-				sigHex, sigErr := signChallengeWithWallet(walletPath, gc.Challenge)
-				if sigErr == nil {
-					// Create account
-					stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
-					ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-					res, caErr := cgClient.CreateAccount(ctx2, CreateAccountRequest{
-						Challenge:     gc.Challenge,
-						AddressID:     idAddrStr,
-						FriendlyName:  friendly,
-						SignedMessage: sigHex,
-						AddressInformation: CreateAccountAddressEntity{
-							EntityName:   entityName,
-							EntityType:   "company",
-							ContactEmail: contactEmail,
-						},
-					})
-					cancel2()
-					stop2()
-					if caErr == nil && res.Token != "" {
-						fmt.Println("\n✅ Obtained CIDGravity API token via API.")
-						env[k.Var] = res.Token
-						return nil
-					}
-					if caErr != nil {
-						fmt.Printf("\n❌ CIDGravity create-account failed: %v\n", caErr)
-					} else {
-						fmt.Println("\n❌ CIDGravity returned empty token")
-					}
+	{
+		stop := startSpinner("Contacting CIDGravity to get challenge...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		gc, gcErr := cgClient.GetChallenge(ctx, idAddrStr)
+		cancel()
+		stop()
+		if gcErr == nil {
+			// Sign challenge
+			sigHex, sigErr := signChallengeWithWallet(walletPath, gc.Challenge)
+			if sigErr == nil {
+				// Create account
+				stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
+				ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+				res, caErr := cgClient.CreateAccount(ctx2, CreateAccountRequest{
+					Challenge:     gc.Challenge,
+					AddressID:     idAddrStr,
+					FriendlyName:  friendly,
+					SignedMessage: sigHex,
+					AddressInformation: CreateAccountAddressEntity{
+						EntityName:   entityName,
+						EntityType:   "company",
+						ContactEmail: contactEmail,
+					},
+				})
+				cancel2()
+				stop2()
+				if caErr == nil && res.Token != "" {
+					fmt.Println("\n✅ Obtained CIDGravity API token via API.")
+					env[k.Var] = res.Token
+					return nil
+				}
+				if caErr != nil {
+					fmt.Printf("\n❌ CIDGravity create-account failed: %v\n", caErr)
 				} else {
-					fmt.Printf("\n❌ Failed to sign challenge: %v\n", sigErr)
+					fmt.Println("\n❌ CIDGravity returned empty token")
 				}
 			} else {
-				fmt.Printf("\n❌ CIDGravity get-challenge failed: %v\n", gcErr)
+				fmt.Printf("\n❌ Failed to sign challenge: %v\n", sigErr)
 			}
+		} else {
+			fmt.Printf("\n❌ CIDGravity get-challenge failed: %v\n", gcErr)
 		}
-
-		// Manual fallback
-		fmt.Println("You can enter the token manually or paste a challenge to sign.")
-		val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
-		if err != nil {
-			return err
-		}
-		env[k.Var] = val
-		return nil
 	}
+
+	// Manual fallback
+	fmt.Println("You can enter the token manually or paste a challenge to sign.")
+	val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
+	if err != nil {
+		return err
+	}
+	env[k.Var] = val
 	return nil
 }
 
@@ -226,44 +224,34 @@ func configureRibsDiskSpace(env map[string]string) error {
 	}
 }
 
-func setExternalConfig(keys []groupedEnvKey, env map[string]string) error {
-	var extType string
-	extOpts := []huh.Option[string]{
-		huh.NewOption("LocalWeb", "localweb"),
-		huh.NewOption("S3", "s3"),
+func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
+	urlKey, ok := findKey("EXTERNAL_LOCALWEB_URL", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure staging storage")
 	}
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().Title("Upload config type").Options(extOpts...).Value(&extType),
-		),
-	).Run(); err != nil {
+	tlsKey, ok := findKey("EXTERNAL_LOCALWEB_TLS", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure staging storage")
+	}
+
+	var urlVal string
+	var tlsVal string
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description(envComment(urlKey.Var)),
+		huh.NewInput().Title(tlsKey.Var).Value(&tlsVal).Placeholder(tlsKey.DefaultValue).Description(envComment(tlsKey.Var)).
+			Validate(func(val string) error {
+				if val != "true" && val != "false" {
+					return fmt.Errorf("must be true or false")
+				}
+				return nil
+			}),
+	)).Run()
+	if err != nil {
 		return err
 	}
 
-	switch extType {
-	case "s3":
-		for _, k := range keys {
-			if k.Section == "Upload:S3" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	case "localweb":
-		for _, k := range keys {
-			if k.Section == "Upload:LocalWeb" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	}
+	env[urlKey.Var] = urlVal
+	env[tlsKey.Var] = tlsVal
 	return nil
 }
 
@@ -297,7 +285,7 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 		return err
 	}
 
-	if err := setExternalConfig(keys, env); err != nil {
+	if err := setStagingConfig(keys, env); err != nil {
 		return err
 	}
 
@@ -324,4 +312,13 @@ func startSpinner(message string) func() {
 		}
 	}()
 	return func() { close(stop) }
+}
+
+func findKey(name string, keys []groupedEnvKey) (groupedEnvKey, bool) {
+	for _, k := range keys {
+		if k.Var == name {
+			return k, true
+		}
+	}
+	return groupedEnvKey{}, false
 }
