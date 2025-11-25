@@ -14,6 +14,10 @@ import (
 	"github.com/filecoin-project/lotus/chain/types"
 )
 
+const (
+	datacapRequestAmountTiB = 10
+)
+
 func resolveWalletPath(opts Opts) string {
 	walletPath := opts.walletLocation
 	if walletPath == "" || walletPath == "default" {
@@ -45,7 +49,7 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Initialize wallet on-chain?").
-				Description(fmt.Sprintf("Wallet %s is not visible on-chain yet.\nYour wallet must appear on-chain to receive DataCap, which is required to use the gateway.\nIf you have a faucet configured (%s), the wizard can request a small amount of FIL to make the address visible and will wait until it appears on-chain.", addr, opts.faucetUrl)).
+				Description(fmt.Sprintf("Wallet %s is not visible on-chain yet.\nYour wallet must appear on-chain to receive DataCap, which is required to use the gateway.\nIf you have a faucet configured, the wizard can request a small amount of FIL to make the address visible and will wait until it appears on-chain.", addr)).
 				Affirmative("Initialize now").
 				Negative("Skip").
 				Value(&fund),
@@ -67,7 +71,58 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 			return err
 		}
 		fmt.Printf("\n✅ Wallet is now visible on-chain: %s\n", addr)
+		exists = true
 	}
+	return nil
+}
+
+func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
+	if opts.faucetUrl == "" {
+		return nil
+	}
+	hasCap, err := WalletHasDatacap(ctx, opts.lotusGateway, addr, datacapRequestAmountTiB)
+	if err != nil {
+		return err
+	}
+	if hasCap {
+		return nil
+	}
+
+	request := true
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Request datacap allocation?").
+				Description(fmt.Sprintf("Your wallet needs verified datacap to use the gateway.\nThe wizard can request %d TiB from the faucet and wait until it lands on-chain.", datacapRequestAmountTiB)).
+				Affirmative("Request datacap").
+				Negative("Skip").
+				Value(&request),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !request {
+		return nil
+	}
+
+	fmt.Println("Requesting datacap allocation...")
+	messageCID, err := RequestDatacapViaFaucet(opts.faucetUrl, addr, datacapRequestAmountTiB)
+	if err != nil {
+		return err
+	}
+	if messageCID != "" {
+		fmt.Printf("✅ Datacap request submitted (message CID: %s). Waiting for allocation to become visible...\n", messageCID)
+	} else {
+		fmt.Println("✅ Datacap request submitted. Waiting for allocation to become visible...")
+	}
+
+	stop := startSpinner(fmt.Sprintf("Waiting for datacap to appear for %s", addr))
+	err = WaitForDatacapAllocation(ctx, opts.lotusGateway, addr, humanize.TiByte*datacapRequestAmountTiB, opts.walletTimeout)
+	stop()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n✅ Wallet now has at least %d TiB of datacap\n", datacapRequestAmountTiB)
 	return nil
 }
 
@@ -229,29 +284,16 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 	if !ok {
 		return fmt.Errorf("unable to configure staging storage")
 	}
-	tlsKey, ok := findKey("EXTERNAL_LOCALWEB_TLS", keys)
-	if !ok {
-		return fmt.Errorf("unable to configure staging storage")
-	}
 
 	var urlVal string
-	var tlsVal string
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description(envComment(urlKey.Var)),
-		huh.NewInput().Title(tlsKey.Var).Value(&tlsVal).Placeholder(tlsKey.DefaultValue).Description(envComment(tlsKey.Var)).
-			Validate(func(val string) error {
-				if val != "true" && val != "false" {
-					return fmt.Errorf("must be true or false")
-				}
-				return nil
-			}),
 	)).Run()
 	if err != nil {
 		return err
 	}
 
 	env[urlKey.Var] = urlVal
-	env[tlsKey.Var] = tlsVal
 	return nil
 }
 
@@ -272,6 +314,10 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 		return err
 	}
 	if err := maybeInitializeOnChain(ctx, opts, addr); err != nil {
+		return err
+	}
+
+	if err := maybeEnsureDatacap(ctx, opts, addr); err != nil {
 		return err
 	}
 

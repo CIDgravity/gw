@@ -74,7 +74,7 @@ type WalletConfig struct {
 }
 
 type YugabyteCqlConfig struct {
-	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"127.0.0.1"`
+	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"yugabyte"` // todo temporary fix
 	Port     int    `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
 	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"filecoingw"`
 	User     string `envconfig:"RIBS_YUGABYTE_CQL_USER"`
@@ -90,7 +90,7 @@ type YugabyteCqlConfig struct {
 }
 
 type YugabyteSqlConfig struct {
-	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"127.0.0.1"`
+	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"yugabyte"` // todo temporary fix
 	Port int    `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
 	User string `envconfig:"RIBS_YUGABYTE_SQL_USER" default:"postgres"`
 	Pass string `envconfig:"RIBS_YUGABYTE_SQL_PASS" default:"postgres"`
