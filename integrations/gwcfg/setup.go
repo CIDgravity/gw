@@ -191,6 +191,7 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 				if caErr == nil && res.Token != "" {
 					fmt.Println("\n✅ Obtained CIDGravity API token via API.")
 					env[k.Var] = res.Token
+					fmt.Printf("Click this link to claim your account and manage CIDGravity settings: %s", res.URL)
 					return nil
 				}
 				if caErr != nil {
