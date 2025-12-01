@@ -51,7 +51,7 @@ type RibsConfig struct {
 	DataDir                    string        `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
 	SendExtends                bool          `envconfig:"RIBS_SEND_EXTENDS" default:"false"`
 	FilecoinApiEndpoint        string        `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
-	MinimumRetrievableCount    int           `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"4"`
+	MinimumRetrievableCount    int           `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"3"`
 	MinimumReplicaCount        int           `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"3"`
 	MaximumReplicaCount        int           `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"5"`
 	RetrievableRepairThreshold int           `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
