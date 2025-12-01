@@ -45,14 +45,14 @@ type CreateAccountAddressEntity struct {
 	ContactEmail string `json:"contactEmail"`
 }
 
-type createAccountResult struct {
+type CreateAccountResult struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
 }
 
 type createAccountResponse struct {
 	Error  *cidgAPIError       `json:"error"`
-	Result createAccountResult `json:"result"`
+	Result CreateAccountResult `json:"result"`
 }
 
 func NewCidGravity(baseURL string) *CidGravity {
@@ -91,15 +91,14 @@ func (cd *CidGravity) GetChallenge(ctx context.Context, addressID string) (GetCh
 	return gc.Result, nil
 }
 
-func (cd *CidGravity) CreateAccount(ctx context.Context, reqBody CreateAccountRequest) (createAccountResult, error) {
-	var out createAccountResult
+func (cd *CidGravity) CreateAccount(ctx context.Context, reqBody CreateAccountRequest) (CreateAccountResult, error) {
+	var out CreateAccountResult
 	endpoint := fmt.Sprintf("%s/api/addresses/gateway/create-account", cd.apiURL)
 
 	b, err := json.Marshal(reqBody)
 	if err != nil {
 		return out, err
 	}
-	fmt.Println(string(b))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(b)))
 	if err != nil {
 		return out, err
