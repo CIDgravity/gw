@@ -308,6 +308,7 @@ func saveConfig(envPath string, env map[string]string) error {
 
 func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	ctx := context.Background()
+	fmt.Println("Version 1")
 
 	walletPath := resolveWalletPath(opts)
 	addr, err := ensureLocalWallet(walletPath)

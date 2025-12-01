@@ -99,7 +99,6 @@ func (cd *CidGravity) CreateAccount(ctx context.Context, reqBody CreateAccountRe
 	if err != nil {
 		return out, err
 	}
-	fmt.Println(string(b))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(b)))
 	if err != nil {
 		return out, err
