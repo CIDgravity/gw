@@ -30,8 +30,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const defaultEnvFile = "settings.env"
-
 var (
 	cidgHexChallengeRe = regexp.MustCompile(`^[a-f0-9]+$`)
 	cidgLotusSignRe    = regexp.MustCompile(`^lotus wallet sign f1[a-z0-9]+ [a-f0-9]+$`)
@@ -53,10 +51,8 @@ func collectKeys() ([]groupedEnvKey, error) {
 
 	sectionFor := func(env string) (section string, advanced bool) {
 		switch {
-		case strings.HasPrefix(env, "EXTERNAL_S3_"):
-			return "Upload:S3", false
 		case strings.HasPrefix(env, "EXTERNAL_LOCALWEB_"):
-			return "Upload:LocalWeb", false
+			return "Staging:LocalWeb", false
 		case strings.HasPrefix(env, "CIDGRAVITY_"):
 			return "CIDGravity", false
 		case strings.HasPrefix(env, "RIBS_WALLET_"):
@@ -65,8 +61,13 @@ func collectKeys() ([]groupedEnvKey, error) {
 			return "Deals Advanced", true
 		case strings.HasPrefix(env, "RIBS_DEAL_"):
 			return "Deals", false
+		case strings.HasPrefix(env, "RIBS_YUGABYTE_"):
+			return "YugabyteDB", false
+		case strings.HasPrefix(env, "RIBS_S3API_"):
+			return "S3 API", false
 		case strings.HasPrefix(env, "RIBS_"):
 			return "RIBS", true
+
 		default:
 			return "Misc", true
 		}
@@ -399,108 +400,6 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	return false, nil
 }
 
-func initialSetupWizard(envPath string, keys []groupedEnvKey) error {
-	env := map[string]string{}
-
-	// 1. Set CIDGravity API token
-	for _, k := range keys {
-		if k.Var == "CIDGRAVITY_API_TOKEN" {
-			home, _ := os.UserHomeDir()
-			walletPath := filepath.Join(home, ".ribswallet")
-			val, err := handleCIDGravityTokenInput(walletPath, env[k.Var])
-			if err != nil {
-				return err
-			}
-			env[k.Var] = val
-			break
-		}
-	}
-
-	// 2. RIBS_DATA
-	for _, k := range keys {
-		if k.Section == "RIBS" && k.Var == "RIBS_DATA" {
-			val := k.DefaultValue
-			comment := envComment(k.Var)
-			field := huh.NewInput().
-				Title(k.Var).
-				Value(&val).
-				Placeholder(k.DefaultValue)
-			if comment != "" {
-				field = field.Description(comment)
-			}
-			if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-				return err
-			}
-			env[k.Var] = val
-		}
-	}
-
-	// 2. Deal Config
-	for _, k := range keys {
-		if k.Section == "Deals" {
-			val := k.DefaultValue
-			comment := envComment(k.Var)
-			field := huh.NewInput().
-				Title(k.Var).
-				Value(&val).
-				Placeholder(k.DefaultValue)
-			if comment != "" {
-				field = field.Description(comment)
-			}
-			if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-				return err
-			}
-			env[k.Var] = val
-		}
-	}
-
-	// 3. External config: s3/localweb
-	var extType string
-	extOpts := []huh.Option[string]{
-		huh.NewOption("LocalWeb", "localweb"),
-		huh.NewOption("S3", "s3"),
-	}
-	if err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().Title("Upload config type").Options(extOpts...).Value(&extType),
-		),
-	).Run(); err != nil {
-		return err
-	}
-
-	switch extType {
-	case "s3":
-		for _, k := range keys {
-			if k.Section == "Upload:S3" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	case "localweb":
-		for _, k := range keys {
-			if k.Section == "Upload:LocalWeb" {
-				val := k.DefaultValue
-				field := huh.NewInput().Title(k.Var).Value(&val).Placeholder(k.DefaultValue)
-				if err := huh.NewForm(huh.NewGroup(field)).Run(); err != nil {
-					return err
-				}
-				env[k.Var] = val
-			}
-		}
-	}
-
-	// Save config
-	if err := saveEnv(envPath, env, envComment); err != nil {
-		return err
-	}
-	fmt.Printf("Initial configuration saved to %s\n", envPath)
-	return nil
-}
-
 func wizard(envPath string) error {
 	keys, err := collectKeys()
 	if err != nil {
@@ -628,6 +527,8 @@ func envComment(key string) string {
 		return "Whether to run a local web server for deal uploads (true/false)"
 	case "EXTERNAL_LOCALWEB_SERVER_PORT":
 		return "The port to run the local web server on"
+	case "EXTERNAL_LOCALWEB_URL":
+		return "Public URL that storage providers will use to fetch staged data (e.g. https://example.com). You need to configure this domain to point the Filecoin gateway"
 	case "EXTERNAL_LOCALWEB_SERVER_TLS":
 		return "Whether to run the local web server with TLS (true/false)"
 	case "EXTERNAL_LOCALWEB_PATH":
@@ -741,11 +642,9 @@ func testEndpoint(url string) error {
 }
 
 func main() {
-	var envFile string
-	flag.StringVar(&envFile, "f", defaultEnvFile, "path to environment file")
-	flag.Parse()
+	opts := loadOpts()
 
-	abs, _ := filepath.Abs(envFile)
+	abs, _ := filepath.Abs(opts.envFile)
 
 	switch flag.NArg() {
 	case 0:
@@ -753,7 +652,7 @@ func main() {
 		keys, _ := collectKeys()
 		if errors.Is(err, os.ErrNotExist) {
 			// Initial setup wizard
-			if err := initialSetupWizard(abs, keys); err != nil {
+			if err := initialSetupWizard(abs, keys, opts); err != nil {
 				log.Fatalf("initial setup: %v", err)
 			}
 		} else {
@@ -770,9 +669,9 @@ func main() {
 			log.Fatal(err)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "Usage: ribscfg [options]            # interactive wizard")
-		fmt.Fprintln(os.Stderr, "       ribscfg get KEY              # print value")
-		fmt.Fprintln(os.Stderr, "       ribscfg set KEY VAL          # non‑interactive update")
+		fmt.Fprintln(os.Stderr, "Usage: gwcfg [options]            # interactive wizard")
+		fmt.Fprintln(os.Stderr, "       gwcfg get KEY              # print value")
+		fmt.Fprintln(os.Stderr, "       gwcfg set KEY VAL          # non‑interactive update")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}

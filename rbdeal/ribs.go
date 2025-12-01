@@ -179,10 +179,6 @@ func OpenOrCreateWallet(path string) (*ributil.LocalWallet, address.Address, err
 			fmt.Println("ADDRESS: ", color.GreenString("%s", a))
 			fmt.Println("")
 			fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", path)
-			fmt.Println("")
-			fmt.Println("Before using Gateway, you must fund your wallet with FIL.")
-			fmt.Println("You can also supply it with DataCap if you want to make")
-			fmt.Println("FIL+ deals.")
 			color.Yellow("--------------------------------------------------------------")
 
 			wl = append(wl, a)
@@ -301,7 +297,6 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 
 	go r.spCrawler()
 	go r.dealTracker(context.TODO())
-	go r.watchMarket(context.TODO())
 	go r.retrievalChecker(context.TODO())
 	if err := r.setupCarServer(context.TODO()); err != nil {
 		return nil, xerrors.Errorf("setup car server: %w", err)

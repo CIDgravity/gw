@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/filecoin-project/go-state-types/big"
-	"github.com/filecoin-project/lotus/chain/types"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/kelseyhightower/envconfig"
 	"golang.org/x/xerrors"
@@ -51,11 +49,11 @@ type CidGravityConfig struct {
 }
 type RibsConfig struct {
 	DataDir                    string        `envconfig:"RIBS_DATA" default:"~/.ribsdata"`
-	SendExtends                bool          `envconfig:"RIBS_SEND_EXTENDS"`
+	SendExtends                bool          `envconfig:"RIBS_SEND_EXTENDS" default:"false"`
 	FilecoinApiEndpoint        string        `envconfig:"RIBS_FILECOIN_API_ENDPOINT" default:"https://api.chain.love/rpc/v1"`
-	MinimumRetrievableCount    int           `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"5"`
-	MinimumReplicaCount        int           `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"5"`
-	MaximumReplicaCount        int           `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"10"`
+	MinimumRetrievableCount    int           `envconfig:"RIBS_MINIMUM_RETRIEVABLE_COUNT" default:"4"`
+	MinimumReplicaCount        int           `envconfig:"RIBS_MINIMUM_REPLICA_COUNT" default:"3"`
+	MaximumReplicaCount        int           `envconfig:"RIBS_MAXIMUM_REPLICA_COUNT" default:"5"`
 	RetrievableRepairThreshold int           `envconfig:"RIBS_RETRIEVALBLE_REPAIR_THRESHOLD" default:"3"`
 	MaxLocalGroupCount         int           `envconfig:"RIBS_MAX_LOCAL_GROUP_COUNT" default:"64"`
 	MaxStagingGroupCount       int           `envconfig:"RIBS_MAX_STAGING_GROUP_COUNT" default:"0"`
@@ -63,7 +61,7 @@ type RibsConfig struct {
 	DealCanSendCommand         string        `envconfig:"RIBS_DEAL_CAN_SEND_COMMAND" default:""`
 	MongoDBUri                 string        `envconfig:"RIBS_MONGODB_URI"`
 	RunSpCrawler               bool          `envconfig:"RIBS_RUN_SP_CRAWLER" default:"true"`
-	CidLocationWorkerCount     int           `envconfig:"RIBS_CID_LOCATION_WORKER_COUNT" default:"128"`
+	CidLocationWorkerCount     int           `envconfig:"RIBS_CID_LOCATION_WORKER_COUNT" default:"16"`
 }
 type DealConfig struct {
 	StartTime          uint `envconfig:"RIBS_DEAL_START_TIME" default:"96"` // hours
@@ -72,13 +70,11 @@ type DealConfig struct {
 	SkipIPNIAnnounce   bool `envconfig:"RIBS_DEAL_SKIP_IPNI_ANNOUNCE" default:"false"`
 }
 type WalletConfig struct {
-	MinMarketBalance  big.Int       `envconfig:"RIBS_WALLET_MIN_BALANCE" default:"100_000_000_000_000_000"`    // 100 mFil
-	AutoMarketBalance big.Int       `envconfig:"RIBS_WALLET_AUTO_BALANCE" default:"1_000_000_000_000_000_000"` // 1 Fil
-	UpgradeInterval   time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
+	UpgradeInterval time.Duration `envconfig:"RIBS_WALLET_UPGRADE_INTERVAL" default:"1m"`
 }
 
 type YugabyteCqlConfig struct {
-	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"127.0.0.1"`
+	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"yugabyte"` // todo temporary fix
 	Port     int    `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
 	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"filecoingw"`
 	User     string `envconfig:"RIBS_YUGABYTE_CQL_USER"`
@@ -94,7 +90,7 @@ type YugabyteCqlConfig struct {
 }
 
 type YugabyteSqlConfig struct {
-	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"127.0.0.1"`
+	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"yugabyte"` // todo temporary fix
 	Port int    `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
 	User string `envconfig:"RIBS_YUGABYTE_SQL_USER" default:"postgres"`
 	Pass string `envconfig:"RIBS_YUGABYTE_SQL_PASS" default:"postgres"`
@@ -133,9 +129,6 @@ func GetConfig() *Config {
 }
 
 func LoadConfig() error {
-	// need to initialize those types so they are not nil
-	config.Wallet.MinMarketBalance = types.NewInt(0)
-	config.Wallet.AutoMarketBalance = types.NewInt(0)
 	if err := envconfig.Process("", &config); err != nil {
 		return err
 	}
@@ -166,13 +159,6 @@ func LoadConfig() error {
 	err := config.configureLogLevels()
 	if err != nil {
 		return err
-	}
-	if !config.Wallet.AutoMarketBalance.GreaterThan(config.Wallet.MinMarketBalance) {
-		// auto > min
-		// allow auto == min == 0
-		if config.Wallet.MinMarketBalance.GreaterThan(types.NewInt(0)) {
-			return xerrors.Errorf("AutoMarketBalance must be greater than MinMarketBalance\n")
-		}
 	}
 
 	log.Debugw("Loaded config")

@@ -5,7 +5,7 @@ kuboribs:
 .PHONY: kuboribs
 
 gwcfg:
-	go build -o gwcfg ./integrations/gwcfg/main.go
+	go build -o gwcfg ./integrations/gwcfg
 .PHONY: gwcfg
 clean:
 	rm -f kuri gwcfg

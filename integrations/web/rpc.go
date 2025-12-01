@@ -19,10 +19,6 @@ func (rc *RIBSRpc) WalletInfo(ctx context.Context) (iface2.WalletInfo, error) {
 	return rc.ribs.Wallet().WalletInfo()
 }
 
-func (rc *RIBSRpc) WalletMarketAdd(ctx context.Context, amt abi.TokenAmount) (cid.Cid, error) {
-	return rc.ribs.Wallet().MarketAdd(ctx, amt)
-}
-
 func (rc *RIBSRpc) WalletMarketWithdraw(ctx context.Context, amt abi.TokenAmount) (cid.Cid, error) {
 	return rc.ribs.Wallet().MarketWithdraw(ctx, amt)
 }

@@ -1,0 +1,34 @@
+services:
+  yugabyte:
+    image: yugabytedb/yugabyte:2024.2.5.0-b59
+    volumes:
+      - ./data/yb:/root/var
+    environment:
+      YSQL_DB: filecoingw
+      YCQL_KEYSPACE: filecoingw
+    command: >
+      bin/yugabyted start
+        --background=false
+        --advertise_address=yugabyte
+    healthcheck:
+      test: bin/ysqlsh -h `hostname -i` -U yugabyte -tAc 'select 1' -d yugabyte
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  filecoingw:
+    image: fgw:local
+    ports:
+      - "8443:8443"
+      - "2112:2112"
+      - "8078:8078"
+      - "9010:9010"
+    volumes:
+      - ./data/fgw/:/root/.ribsdata
+      - ./data/wallet:/root/.ribswallet
+      - ./data/ipfs/:/root/.ipfs
+    command: [ "sh", "-c", "./kuri init ; ./kuri daemon" ]
+    env_file:
+      - data/config/settings.env
+    depends_on:
+      yugabyte:
+        condition: service_healthy
