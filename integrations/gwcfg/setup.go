@@ -191,7 +191,17 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 				if caErr == nil && res.Token != "" {
 					fmt.Println("\n✅ Obtained CIDGravity API token via API.")
 					env[k.Var] = res.Token
-					fmt.Printf("Click this link to claim your account and manage CIDGravity settings: %s", res.URL)
+					claimed := false
+					message := fmt.Sprintf("Click this link to claim your account and manage CIDGravity settings:\n%s", res.URL)
+					confirm := huh.NewConfirm().
+						Title("Claim CIDGravity account").
+						Description(message).
+						Affirmative("I've claimed the account").
+						Negative("Skip").
+						Value(&claimed)
+					if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
+						return err
+					}
 					return nil
 				}
 				if caErr != nil {
@@ -308,7 +318,6 @@ func saveConfig(envPath string, env map[string]string) error {
 
 func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	ctx := context.Background()
-	fmt.Println("Version 1")
 
 	walletPath := resolveWalletPath(opts)
 	addr, err := ensureLocalWallet(walletPath)
