@@ -1,141 +1,120 @@
-# RIBS
+# Filecoin-gw  
+**An S3-Compatible Gateway for the Filecoin Network**  
+**License:** Apache-2.0 / MIT (dual-licensed)  
 
-> Reasonable Interplanetary BlockStore (RIBS)
+Filecoin-gw is an open-source gateway that exposes a fully S3-compatible API backed by the Filecoin network.  
+It allows you to try out Filecoin with zero prior knowledge using Docker, making it easy to experiment with decentralized storage.
+It provides a scalable blockstore, automated Filecoin dealmaking, and familiar S3 interfaces for seamless data onboarding and retrieval.  
 
-RIBS is a Filecoin-native IPFS/IPLD blockstore designed for seamless integration
-with the Filecoin tech stack. It provides users with a scalable blockstore
-capable of handling almost arbitrary amounts of data. RIBS aims to be an
-auto-dagstore-like blockstore with fully automated Filecoin data offload support.
+---
 
-# WORK IN PROGRESS
+## Key Features
 
-**RIBS is a work-in-progress project. Most features aren't finished, and on-disk
-format is not stable. DO NOT USE FOR STORING CIRITICAL DATA, OR ANY OTHER DATA**
+- **S3-Compatible Endpoint** — Works with common S3 clients and tooling  
+- **Improved Data Locality & Parallelism** — Groups blocks into log-files for efficient storage and Filecoin-friendly formatting  
+- **Automated Filecoin Offloading** — Converts full block groups into `.car` files, computes deal CIDs, selects storage providers, and executes deals  
+- **Automatic Deal Repair** — Maintains user-defined redundancy by recreating missing or failed deals  
+- **Retrieval Probing** — Ensures storage providers provide reliable retrievals  
+- **Advanced Storage Provider Selection** — Reputation-based system to select the most reliable providers  
+- **Web UI** — Web-based interface for managing nodes and monitoring system status  
+- **Flexible Storage Backends** — Block groups can be stored on distributed filesystems or other backends  
+- **High Availability & Multi-Node Support** — Group managers can run redundantly; scalable KV store for indexes  
+- **Future-Ready Architecture** — Supports additional caching servers, retrieval workers, and session-aware storage drivers  
 
-**Status:**
-* Data layer is mostly implemented, but needs a lot of hardening to gain
-  confidence that it never loses data.
-* API Implementation is mostly complete, but there is a lot of space for optimization.
-* Filecoin dealmaking process is mostly implemented.
-* RIBSWeb is mostly complete and covers existing functionality.
-* Kubo integration (KuboRIBS - KuRI) works, but needs some UX improvements.
-* Retrieval probing / retrieval functionality is not implemented yet.
-* Multi-node support is not implemented yet.
+![architecture](./doc/ribsweb.png)  
 
-# Key Features
+---
 
-**Filecoin-native IPFS nodes**: RIBS can be integrated into most IPFS nodes
-seamlessly, thanks to a layer that implements the standard Blockstore interface.
-RIBS also provides a high-performance block interface for more efficient data
-management.
+## System Requirements
 
-**Scalable blockstore**: RIBS is designed to support 100PiB+ deployments, providing
-a scalable solution for distributed storage systems that can grow alongside user
-requirements.
+| Resource | Requirement |
+|---------|-------------|
+| OS | Ubuntu 24.04 |
+| CPU | 8 vCPUs |
+| RAM | 16 GB |
+| Storage | ≥ 128 GB NVMe |
 
-**Improved data locality and parallelism**: RIBS groups blocks into log-files,
-which in many scenarios provide good data locality, and are very easy to convert
-into Filecoin-deal-friendly data format.
+---
 
-**Fully automated Filecoin data offloading**: When block groups become "full",
-RIBS automatically backs them up to Filecoin, by converting them into a .car
-file, computing deal CID, selecting SPs, and making deals. RIBS will also provide
-an offloading mechanism, which will make it possible to free up space on the
-local storage by removing the backed-up blocks, and fetching them from Filecoin
-when needed.
+## Deployment
 
-**RIBSWeb**: RIBSWeb is a web-based UI for RIBS, which provides an advanced, but
-easy-to-use interface for managing RIBS nodes, and monitoring their status.
+### Option 1 — Docker
+```bash
+apt install -y docker.io docker-compose rclone
+git clone git@github.com:CIDgravity/filecoin-gateway.git
+cd filecoin-gateway
 
-![architecture](./doc/ribsweb.png)
+docker build . -t fgw:local
 
-# Design Overview / Roadmap
+docker run -it --rm --entrypoint ./gwcfg   -v ./data/config:/app/config   -v ./data/wallet:/root/.ribswallet   fgw:local -f config/settings.env
 
-![architecture](./doc/architecture.png)
-
-**Grouping blocks**: RIBS groups blocks into log-files, which provides better
-performance on all drives, including HDDs and SSDs. This approach leads to
-improved data locality, allowing for better parallelism and easier offloading to
-Filecoin data chunks.
-
-**Local data index**: RIBS maintains a local index of all blocks, which allows
-for efficient access to all block data, including offloaded blocks. Multiple
-backends will be supported for multi-node deployments, such as FoundationDB.
-
-**Filecoin dealmaking functionality**: RIBS automates all steps of the Filecoin dealmaking process:
-
-![architecture](./doc/deals.png)
-
-* **Storage Provider crawler**: Discovers and monitors storage providers in the network.
-* **Efficient on-the-fly .car file generation**: RIBS can generate .car files in one 
-  sequential scan of a group log.
-* **Fast DataCID computation**: RIBS Uses all available cores to comput DataCID as fast as possible.
-* **Advanced SP selection process**: Utilizes a built-in reputation system to select
-  the most suitable storage providers based on their performance and reliability.
-* **Retrieval probing**: Attempts retrievals for a random sample of data, to ensure
-  that SPs provide the promised retrieval service. Unretrievable deals will not
-  count torwards the redundancy factor, and SPs who fail to provide retrievals
-  will be selected for deals much less frequently.
-* **Automatic deal repair**: Maintains a user-defined redundancy factor by
-  automatically repairing and recreating deals as needed.
-
-**Arbitrary scalability**: All parts of RIBS are designed to scale horizontally, 
-allowing for almost arbitrary amounts of data to be stored.
-
-*multi-node support is not implemented yet*
-
-* Group files can be stored on any storage backend, including distributed
-  filesystems, and can be managed by a fleet of "Group workers" which can run
-  tasks such as DataCID computation, car file creation, etc.
-* Local data index ("Top Level Index") can be backed by any scalable KV store
-* "Group Manager" processes can run redundantly to provide high availability
-* (Future) Users can deploy additional car file caching servers to improve
-  efficiency of making redundant deals.
-* (Future) Retrievals can be served by a fleet of "Retrieval workers".
-* (Future) Access to storage is provided by a smart, session-aware driver, which can talk
-  directly to the relevant parts of the cluster.
-
-# Usage
-
-### Integrating as a blockstore
-
-*Interface not stable yet*
-
-* Main interface definition [here](https://github.com/lotus-web3/ribs/blob/main/interface.go)
-* Can be wrapped into a standard IPFS blockstore using [Blockstore layer](https://github.com/lotus-web3/ribs/blob/main/integrations/blockstore/ribsbs.go)
-* Example Kubo plugin [here](https://github.com/lotus-web3/ribs/blob/main/integrations/kuri/ribsplugin/kuboribs.go)
-
-### Running (demo) Kubo-Ribs (KuRI) Node
-
-* Install Golang
-* Clone this repo
-
-```
-git clone https://github.com/lotus-web3/ribs.git
-cd ribs
-go build -o kuri ./integrations/kuri/cmd/kuri
+docker-compose up
 ```
 
-* **backup / move away .ipfs / set IPFS_PATH to an alternative directory if you have a local IPFS node**
-* Init KuRI node and start the daemon
+### Option 2 — Build From Source
+#### Prerequisites
+- YugabyteDB instance  
+- Rclone (optional)  
+- Go toolchain  
 
-```
-./kuri init
+#### Install
+```bash
+git clone git@github.com:CIDgravity/filecoin-gateway.git
+cd filecoin-gateway
 
-# By default a new wallet will be generated.
-# Send Filecoin funds or DataCap before the next
-# starting the node daemon.
-
-./kuri daemon
-```
-
-* Use the node, like any Kubo node!
-
-```
-./kuri add README.md
+go build -o filecoin-gw ./integrations/kuri/cmd/kuri
+go build -o gwcfg ./integrations/gwcfg
 ```
 
-* Kuri CLI/API is the same as Kubo
-* IPFS WebUI is available at http://localhost:5001/webui. The files tab can be
-  used as essentially an infinite-storage file browser.
-* RIBSWeb is served at http://127.0.0.1:9010
+#### Configure
+```bash
+./gwcfg
+```
+
+#### Start
+```bash
+source settings.env
+./filecoin-gw daemon
+```
+
+---
+
+## Interfaces
+
+| Component | URL |
+|----------|-----|
+| Backend WebUI | http://localhost:9010/webui |
+| S3 Endpoint | http://localhost:8078 |
+| Kubo WebUI | http://localhost:5001/webui |
+
+---
+
+## Onboarding Data with Rclone
+
+### Example `rclone.conf`
+```
+cat > ~/.config/rclone/rclone.conf
+[gw]
+type = s3
+provider = Other
+access_key_id = test-access-key
+secret_access_key = test-secret-key
+region = us-east-1
+endpoint = http://localhost:8078
+acl = private
+```
+
+### Upload Data
+```
+rclone --s3-no-check-bucket --s3-force-path-style --s3-list-version=2   copy /mnt/data32 gw:mybucket/data32 -v
+```
+
+---
+
+## License
+Dual-licensed under **Apache 2.0** and **MIT**. See LICENSE files.  
+
+---
+
+## Contributing
+Contributions, issues, and feature requests are welcome.
