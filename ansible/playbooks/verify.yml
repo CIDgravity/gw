@@ -1,0 +1,150 @@
+---
+# Verify FGW cluster health
+
+- name: Verify YugabyteDB connectivity
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Check YSQL port
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+        port: "{{ yb_ysql_port }}"
+        timeout: 10
+        state: started
+      register: ysql_check
+      ignore_errors: yes
+
+    - name: Check YCQL port
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+        port: "{{ yb_ycql_port }}"
+        timeout: 10
+        state: started
+      register: ycql_check
+      ignore_errors: yes
+
+    - name: Report YugabyteDB status
+      ansible.builtin.debug:
+        msg: |
+          YugabyteDB Status:
+            YSQL ({{ yb_ysql_port }}): {{ 'OK' if ysql_check is succeeded else 'FAILED' }}
+            YCQL ({{ yb_ycql_port }}): {{ 'OK' if ycql_check is succeeded else 'FAILED' }}
+  tags:
+    - yb
+    - database
+
+- name: Verify Kuri nodes
+  hosts: kuri
+  gather_facts: no
+  tasks:
+    - name: Check systemd service status
+      ansible.builtin.systemd:
+        name: "{{ kuri_service_name }}"
+      register: kuri_service
+      ignore_errors: yes
+
+    - name: Check health endpoint
+      ansible.builtin.uri:
+        url: "{{ kuri_health_check_url }}"
+        method: GET
+        timeout: 10
+      register: kuri_health
+      ignore_errors: yes
+
+    - name: Check LocalWeb port
+      ansible.builtin.wait_for:
+        port: "{{ kuri_localweb_port }}"
+        timeout: 5
+        state: started
+      register: localweb_check
+      ignore_errors: yes
+
+    - name: Report Kuri node status
+      ansible.builtin.debug:
+        msg: |
+          Kuri Node {{ fgw_node_id }}:
+            Service: {{ kuri_service.status.ActiveState | default('unknown') }}
+            Health: {{ 'OK' if kuri_health.status == 200 else 'FAILED (' ~ (kuri_health.status | default('unreachable')) ~ ')' }}
+            LocalWeb: {{ 'OK' if localweb_check is succeeded else 'FAILED' }}
+  tags:
+    - kuri
+    - storage
+
+- name: Verify S3 frontend proxies
+  hosts: s3_frontend
+  gather_facts: no
+  tasks:
+    - name: Check systemd service status
+      ansible.builtin.systemd:
+        name: "{{ s3_frontend_service_name }}"
+      register: frontend_service
+      ignore_errors: yes
+
+    - name: Check health endpoint
+      ansible.builtin.uri:
+        url: "{{ s3_frontend_health_check_url }}"
+        method: GET
+        timeout: 10
+        status_code: [200, 503]  # 503 valid when no backends
+      register: frontend_health
+      ignore_errors: yes
+
+    - name: Report S3 frontend status
+      ansible.builtin.debug:
+        msg: |
+          S3 Frontend {{ fgw_node_id }}:
+            Service: {{ frontend_service.status.ActiveState | default('unknown') }}
+            Health: {{ 'OK' if frontend_health.status == 200 else ('NO BACKENDS' if frontend_health.status == 503 else 'FAILED') }}
+            Endpoint: http://{{ ansible_host }}:{{ s3_frontend_port }}
+  tags:
+    - frontend
+    - proxy
+
+- name: Functional test
+  hosts: s3_frontend[0]
+  gather_facts: no
+  tasks:
+    - name: Test S3 ListBuckets
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ s3_frontend_port }}/"
+        method: GET
+        timeout: 10
+      register: list_buckets
+      ignore_errors: yes
+
+    - name: Report S3 API test
+      ansible.builtin.debug:
+        msg: |
+          S3 API Functional Test:
+            ListBuckets: {{ 'OK' if list_buckets.status == 200 else 'FAILED (' ~ (list_buckets.status | default('unreachable')) ~ ')' }}
+  tags:
+    - functional
+    - s3
+
+- name: Summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Display cluster summary
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          FGW Cluster Verification Complete
+          ==========================================
+          
+          Kuri Nodes: {{ groups['kuri'] | length }}
+          S3 Frontends: {{ groups['s3_frontend'] | length }}
+          
+          S3 API Endpoints:
+          {% for host in groups.get('s3_frontend', []) %}
+            - http://{{ hostvars[host]['ansible_host'] }}:{{ hostvars[host].get('s3_frontend_port', 8078) }}
+          {% endfor %}
+          
+          Prometheus Metrics:
+          {% for host in groups.get('kuri', []) + groups.get('s3_frontend', []) %}
+            - {{ hostvars[host].get('fgw_node_id', host) }}: http://{{ hostvars[host]['ansible_host'] }}:{{ ribs_prometheus_port | default(2112) }}/metrics
+          {% endfor %}
+          
+          View logs:
+            journalctl -u kuri-<node_id> -f
+            journalctl -u s3-frontend-<node_id> -f

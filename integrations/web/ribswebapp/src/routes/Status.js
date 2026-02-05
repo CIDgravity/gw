@@ -12,6 +12,8 @@ function WalletInfoTile({ walletInfo }) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [amount, setAmount] = useState(oneFil);
     const [operationType, setOperationType] = useState('');
+    const [balanceInfo, setBalanceInfo] = useState(null);
+    const [loading, setLoading] = useState({});
 
     const truncateAddress = (address) => {
         const head = address.slice(0, 10);
@@ -44,6 +46,73 @@ function WalletInfoTile({ walletInfo }) {
         }
     };
 
+    const handleFaucetFil = async () => {
+        setLoading(prev => ({...prev, fil: true}));
+        try {
+            await RibsRPC.call("RequestFaucetFil");
+            alert('FIL faucet request submitted');
+        } catch (error) {
+            console.error("Faucet FIL error:", error);
+            alert('Faucet request failed: ' + (error.message || error));
+        }
+        setLoading(prev => ({...prev, fil: false}));
+    };
+
+    const handleFaucetDatacap = async () => {
+        setLoading(prev => ({...prev, datacap: true}));
+        try {
+            await RibsRPC.call("RequestFaucetDatacap");
+            alert('Datacap faucet request submitted');
+        } catch (error) {
+            console.error("Faucet datacap error:", error);
+            alert('Faucet request failed: ' + (error.message || error));
+        }
+        setLoading(prev => ({...prev, datacap: false}));
+    };
+
+    const handleMarketTopUp = async () => {
+        setLoading(prev => ({...prev, market: true}));
+        try {
+            await RibsRPC.call("TopUpMarketBalance");
+            alert('Market balance top-up submitted');
+        } catch (error) {
+            console.error("Market top-up error:", error);
+            alert('Top-up failed: ' + (error.message || error));
+        }
+        setLoading(prev => ({...prev, market: false}));
+    };
+
+    // Fetch balance manager info
+    useEffect(() => {
+        const fetchBalanceInfo = async () => {
+            try {
+                const info = await RibsRPC.call("BalanceManagerInfo");
+                setBalanceInfo(info);
+            } catch (error) {
+                console.error("Error fetching balance manager info:", error);
+            }
+        };
+        fetchBalanceInfo();
+        const intervalId = setInterval(fetchBalanceInfo, 5000);
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const formatFil = (fil) => {
+        if (fil === undefined || fil === null) return '-';
+        if (fil < 0.000001) return fil.toExponential(2) + ' FIL';
+        if (fil < 0.001) return fil.toFixed(6) + ' FIL';
+        return fil.toFixed(4) + ' FIL';
+    };
+
+    const formatTiB = (tib) => {
+        if (tib === undefined || tib === null) return '-';
+        return tib.toFixed(2) + ' TiB';
+    };
+
+    const getStatusColor = (belowThreshold) => {
+        return belowThreshold ? '#ff6b6b' : '#4caf50';
+    };
+
     return (
         <div>
             <h2>Wallet Info</h2>
@@ -63,16 +132,50 @@ function WalletInfoTile({ walletInfo }) {
                     </tr>
                     <tr>
                         <td>Balance:</td>
-                        <td>{walletInfo.Balance}</td>
+                        <td>
+                            <span style={{color: balanceInfo?.WalletBelowThreshold ? '#ff6b6b' : 'inherit'}}>
+                                {walletInfo.Balance}
+                            </span>
+                            {balanceInfo?.FaucetEnabled && (
+                                <>
+                                    {' '}
+                                    <button 
+                                        className="button-sm" 
+                                        onClick={handleFaucetFil}
+                                        disabled={loading.fil}
+                                        title={`Request FIL from faucet (threshold: ${formatFil(balanceInfo?.FaucetFilThreshold)})`}
+                                    >
+                                        {loading.fil ? '...' : 'Faucet'}
+                                    </button>
+                                </>
+                            )}
+                        </td>
                     </tr>
+                    {balanceInfo?.FaucetEnabled && (
+                        <tr>
+                            <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Min:</td>
+                            <td style={{fontSize: '0.85em', color: '#666'}}>{formatFil(balanceInfo?.FaucetFilThreshold)}</td>
+                        </tr>
+                    )}
                     <tr>
                         <td>Market Balance:</td>
                         <td>
-                            {walletInfo.MarketBalance}
+                            <span style={{color: balanceInfo?.MarketBelowThreshold ? '#ff6b6b' : 'inherit'}}>
+                                {walletInfo.MarketBalance}
+                            </span>
                             {' '}
                             <button className="button-sm" onClick={() => handleAddWithdrawClick('add')}>Add</button>
                             {' '}
                             <button className="button-sm" onClick={() => handleAddWithdrawClick('withdraw')}>Withdraw</button>
+                            {' '}
+                            <button 
+                                className="button-sm" 
+                                onClick={handleMarketTopUp}
+                                disabled={loading.market}
+                                title={`Top up to ${formatFil(balanceInfo?.MarketBalanceTarget)}`}
+                            >
+                                {loading.market ? '...' : 'TopUp'}
+                            </button>
                         </td>
                     </tr>
                     {dropdownOpen && (
@@ -89,13 +192,45 @@ function WalletInfoTile({ walletInfo }) {
                         </tr>
                     )}
                     <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Min / Target:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>
+                            {formatFil(balanceInfo?.MarketBalanceMin)} / {formatFil(balanceInfo?.MarketBalanceTarget)}
+                        </td>
+                    </tr>
+                    <tr>
                         <td>Market Locked:</td>
                         <td>{walletInfo.MarketLocked}</td>
                     </tr>
                     <tr>
                         <td>DataCap:</td>
-                        <td className="important-metric">{walletInfo.DataCap}</td>
+                        <td>
+                            <span 
+                                className="important-metric"
+                                style={{color: balanceInfo?.DatacapBelowThreshold ? '#ff6b6b' : '#4caf50'}}
+                            >
+                                {walletInfo.DataCap}
+                            </span>
+                            {balanceInfo?.FaucetEnabled && (
+                                <>
+                                    {' '}
+                                    <button 
+                                        className="button-sm" 
+                                        onClick={handleFaucetDatacap}
+                                        disabled={loading.datacap}
+                                        title={`Request datacap from faucet (threshold: ${formatTiB(balanceInfo?.DatacapThresholdTiB)})`}
+                                    >
+                                        {loading.datacap ? '...' : 'Faucet'}
+                                    </button>
+                                </>
+                            )}
+                        </td>
                     </tr>
+                    {balanceInfo?.FaucetEnabled && (
+                        <tr>
+                            <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Min:</td>
+                            <td style={{fontSize: '0.85em', color: '#666'}}>{formatTiB(balanceInfo?.DatacapThresholdTiB)}</td>
+                        </tr>
+                    )}
                     </tbody>
                 </table>
             )}
@@ -160,43 +295,30 @@ function GroupsTile() {
 }
 
 function TopIndexTile() {
-    const [indexStats, setTopIndexStats] = useState({});
-    const prevStatsRef = useRef({});
-    const readRateEMARef = useRef(0);
-    const writeRateEMARef = useRef(0);
-    const smoothingFactor = 1 / 10;
+    const [indexStats, setIndexStats] = useState({Entries: 0, Reads: 0, Writes: 0});
+    const prevStatsRef = useRef({Reads: 0, Writes: 0});
+    const [readRate, setReadRate] = useState(0);
+    const [writeRate, setWriteRate] = useState(0);
+    const smoothingFactor = 1 / 15; // Smooth EMA for 10Hz updates
 
     const fetchStatus = async () => {
         try {
-            const topIndexStats = await RibsRPC.call("TopIndexStats");
+            const stats = await RibsRPC.call("TopIndexStats");
+            setIndexStats(stats);
 
-            const prevStats = prevStatsRef.current;
-            const reads = topIndexStats.Reads;
-            const writes = topIndexStats.Writes;
+            const reads = stats.Reads;
+            const writes = stats.Writes;
 
-            if (prevStats.Reads !== undefined && prevStats.Writes !== undefined) {
-                const readRate = reads - prevStats.Reads;
-                const writeRate = writes - prevStats.Writes;
+            if (prevStatsRef.current.Reads !== undefined) {
+                // Multiply by 10 to convert from per-100ms to per-second
+                const readsRate = (reads - prevStatsRef.current.Reads) * 10;
+                const writesRate = (writes - prevStatsRef.current.Writes) * 10;
 
-                readRateEMARef.current = calcEMA(
-                    readRate,
-                    readRateEMARef.current,
-                    smoothingFactor
-                );
-                writeRateEMARef.current = calcEMA(
-                    writeRate,
-                    writeRateEMARef.current,
-                    smoothingFactor
-                );
+                setReadRate(prevReadRate => calcEMA(readsRate, prevReadRate, smoothingFactor));
+                setWriteRate(prevWriteRate => calcEMA(writesRate, prevWriteRate, smoothingFactor));
             }
 
-            setTopIndexStats({
-                ...topIndexStats,
-                ReadRate: Math.round(readRateEMARef.current),
-                WriteRate: Math.round(writeRateEMARef.current),
-            });
-
-            prevStatsRef.current = { Reads: reads, Writes: writes };
+            prevStatsRef.current = {Reads: reads, Writes: writes};
         } catch (error) {
             console.error("Error fetching status:", error);
         }
@@ -204,7 +326,7 @@ function TopIndexTile() {
 
     useEffect(() => {
         fetchStatus();
-        const intervalId = setInterval(fetchStatus, 1000);
+        const intervalId = setInterval(fetchStatus, 100); // 10Hz refresh
 
         return () => {
             clearInterval(intervalId);
@@ -234,6 +356,102 @@ function TopIndexTile() {
     );
 }
 
+function ParallelWritesTile() {
+    const [parallelStats, setParallelStats] = useState({Enabled: false});
+    const [lbMetrics, setLbMetrics] = useState({});
+    const [writeRate, setWriteRate] = useState(0);
+    const prevStatsRef = useRef({});
+    const smoothingFactor = 1 / 15; // Smooth EMA for 10Hz updates
+
+    const fetchStatus = async () => {
+        try {
+            // Fetch both in parallel to avoid blocking
+            const [stats, lb] = await Promise.all([
+                RibsRPC.call("ParallelWriteStats"),
+                RibsRPC.call("LoadBalancerMetrics")
+            ]);
+            
+            // Calculate write rate (per 100ms interval, multiply by 10 for per-second)
+            if (prevStatsRef.current.TotalWrites !== undefined) {
+                const writesDelta = stats.TotalWrites - prevStatsRef.current.TotalWrites;
+                setWriteRate(prev => calcEMA(writesDelta * 10, prev, smoothingFactor));
+            }
+            prevStatsRef.current = stats;
+            
+            setParallelStats(stats);
+            setLbMetrics(lb);
+        } catch (error) {
+            console.error("Error fetching parallel write stats:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchStatus();
+        const intervalId = setInterval(fetchStatus, 100); // 10Hz refresh
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const getModeColor = () => {
+        if (!parallelStats.Enabled) return '#FFE5E5'; // Light red for disabled
+        return '#E5F5E5'; // Light green for enabled
+    };
+
+    return (
+        <div style={{background: getModeColor()}}>
+            <h2>Parallel Writes</h2>
+            <table className="compact-table">
+                <tbody>
+                <tr>
+                    <td>Mode:</td>
+                    <td className="important-metric">
+                        {parallelStats.Enabled ? 'Enabled' : 'Disabled'}
+                    </td>
+                </tr>
+                {parallelStats.Enabled && (
+                    <>
+                    <tr>
+                        <td>Writable Groups:</td>
+                        <td>{lbMetrics.WritableGroupCount || 0}</td>
+                    </tr>
+                    <tr>
+                        <td>Active Writers:</td>
+                        <td>{lbMetrics.TotalActiveWriters || 0}</td>
+                    </tr>
+                    <tr>
+                        <td>Session Affinities:</td>
+                        <td>{lbMetrics.SessionAffinities || 0}</td>
+                    </tr>
+                    <tr>
+                        <td>Write Rate:</td>
+                        <td>{formatNum(Math.round(writeRate))}/s</td>
+                    </tr>
+                    <tr>
+                        <td>Parallel/Legacy:</td>
+                        <td>
+                            {parallelStats.ParallelWrites || 0} / {parallelStats.LegacyWrites || 0}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Affinity Hit Rate:</td>
+                        <td>
+                            {((parallelStats.AffinityHitRate || 0) * 100).toFixed(1)}%
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Avg Write Time:</td>
+                        <td>{(parallelStats.AvgWriteTimeMs || 0).toFixed(2)}ms</td>
+                    </tr>
+                    <tr>
+                        <td>Bytes Written:</td>
+                        <td>{formatBytesBinary(parallelStats.BytesWritten || 0)}</td>
+                    </tr>
+                    </>
+                )}
+                </tbody>
+            </table>
+        </div>
+    );
+}
 
 function DealsTile({ dealSummary }) {
     return (
@@ -468,11 +686,8 @@ function CrawlStateTile({ crawlState }) {
 function IoStats() {
     const [groupIOStats, setGroupIOStats] = useState({});
     const prevStatsRef = useRef({});
-    const readBlocksEMARef = useRef(0);
-    const writeBlocksEMARef = useRef(0);
-    const readBytesEMARef = useRef(0);
-    const writeBytesEMARef = useRef(0);
-    const smoothingFactor = 1 / 10;
+    const [rates, setRates] = useState({readBlocks: 0, writeBlocks: 0, readBytes: 0, writeBytes: 0});
+    const smoothingFactor = 1 / 15; // Smooth EMA for 10Hz updates
 
     const fetchStatus = async () => {
         try {
@@ -485,41 +700,21 @@ function IoStats() {
             const writeBytes = ioStats.WriteBytes;
 
             if (prevStats.ReadBlocks !== undefined && prevStats.WriteBlocks !== undefined) {
-                const readBlocksRate = readBlocks - prevStats.ReadBlocks;
-                const writeBlocksRate = writeBlocks - prevStats.WriteBlocks;
-                const readBytesRate = readBytes - prevStats.ReadBytes;
-                const writeBytesRate = writeBytes - prevStats.WriteBytes;
+                // Multiply by 10 to convert from per-100ms to per-second
+                const readBlocksRate = (readBlocks - prevStats.ReadBlocks) * 10;
+                const writeBlocksRate = (writeBlocks - prevStats.WriteBlocks) * 10;
+                const readBytesRate = (readBytes - prevStats.ReadBytes) * 10;
+                const writeBytesRate = (writeBytes - prevStats.WriteBytes) * 10;
 
-                readBlocksEMARef.current = calcEMA(
-                    readBlocksRate,
-                    readBlocksEMARef.current,
-                    smoothingFactor
-                );
-                writeBlocksEMARef.current = calcEMA(
-                    writeBlocksRate,
-                    writeBlocksEMARef.current,
-                    smoothingFactor
-                );
-                readBytesEMARef.current = calcEMA(
-                    readBytesRate,
-                    readBytesEMARef.current,
-                    smoothingFactor
-                );
-                writeBytesEMARef.current = calcEMA(
-                    writeBytesRate,
-                    writeBytesEMARef.current,
-                    smoothingFactor
-                );
+                setRates(prev => ({
+                    readBlocks: calcEMA(readBlocksRate, prev.readBlocks, smoothingFactor),
+                    writeBlocks: calcEMA(writeBlocksRate, prev.writeBlocks, smoothingFactor),
+                    readBytes: calcEMA(readBytesRate, prev.readBytes, smoothingFactor),
+                    writeBytes: calcEMA(writeBytesRate, prev.writeBytes, smoothingFactor),
+                }));
             }
 
-            setGroupIOStats({
-                ...ioStats,
-                ReadBlocksRate: Math.round(readBlocksEMARef.current),
-                WriteBlocksRate: Math.round(writeBlocksEMARef.current),
-                ReadBytesRate: Math.round(readBytesEMARef.current),
-                WriteBytesRate: Math.round(writeBytesEMARef.current),
-            });
-
+            setGroupIOStats(ioStats);
             prevStatsRef.current = { ReadBlocks: readBlocks, WriteBlocks: writeBlocks, ReadBytes: readBytes, WriteBytes: writeBytes };
         } catch (error) {
             console.error("Error fetching status:", error);
@@ -528,7 +723,7 @@ function IoStats() {
 
     useEffect(() => {
         fetchStatus();
-        const intervalId = setInterval(fetchStatus, 1000);
+        const intervalId = setInterval(fetchStatus, 100); // 10Hz refresh
 
         return () => {
             clearInterval(intervalId);
@@ -542,19 +737,19 @@ function IoStats() {
                 <tbody>
                 <tr>
                     <td>Read Rate:</td>
-                    <td>{formatNum(groupIOStats.ReadBlocksRate)} Blk/s</td>
+                    <td>{formatNum(Math.round(rates.readBlocks))} Blk/s</td>
                 </tr>
                 <tr>
                     <td>Read Bytes:</td>
-                    <td>{formatBytesBinary(groupIOStats.ReadBytesRate)}/s</td>
+                    <td>{formatBytesBinary(Math.round(rates.readBytes))}/s</td>
                 </tr>
                 <tr>
                     <td>Write Rate:</td>
-                    <td>{formatNum(groupIOStats.WriteBlocksRate)} Blk/s</td>
+                    <td>{formatNum(Math.round(rates.writeBlocks))} Blk/s</td>
                 </tr>
                 <tr>
                     <td>Write Bytes:</td>
-                    <td>{formatBytesBinary(groupIOStats.WriteBytesRate)}/s</td>
+                    <td>{formatBytesBinary(Math.round(rates.writeBytes))}/s</td>
                 </tr>
                 </tbody>
             </table>
@@ -1026,6 +1221,212 @@ function RepairRetrievals() {
     )
 }
 
+function CIDGravityStatusTile() {
+    const [status, setStatus] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    const fetchStatus = async () => {
+        try {
+            const result = await RibsRPC.call("CIDGravityStatus");
+            setStatus(result);
+            setLoading(false);
+        } catch (error) {
+            console.error("Error fetching CIDGravity status:", error);
+            setStatus({
+                Connected: false,
+                TokenValid: false,
+                TokenConfigured: false,
+                Error: error.message || "Failed to fetch status"
+            });
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchStatus();
+        // Refresh every 30 seconds (less frequent since it makes API calls)
+        const intervalId = setInterval(fetchStatus, 30000);
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const getStatusColor = () => {
+        if (!status) return '#f5f5f5';
+        if (!status.TokenConfigured) return '#FFE5E5'; // Light red - not configured
+        if (status.TokenValid) return '#E5F5E5'; // Light green - all good
+        if (status.Connected) return '#FFF4DD'; // Light yellow - connected but token invalid
+        return '#FFE5E5'; // Light red - not connected
+    };
+
+    const getStatusText = () => {
+        if (!status) return 'Loading...';
+        if (!status.TokenConfigured) return 'Not Configured';
+        if (status.TokenValid) return 'Connected';
+        if (status.Connected) return 'Token Invalid';
+        return 'Disconnected';
+    };
+
+    return (
+        <div style={{background: getStatusColor()}}>
+            <h2>CIDGravity</h2>
+            {loading ? (
+                <p>Loading...</p>
+            ) : (
+                <table className="compact-table">
+                    <tbody>
+                    <tr>
+                        <td>Status:</td>
+                        <td className="important-metric" style={{
+                            color: status?.TokenValid ? '#4caf50' : 
+                                   status?.Connected ? '#ff9800' : '#f44336'
+                        }}>
+                            {getStatusText()}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Token:</td>
+                        <td>{status?.TokenConfigured ? 'Configured' : 'Not Set'}</td>
+                    </tr>
+                    {status?.Connected && (
+                        <tr>
+                            <td>Response:</td>
+                            <td>{status?.ResponseTimeMs}ms</td>
+                        </tr>
+                    )}
+                    {status?.Error && (
+                        <tr>
+                            <td>Error:</td>
+                            <td style={{color: '#f44336', fontSize: '0.85em'}}>{status?.Error}</td>
+                        </tr>
+                    )}
+                    <tr>
+                        <td colSpan={2} style={{fontSize: '0.8em', color: '#666', paddingTop: '8px'}}>
+                            <a href="https://cidgravity.com" target="_blank" rel="noopener noreferrer" className="button-ish button-sm">
+                                CIDGravity Dashboard
+                            </a>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
+function CacheStatsTile() {
+    const [cacheStats, setCacheStats] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    const fetchStats = async () => {
+        try {
+            const stats = await RibsRPC.call("CacheStats");
+            setCacheStats(stats);
+            setLoading(false);
+        } catch (error) {
+            console.error("Error fetching cache stats:", error);
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchStats();
+        const intervalId = setInterval(fetchStats, 2000);
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const getHitRate = () => {
+        if (!cacheStats || (cacheStats.hits + cacheStats.misses) === 0) return 0;
+        return ((cacheStats.hits / (cacheStats.hits + cacheStats.misses)) * 100).toFixed(1);
+    };
+
+    const getL1UsagePercent = () => {
+        if (!cacheStats || !cacheStats.l1Enabled || cacheStats.l1Capacity === 0) return 0;
+        return ((cacheStats.l1Size / cacheStats.l1Capacity) * 100).toFixed(1);
+    };
+
+    const getL2UsagePercent = () => {
+        if (!cacheStats || !cacheStats.l2Enabled || cacheStats.l2MaxSize === 0) return 0;
+        return ((cacheStats.l2Size / cacheStats.l2MaxSize) * 100).toFixed(1);
+    };
+
+    return (
+        <div style={{background: '#e8f5e9'}}>
+            <h2>Cache</h2>
+            {loading ? (
+                <p>Loading...</p>
+            ) : (
+                <table className="compact-table">
+                    <tbody>
+                    <tr>
+                        <td>Hit Rate:</td>
+                        <td className="important-metric" style={{color: getHitRate() > 80 ? '#4caf50' : getHitRate() > 50 ? '#ff9800' : '#f44336'}}>
+                            {getHitRate()}%
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Hits / Misses:</td>
+                        <td>{formatNum(cacheStats?.hits || 0)} / {formatNum(cacheStats?.misses || 0)}</td>
+                    </tr>
+
+                    {/* L1 Cache Section */}
+                    <tr>
+                        <td colSpan={2} style={{paddingTop: '8px'}}><b>L1 (Memory)</b></td>
+                    </tr>
+                    {cacheStats?.l1Enabled ? (
+                        <>
+                        <tr>
+                            <td>Size:</td>
+                            <td>{formatBytesBinary(cacheStats?.l1Size || 0)} / {formatBytesBinary(cacheStats?.l1Capacity || 0)} ({getL1UsagePercent()}%)</td>
+                        </tr>
+                        <tr>
+                            <td>Items:</td>
+                            <td>{formatNum(cacheStats?.l1Items || 0)}</td>
+                        </tr>
+                        <tr>
+                            <td>T1/T2:</td>
+                            <td>{formatBytesBinary(cacheStats?.l1T1Size || 0)} / {formatBytesBinary(cacheStats?.l1T2Size || 0)}</td>
+                        </tr>
+                        <tr>
+                            <td>Ghost B1/B2:</td>
+                            <td>{cacheStats?.l1B1Len || 0} / {cacheStats?.l1B2Len || 0}</td>
+                        </tr>
+                        </>
+                    ) : (
+                        <tr><td colSpan={2} style={{color: '#999'}}>Disabled</td></tr>
+                    )}
+
+                    {/* L2 Cache Section */}
+                    <tr>
+                        <td colSpan={2} style={{paddingTop: '8px'}}><b>L2 (SSD)</b></td>
+                    </tr>
+                    {cacheStats?.l2Enabled ? (
+                        <>
+                        <tr>
+                            <td>Size:</td>
+                            <td>{formatBytesBinary(cacheStats?.l2Size || 0)} / {formatBytesBinary(cacheStats?.l2MaxSize || 0)} ({getL2UsagePercent()}%)</td>
+                        </tr>
+                        <tr>
+                            <td>Items:</td>
+                            <td>{formatNum(cacheStats?.l2Items || 0)}</td>
+                        </tr>
+                        <tr>
+                            <td>Probation/Protected:</td>
+                            <td>{formatBytesBinary(cacheStats?.l2ProbationSize || 0)} / {formatBytesBinary(cacheStats?.l2ProtectedSize || 0)}</td>
+                        </tr>
+                        <tr>
+                            <td>Free Space:</td>
+                            <td>{formatBytesBinary(cacheStats?.l2FreeSpace || 0)}</td>
+                        </tr>
+                        </>
+                    ) : (
+                        <tr><td colSpan={2} style={{color: '#999'}}>Disabled</td></tr>
+                    )}
+                    </tbody>
+                </table>
+            )}
+        </div>
+    );
+}
+
 // read/write busy time
 
 // process stats [rpc]
@@ -1097,6 +1498,7 @@ function Status() {
                     <GroupsTile groups={groups} />
                     <IoStats />
                     <TopIndexTile />
+                    <ParallelWritesTile />
                 </div>
 
                 <h1><abbr title="Decentralized Storage Network">DSN</abbr></h1>
@@ -1107,11 +1509,13 @@ function Status() {
                     <CarUploadStatsTile carUploadStats={carUploadStats} />
                     <CrawlStateTile crawlState={crawlState} />
                     <WalletInfoTile walletInfo={walletInfo} />
+                    <CIDGravityStatusTile />
                 </div>
 
                 <h1>External Storage</h1>
                 <div className="status-grid">
                     <RetrStats retrStats={retrStats} />
+                    <CacheStatsTile />
                     <StagingStats />
                     <RetrCheckerStats stats={retrChecker} />
                 </div>

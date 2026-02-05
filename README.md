@@ -46,10 +46,58 @@ cd filecoin-gateway
 
 docker build . -t fgw:local
 
-docker run -it --rm --entrypoint ./gwcfg   -v ./data/config:/app/config   -v ./data/wallet:/root/.ribswallet   fgw:local -f config/settings.env
+docker run -it --rm --entrypoint ./gwcfg   -v ${DATA_DIR:-./data}/config:/app/config   -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet   fgw:local -f config/settings.env
 
 docker-compose up
 ```
+
+#### Data Storage Locations
+
+In Docker mode, the following directories are mounted as volumes:
+
+| Host Path | Container Path | Description |
+|-----------|---------------|-------------|
+| `${DATA_DIR}/fgw/` | `/root/.ribsdata` | Block groups and sector data (largest) |
+| `${DATA_DIR}/wallet/` | `/root/.ribswallet` | Filecoin wallet keys (backup this!) |
+| `${DATA_DIR}/ipfs/` | `/root/.ipfs` | IPFS/Kubo data |
+| `${DATA_DIR}/yb/` | `/root/var` | YugabyteDB database |
+
+**Changing the Data Location:**
+
+By default, data is stored in `./data/` relative to the docker-compose.yml file. To use a different location (e.g., `/data/fgw-data`), set the `DATA_DIR` environment variable:
+
+**Option 1 — Environment Variable (recommended)**
+```bash
+export DATA_DIR=/data/fgw-data
+docker-compose up
+```
+
+**Option 2 — .env File (persistent, not committed)**
+Create a `.env` file in the same directory as `docker-compose.yml`:
+```bash
+echo "DATA_DIR=/data/fgw-data" > .env
+docker-compose up
+```
+
+**Option 3 — Direct Path Override**
+For one-time use without modifying files:
+```bash
+DATA_DIR=/data/fgw-data docker-compose up
+```
+
+> **Note:** The data directory (especially `fgw/`) will grow significantly as you onboard data. Plan for sufficient storage capacity based on your expected data volume.
+
+#### Resetting Data
+
+> **WARNING:** This is a destructive operation that permanently deletes all stored data, including uploaded files, Filecoin deals, and database state. Only use this if you want to completely start over.
+
+To reset all data while keeping your config and wallet:
+
+```bash
+docker-compose down && docker-compose run --rm reset-data
+```
+
+This removes YugabyteDB data, block groups, and IPFS data, but preserves your `settings.env` and wallet keys.
 
 ### Option 2 — Build From Source
 #### Prerequisites
@@ -76,6 +124,96 @@ go build -o gwcfg ./integrations/gwcfg
 source settings.env
 ./filecoin-gw daemon
 ```
+
+### Option 3 — Ansible (Multi-Node Clusters)
+
+Use Ansible for deploying production clusters with multiple Kuri storage nodes and S3 frontend proxies.
+
+#### Prerequisites
+- Ansible 2.9+
+- YugabyteDB cluster (YSQL port 5433, YCQL port 9042)
+- Target hosts with Ubuntu 24.04
+
+#### Quick Start
+```bash
+cd ansible
+
+# 1. Prepare wallet and config
+go build -o gwcfg ../integrations/gwcfg
+./gwcfg -f settings.env
+cp -r ~/.ribswallet files/wallet/
+
+# 2. Create inventory from example
+cp inventory/production/hosts.yml.example inventory/production/hosts.yml
+# Edit hosts.yml with your servers
+
+# 3. Set secrets with Ansible Vault
+ansible-vault encrypt_string 'your-cidgravity-token' --name 'cidgravity_api_token'
+# Add output to inventory/production/group_vars/all.yml
+
+# 4. Deploy cluster
+ansible-playbook playbooks/site.yml -i inventory/production/hosts.yml
+
+# 5. Verify deployment
+ansible-playbook playbooks/verify.yml -i inventory/production/hosts.yml
+```
+
+#### Inventory Structure
+```
+inventory/production/
+├── hosts.yml              # Host definitions (kuri nodes, frontends)
+├── group_vars/
+│   ├── all.yml            # Shared settings (YB hosts, deal settings)
+│   ├── kuri.yml           # Kuri node defaults
+│   └── s3_frontend.yml    # Frontend defaults
+```
+
+#### Example hosts.yml
+```yaml
+all:
+  children:
+    yugabyte:
+      hosts:
+        yb-node-01:
+          ansible_host: 10.0.1.10
+    kuri:
+      hosts:
+        kuri-01:
+          ansible_host: 10.0.1.11
+          fgw_node_id: "kuri_01"
+          ribs_data: /data/fgw
+        kuri-02:
+          ansible_host: 10.0.1.12
+          fgw_node_id: "kuri_02"
+          ribs_data: /data/fgw
+    s3_frontend:
+      hosts:
+        s3-fe-01:
+          ansible_host: 10.0.1.10
+          fgw_node_id: "s3_proxy_01"
+```
+
+#### Available Playbooks
+| Playbook | Description |
+|----------|-------------|
+| `site.yml` | Full cluster deployment |
+| `deploy-kuri.yml` | Deploy/update Kuri nodes only |
+| `deploy-frontend.yml` | Deploy/update S3 frontends only |
+| `verify.yml` | Health check all services |
+
+#### Operations
+```bash
+# Add a new Kuri node
+ansible-playbook playbooks/deploy-kuri.yml --limit kuri-03
+
+# Rolling update (one node at a time)
+ansible-playbook playbooks/deploy-kuri.yml
+
+# View logs on target host
+journalctl -u kuri-kuri_01 -f
+```
+
+For detailed configuration options, see `ansible/ansible-spec.md`.
 
 ---
 

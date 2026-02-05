@@ -104,6 +104,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 					if err := r.db.UpdateExpiredDeal(deal.DealUUID); err != nil {
 						return xerrors.Errorf("marking deal as expired: %w", err)
 					}
+
+					// Record deal pipeline metrics
+					metrics := GetDealPipelineMetrics()
+					metrics.IncExpired()
 				}
 				continue
 			}
@@ -113,6 +117,11 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 					return xerrors.Errorf("marking deal as active: %w", err)
 				}
 				log.Infow("deal active", "deal", deal.DealUUID, "dealid", deal.DealUUID, "startepoch", dealInfo.State.SectorStartEpoch)
+
+				// Record deal pipeline metrics
+				metrics := GetDealPipelineMetrics()
+				metrics.IncSealed(fmt.Sprintf("f0%d", deal.ProviderAddr))
+				metrics.SetActiveDeals(float64(dealInfo.State.SectorStartEpoch))
 			}
 		}
 	}
@@ -165,6 +174,10 @@ func (r *ribs) runSPDealCheckLoop(ctx context.Context) error {
 					return xerrors.Errorf("marking deal as published: %w", err)
 				}
 				log.Infow("deal published", "deal", deal.DealUUID, "dealid", cdi.DealID, "publishcid", pcid, "publishheight", pubH.Height(), "headheight", head.Height(), "finality", head.Height()-pubH.Height())
+
+				// Record deal pipeline metrics
+				metrics := GetDealPipelineMetrics()
+				metrics.IncPublished(fmt.Sprintf("f0%d", deal.ProviderAddr))
 			}
 		}
 	}
@@ -305,6 +318,7 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 
 	// sort gids to handle them in order
 	makeMoreDealsGids := make([]int64, 0)
+	var offloadedCount int64 = 0
 	for gid, gs := range gs {
 		log.Debugw("XXX runDealCheckCleanupLoop", "gid", gid)
 		if gs.State != ribs2.GroupStateLocalReadyForDeals {
@@ -324,6 +338,7 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 				if err := r.cleanupExternalOffload(gid); err != nil {
 					return xerrors.Errorf("XYZ: cleaning up external offload: %w", err)
 				}
+				offloadedCount++
 			} else {
 				log.Infow("NOT OFFLOADING GROUP yet", "group", gid, "retrievable", gs.Retrievable, "inprogress", notFailedDeal-gs.SealedDeals)
 			}
@@ -333,7 +348,16 @@ func (r *ribs) runDealCheckCleanupLoop(ctx context.Context) error {
 			return xerrors.Errorf("Group %d has too many copies, and too many untrievable copies. Not offloading\n", gid)
 		}
 	}
+
+	// Record deal pipeline metrics for groups
+	metrics := GetDealPipelineMetrics()
+	metrics.SetGroupsOffloaded(float64(offloadedCount))
+	metrics.SetGroupsNeedingDeals(float64(len(makeMoreDealsGids)))
+
 	sort.Slice(makeMoreDealsGids, func(i, j int) bool { return makeMoreDealsGids[i] < makeMoreDealsGids[j] })
+	if len(makeMoreDealsGids) > 0 {
+		log.Infow("groups need more deals", "groups", makeMoreDealsGids)
+	}
 	for _, gid := range makeMoreDealsGids {
 		err := r.makeMoreDeals(context.TODO(), gid, r.wallet, &check_loop_start)
 		if err != nil {

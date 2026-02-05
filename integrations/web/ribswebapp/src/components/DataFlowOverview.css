@@ -1,0 +1,85 @@
+.DataFlowOverview {
+    width: 100%;
+}
+
+.DataFlowOverview-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.DataFlowOverview-label {
+    font-size: 14px;
+    color: #666;
+    font-weight: 500;
+}
+
+.DataFlowOverview-total {
+    font-size: 24px;
+    font-weight: bold;
+    color: #2196f3;
+}
+
+.DataFlowOverview-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.DataFlowOverview-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: white;
+    border-radius: 4px;
+    border-left: 3px solid #2196f3;
+}
+
+.DataFlowOverview-icon {
+    font-size: 16px;
+}
+
+.DataFlowOverview-type {
+    font-weight: 500;
+    color: #333;
+    min-width: 70px;
+}
+
+.DataFlowOverview-count {
+    font-size: 18px;
+    font-weight: bold;
+    color: #2196f3;
+    min-width: 40px;
+}
+
+.DataFlowOverview-hint {
+    font-size: 11px;
+    color: #999;
+    font-style: italic;
+}
+
+.DataFlowOverview-efficiency {
+    text-align: center;
+    padding: 10px;
+    background: #e8f5e9;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #2e7d32;
+}
+
+.DataFlowOverview-efficiency-value {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.DataFlowOverview-loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    font-style: italic;
+}

@@ -57,6 +57,8 @@ func collectKeys() ([]groupedEnvKey, error) {
 			return "CIDGravity", false
 		case strings.HasPrefix(env, "RIBS_WALLET_"):
 			return "Wallet", false
+		case strings.HasPrefix(env, "RIBS_BALANCES_"):
+			return "Balances", true
 		case env == "RIBS_DEAL_CAN_SEND_COMMAND" || env == "RIBS_DEAL_CHECK_INTERVAL":
 			return "Deals Advanced", true
 		case strings.HasPrefix(env, "RIBS_DEAL_"):
@@ -175,9 +177,26 @@ func validateExternal(env map[string]string) (bool, error) {
 // ---------------------- wizard helpers ---------------------------------- //
 
 func ensureDefaults(keys []groupedEnvKey, env map[string]string) {
+	keyDefaults := make(map[string]string)
 	for _, k := range keys {
-		if env[k.Var] == "" && k.DefaultValue != "" {
+		keyDefaults[k.Var] = k.DefaultValue
+	}
+
+	for _, k := range keys {
+		val := env[k.Var]
+		// If empty and has default, use the default value
+		if val == "" && k.DefaultValue != "" {
 			env[k.Var] = k.DefaultValue
+		}
+	}
+
+	// Remove empty string entries for keys that have defaults
+	// This prevents issues with envconfig trying to parse "" as bool/int
+	for key, val := range env {
+		if val == "" {
+			if def, ok := keyDefaults[key]; ok && def != "" {
+				delete(env, key)
+			}
 		}
 	}
 }

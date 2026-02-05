@@ -70,7 +70,7 @@ func WithLocalWalletPath(wp string) OpenOption {
 }
 
 // WithFileCoinApiEndpoint sets the FileCoin API endpoint used to probe the chain.
-// Defaults to "https://api.chain.love/rpc/v1".
+// Defaults to "https://pac-l-gw.devtty.eu/rpc/v1".
 func WithFileCoinApiEndpoint(wp string) OpenOption {
 	return func(o *openOptions) {
 		o.fileCoinAPIEndpoint = wp
@@ -105,12 +105,19 @@ type ribs struct {
 	cachedWalletInfo     *iface2.WalletInfo
 	lastWalletInfoUpdate time.Time
 
+	// Balance manager state tracking
+	balanceManagerLk             sync.Mutex
+	lastFaucetFilRequest         time.Time
+	lastFaucetDatacapRequest     time.Time
+	lastMarketTopUp              time.Time
+	cachedBalanceManagerInfo     *iface2.BalanceManagerInfo
+	lastBalanceManagerInfoUpdate time.Time
+
 	//
 
 	close chan struct{}
 	//workerClosed chan struct{}
-	spCrawlClosed     chan struct{}
-	marketWatchClosed chan struct{}
+	spCrawlClosed chan struct{}
 
 	//
 
@@ -145,6 +152,9 @@ type ribs struct {
 	repairStatsLk sync.Mutex
 
 	repairFetchCounters *ributil.RateCounters[iface2.GroupKey]
+
+	/* gc */
+	gc *GarbageCollector
 }
 
 func (r *ribs) MetaDB() iface2.MetadataDB {
@@ -250,8 +260,7 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 
 		close: make(chan struct{}),
 		//workerClosed: make(chan struct{}),
-		spCrawlClosed:     make(chan struct{}),
-		marketWatchClosed: make(chan struct{}),
+		spCrawlClosed: make(chan struct{}),
 
 		moreDealsLocks: map[iface2.GroupKey]struct{}{},
 
@@ -298,23 +307,24 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 	go r.spCrawler()
 	go r.dealTracker(context.TODO())
 	go r.retrievalChecker(context.TODO())
+	go r.balanceManager(context.TODO())
 	if err := r.setupCarServer(context.TODO()); err != nil {
 		return nil, xerrors.Errorf("setup car server: %w", err)
 	}
 
-	/* XXX: no repair worker for now, we don't have a staging area to repair to
-	go r.repairWorker(context.TODO(), 0)
-	go r.repairWorker(context.TODO(), 1)
-	go r.repairWorker(context.TODO(), 2)
-	go r.repairWorker(context.TODO(), 3)
-	*/
-	/*go r.repairWorker(context.TODO(), 4)
-	go r.repairWorker(context.TODO(), 5)
-	go r.repairWorker(context.TODO(), 6)
-	go r.repairWorker(context.TODO(), 7)
-	go r.repairWorker(context.TODO(), 8)
-	/*go r.repairWorker(context.TODO(), 9)
-	go r.repairWorker(context.TODO(), 10)*/
+	// Start repair workers if staging path is configured
+	r.startRepairWorkers(context.TODO())
+
+	// Initialize and start garbage collector if enabled
+	if cfg.Ribs.GCEnabled {
+		r.gc = NewGarbageCollector(r.db, GCConfig{
+			Enabled:      cfg.Ribs.GCEnabled,
+			ScanInterval: cfg.Ribs.GCScanInterval,
+			GracePeriod:  cfg.Ribs.GCGracePeriod,
+			MinGroupAge:  cfg.Ribs.GCMinGroupAge,
+		})
+		r.gc.Start(context.TODO())
+	}
 
 	r.subGroupChanges()
 
@@ -372,7 +382,6 @@ func (r *ribs) RetrStats() (iface2.RetrStats, error) {
 func (r *ribs) Close() error {
 	close(r.close)
 	<-r.spCrawlClosed
-	<-r.marketWatchClosed
 
 	return r.RBS.Close()
 }

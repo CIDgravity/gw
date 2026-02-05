@@ -1,0 +1,55 @@
+# {{ ansible_managed }}
+# Systemd service for Kuri storage node: {{ fgw_node_id }}
+
+[Unit]
+Description=Filecoin Gateway Kuri Node ({{ fgw_node_id }})
+Documentation=https://github.com/filecoin-project/filecoin-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ fgw_user }}
+Group={{ fgw_group }}
+WorkingDirectory={{ ribs_data }}
+
+# Load environment
+EnvironmentFile={{ fgw_config_dir }}/settings.env
+
+# Binary execution
+ExecStart={{ fgw_binary_path }}/kuri daemon
+
+# Graceful shutdown
+TimeoutStopSec={{ service_timeout_stop_sec }}
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Resource limits
+{% if kuri_max_memory is defined %}
+MemoryMax={{ kuri_max_memory }}
+{% endif %}
+{% if kuri_cpu_quota is defined %}
+CPUQuota={{ kuri_cpu_quota }}%
+{% endif %}
+
+# Increase file descriptor limit
+LimitNOFILE=1048576
+
+# Restart policy
+Restart=always
+RestartSec={{ service_restart_sec }}
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={{ ribs_data }} {{ fgw_ipfs_path }} {{ fgw_wallet_dest }}
+PrivateTmp=yes
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ kuri_service_name }}
+
+[Install]
+WantedBy=multi-user.target

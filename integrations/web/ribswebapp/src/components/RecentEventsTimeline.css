@@ -1,0 +1,70 @@
+.RecentEventsTimeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.RecentEventsTimeline-empty {
+    text-align: center;
+    padding: 20px;
+    color: #999;
+    font-style: italic;
+}
+
+.RecentEventsTimeline-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: white;
+    border-radius: 4px;
+    border-left: 3px solid #ccc;
+    font-size: 12px;
+}
+
+.RecentEventsTimeline-item.RecentEventsTimeline-error {
+    border-left-color: #f44336;
+    background: #ffebee;
+}
+
+.RecentEventsTimeline-item.RecentEventsTimeline-warning {
+    border-left-color: #ff9800;
+    background: #fff3e0;
+}
+
+.RecentEventsTimeline-item.RecentEventsTimeline-info {
+    border-left-color: #2196f3;
+}
+
+.RecentEventsTimeline-time {
+    font-family: monospace;
+    color: #666;
+    min-width: 70px;
+    font-size: 11px;
+}
+
+.RecentEventsTimeline-icon {
+    font-size: 14px;
+}
+
+.RecentEventsTimeline-type {
+    font-size: 14px;
+}
+
+.RecentEventsTimeline-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.RecentEventsTimeline-node {
+    font-weight: 600;
+    color: #333;
+}
+
+.RecentEventsTimeline-message {
+    color: #666;
+}

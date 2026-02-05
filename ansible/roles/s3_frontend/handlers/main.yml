@@ -1,0 +1,11 @@
+---
+# S3 frontend role handlers
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Restart s3-frontend
+  ansible.builtin.systemd:
+    name: "{{ s3_frontend_service_name }}"
+    state: restarted

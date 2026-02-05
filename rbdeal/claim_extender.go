@@ -46,8 +46,34 @@ func (r *ribs) claimChecker() {
 func (r *ribs) claimExtendCycle(ctx context.Context) error {
 	var provs []address.Address
 
+	// Get groups that are marked for GC (should not have claims extended)
+	gcGroups := make(map[int64]bool)
 	{
-		// SELECT DISTINCT provider_addr FROM deals WHERE sealed=1
+		rows, err := r.db.db.Query("SELECT id FROM groups WHERE gc_state >= $1", GCStateCandidate)
+		if err != nil {
+			// If gc_state column doesn't exist yet (migration not run), continue without filtering
+			log.Debugw("gc_state query failed (migration may not be applied)", "error", err)
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					log.Warnw("failed to scan gc group", "error", err)
+					continue
+				}
+				gcGroups[id] = true
+			}
+			rows.Close()
+		}
+	}
+
+	if len(gcGroups) > 0 {
+		fmt.Printf("(claim ext) Skipping %d groups marked for GC\n", len(gcGroups))
+	}
+
+	{
+		// SELECT DISTINCT provider_addr FROM deals WHERE sealed=1 AND group not in GC candidates
+		// We still get all providers, but will filter claims by group later
 		rows, err := r.db.db.Query("SELECT DISTINCT provider_addr FROM deals WHERE sealed=1")
 		if err != nil {
 			return xerrors.Errorf("query: %w", err)
@@ -66,6 +92,26 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 		}
 		if err := rows.Close(); err != nil {
 			return xerrors.Errorf("close: %w", err)
+		}
+	}
+
+	// Build a map of deal -> group for filtering
+	dealToGroup := make(map[string]int64) // deal UUID -> group ID
+	{
+		rows, err := r.db.db.Query("SELECT uuid, group_id FROM deals WHERE sealed=1")
+		if err != nil {
+			log.Warnw("failed to query deal groups", "error", err)
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				var uuid string
+				var groupID int64
+				if err := rows.Scan(&uuid, &groupID); err != nil {
+					continue
+				}
+				dealToGroup[uuid] = groupID
+			}
+			rows.Close()
 		}
 	}
 
@@ -104,7 +150,32 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 		return claim.Client == abi.ActorID(client)
 	}
 
+	// Build a map of (provider, piece_cid) -> group_id for GC filtering
+	type provPiece struct {
+		provider uint64
+		pieceCid string
+	}
+	provPieceToGroup := make(map[provPiece]int64)
+	{
+		rows, err := r.db.db.Query("SELECT provider_addr, piece_cid, group_id FROM deals WHERE sealed=1")
+		if err != nil {
+			log.Warnw("failed to query deal piece mappings", "error", err)
+		} else {
+			for rows.Next() {
+				var prov uint64
+				var pieceCid string
+				var groupID int64
+				if err := rows.Scan(&prov, &pieceCid, &groupID); err != nil {
+					continue
+				}
+				provPieceToGroup[provPiece{prov, pieceCid}] = groupID
+			}
+			rows.Close()
+		}
+	}
+
 	var nclaims int
+	var skippedGC int
 	claims := map[address.Address]map[verifreg.ClaimId]verifreg.Claim{}
 
 	for n, prov := range provs {
@@ -114,9 +185,21 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 			return xerrors.Errorf("getting claims: %w", err)
 		}
 
+		provID, _ := address.IDFromAddress(prov)
+
 		for claimID, claim := range allProvClaims {
 			if !claimOurs(claim) {
 				continue
+			}
+
+			// Check if this claim is for a group marked for GC
+			pieceCid := claim.Data.String()
+			if groupID, ok := provPieceToGroup[provPiece{provID, pieceCid}]; ok {
+				if gcGroups[groupID] {
+					skippedGC++
+					log.Debugw("skipping claim for GC group", "provider", prov, "claim", claimID, "group", groupID)
+					continue
+				}
 			}
 
 			if _, ok := claims[prov]; !ok {
@@ -125,6 +208,10 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 			claims[prov][claimID] = claim
 			nclaims++
 		}
+	}
+
+	if skippedGC > 0 {
+		fmt.Printf("(claim ext) Skipped %d claims for GC candidate groups\n", skippedGC)
 	}
 
 	fmt.Printf("(claim ext) Got %d claims, creating messages\n", nclaims)

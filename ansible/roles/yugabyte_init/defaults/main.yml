@@ -1,0 +1,11 @@
+---
+# YugabyteDB initialization defaults
+
+yb_ysql_port: 5433
+yb_ysql_user: yugabyte
+yb_ysql_pass: yugabyte
+
+yb_ycql_port: 9042
+
+yb_shared_s3_keyspace: filecoingw_s3
+yb_replication_factor: 3

@@ -18,6 +18,7 @@ func main() {
 			ldbcidCmd,
 			groupCmd,
 			claimsExtendCmd,
+			loadtestCmd,
 		},
 	}
 

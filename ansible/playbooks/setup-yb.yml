@@ -1,0 +1,45 @@
+---
+# Initialize YugabyteDB keyspaces and tables
+# Run this before deploying Kuri nodes for the first time
+
+- name: Setup YugabyteDB
+  hosts: localhost
+  gather_facts: no
+  
+  pre_tasks:
+    - name: Check YugabyteDB hosts are defined
+      ansible.builtin.assert:
+        that:
+          - groups['yugabyte'] | length > 0
+        fail_msg: "No YugabyteDB hosts defined in inventory"
+
+    - name: Check Kuri nodes are defined
+      ansible.builtin.assert:
+        that:
+          - groups['kuri'] | length > 0
+        fail_msg: "No Kuri nodes defined in inventory. Cannot create per-node databases."
+
+  roles:
+    - role: yugabyte_init
+
+  post_tasks:
+    - name: Display created resources
+      ansible.builtin.debug:
+        msg: |
+          YugabyteDB Initialization Complete
+          ==================================
+          
+          Per-node SQL databases:
+          {% for host in groups['kuri'] %}
+            - filecoingw_{{ hostvars[host]['fgw_node_id'] | replace('-', '_') }}
+          {% endfor %}
+          
+          Per-node CQL keyspaces:
+          {% for host in groups['kuri'] %}
+            - filecoingw_{{ hostvars[host]['fgw_node_id'] | replace('-', '_') }}
+          {% endfor %}
+          
+          Shared S3 keyspace: {{ yb_shared_s3_keyspace }}
+          
+          NOTE: Tables in the shared keyspace (S3Objects, MultipartUploads, CidGroups)
+          are created automatically by Kuri when it first starts.

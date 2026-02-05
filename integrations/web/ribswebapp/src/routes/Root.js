@@ -24,7 +24,13 @@ function Root() {
                     <Link to={`/`}>Status</Link>
                 </div>
                 <div className="Root-nav-item">
+                    <Link to={`/cluster`}>Cluster</Link>
+                </div>
+                <div className="Root-nav-item">
                     <Link to={`/groups`}>Groups</Link>
+                </div>
+                <div className="Root-nav-item">
+                    <Link to={`/writable-groups`}>Writable</Link>
                 </div>
                 <div className="Root-nav-item">
                     <Link to={`/providers`}>Providers</Link>

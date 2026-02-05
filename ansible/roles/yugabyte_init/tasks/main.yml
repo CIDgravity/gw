@@ -1,0 +1,65 @@
+---
+# Initialize YugabyteDB keyspaces and tables
+
+- name: Wait for YugabyteDB YSQL to be available
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+    port: "{{ yb_ysql_port }}"
+    timeout: 300
+    state: started
+
+- name: Wait for YugabyteDB YCQL to be available
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+    port: "{{ yb_ycql_port }}"
+    timeout: 300
+    state: started
+
+# Create per-node SQL databases for each Kuri node
+- name: Create per-node SQL databases
+  ansible.builtin.shell: |
+    PGPASSWORD="{{ yb_ysql_pass }}" psql \
+      -h {{ hostvars[groups['yugabyte'][0]]['ansible_host'] }} \
+      -p {{ yb_ysql_port }} \
+      -U {{ yb_ysql_user }} \
+      -d yugabyte \
+      -c "CREATE DATABASE filecoingw_{{ item | replace('-', '_') }};" 2>&1 || true
+  loop: "{{ groups['kuri'] | map('extract', hostvars, 'fgw_node_id') | list }}"
+  register: sql_db_result
+  changed_when: "'CREATE DATABASE' in sql_db_result.stdout"
+  failed_when: false
+  delegate_to: localhost
+  become: no
+
+# Create per-node CQL keyspaces for each Kuri node
+- name: Create per-node CQL keyspaces
+  ansible.builtin.shell: |
+    cqlsh {{ hostvars[groups['yugabyte'][0]]['ansible_host'] }} {{ yb_ycql_port }} \
+      -e "CREATE KEYSPACE IF NOT EXISTS filecoingw_{{ item | replace('-', '_') }} WITH replication = {'class': 'SimpleStrategy', 'replication_factor': {{ yb_replication_factor }}};"
+  loop: "{{ groups['kuri'] | map('extract', hostvars, 'fgw_node_id') | list }}"
+  register: cql_ks_result
+  changed_when: false
+  delegate_to: localhost
+  become: no
+
+# Create shared S3 CQL keyspace
+- name: Create shared S3 CQL keyspace
+  ansible.builtin.shell: |
+    cqlsh {{ hostvars[groups['yugabyte'][0]]['ansible_host'] }} {{ yb_ycql_port }} \
+      -e "CREATE KEYSPACE IF NOT EXISTS {{ yb_shared_s3_keyspace }} WITH replication = {'class': 'SimpleStrategy', 'replication_factor': {{ yb_replication_factor }}};"
+  register: s3_ks_result
+  changed_when: false
+  delegate_to: localhost
+  become: no
+
+# NOTE: Tables are NOT created here - kuri handles CQL migrations on startup.
+# The shared S3 keyspace tables (S3Objects, MultipartUploads, CidGroups) are
+# created by the first kuri node that starts up.
+
+- name: Display database initialization summary
+  ansible.builtin.debug:
+    msg: |
+      YugabyteDB initialization complete:
+      - SQL databases: {{ groups['kuri'] | map('extract', hostvars, 'fgw_node_id') | map('replace', '-', '_') | map('regex_replace', '^', 'filecoingw_') | list | join(', ') }}
+      - CQL keyspaces (per-node): {{ groups['kuri'] | map('extract', hostvars, 'fgw_node_id') | map('replace', '-', '_') | map('regex_replace', '^', 'filecoingw_') | list | join(', ') }}
+      - Shared S3 keyspace: {{ yb_shared_s3_keyspace }}

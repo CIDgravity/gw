@@ -23,6 +23,7 @@ import (
 
 type Region struct {
 	name        string
+	nodeID      string // Node ID for scalable architecture
 	index       iface.S3ObjectIndex
 	blockstore  *ribsbstore.Blockstore
 	dag         format.DAGService
@@ -38,6 +39,10 @@ var _ iface.Region = (*Region)(nil)
 
 func (r *Region) Name() string {
 	return r.name
+}
+
+func (r *Region) NodeID() string {
+	return r.nodeID
 }
 
 func (r *Region) ListBuckets(ctx context.Context) ([]string, error) {

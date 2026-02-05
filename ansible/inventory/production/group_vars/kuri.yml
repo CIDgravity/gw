@@ -1,0 +1,48 @@
+---
+# =============================================================================
+# KURI STORAGE NODE DEFAULTS
+# =============================================================================
+
+# Node identification
+fgw_node_type: "storage"
+
+# -----------------------------------------------------------------------------
+# Ports (can be overridden per host)
+# -----------------------------------------------------------------------------
+kuri_s3_port: 8079
+kuri_localweb_port: 8443
+kuri_webui_port: 9010
+kuri_internal_api_port: 9090
+
+# -----------------------------------------------------------------------------
+# Data Directories
+# Override ribs_data per host in hosts.yml
+# -----------------------------------------------------------------------------
+# ribs_data: /data/fgw/{{ fgw_node_id }}
+fgw_ipfs_path: "{{ ribs_data }}/ipfs"
+fgw_cardata_path: "{{ ribs_data }}/cardata"
+fgw_config_dir: "{{ ribs_data }}/config"
+
+# -----------------------------------------------------------------------------
+# LocalWeb URL
+# By default, constructed from host IP and localweb port
+# Override per host if behind load balancer or custom DNS
+# -----------------------------------------------------------------------------
+external_localweb_url: "http://{{ ansible_host }}:{{ kuri_localweb_port }}"
+
+# -----------------------------------------------------------------------------
+# Service Management
+# -----------------------------------------------------------------------------
+kuri_service_name: "kuri-{{ fgw_node_id }}"
+
+# -----------------------------------------------------------------------------
+# Resource Limits
+# -----------------------------------------------------------------------------
+kuri_max_memory: "12G"
+kuri_cpu_quota: 800  # 800% = 8 cores
+
+# -----------------------------------------------------------------------------
+# Health Check
+# -----------------------------------------------------------------------------
+kuri_health_check_url: "http://127.0.0.1:{{ kuri_s3_port }}/healthz"
+kuri_health_check_timeout: 30

@@ -105,13 +105,47 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 		return nil
 	}
 
-	fmt.Println("Requesting datacap allocation...")
-	messageCID, err := RequestDatacapViaFaucet(opts.faucetUrl, addr, datacapRequestAmountTiB)
-	if err != nil {
-		return err
+	fmt.Println("Requesting datacap allocation and FIL top-up...")
+
+	// Request datacap and FIL faucet in parallel
+	type datacapResult struct {
+		messageCID string
+		err        error
 	}
-	if messageCID != "" {
-		fmt.Printf("✅ Datacap request submitted (message CID: %s). Waiting for allocation to become visible...\n", messageCID)
+	type filResult struct {
+		err error
+	}
+
+	datacapCh := make(chan datacapResult, 1)
+	filCh := make(chan filResult, 1)
+
+	go func() {
+		messageCID, err := RequestDatacapViaFaucet(opts.faucetUrl, addr, datacapRequestAmountTiB)
+		datacapCh <- datacapResult{messageCID: messageCID, err: err}
+	}()
+
+	go func() {
+		err := RequestFilViaFaucet(opts.faucetUrl, addr)
+		filCh <- filResult{err: err}
+	}()
+
+	// Wait for both results
+	dcRes := <-datacapCh
+	filRes := <-filCh
+
+	// Report FIL faucet result (non-fatal)
+	if filRes.err != nil {
+		fmt.Printf("⚠️  FIL faucet request failed (non-fatal): %v\n", filRes.err)
+	} else {
+		fmt.Println("✅ FIL top-up request submitted.")
+	}
+
+	// Handle datacap result (fatal on error)
+	if dcRes.err != nil {
+		return dcRes.err
+	}
+	if dcRes.messageCID != "" {
+		fmt.Printf("✅ Datacap request submitted (message CID: %s). Waiting for allocation to become visible...\n", dcRes.messageCID)
 	} else {
 		fmt.Println("✅ Datacap request submitted. Waiting for allocation to become visible...")
 	}

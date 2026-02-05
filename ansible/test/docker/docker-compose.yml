@@ -1,0 +1,110 @@
+# Docker Compose for testing Ansible playbooks
+# Creates simulated target hosts with SSH + systemd
+
+services:
+  # YugabyteDB for database tests
+  yugabyte:
+    image: yugabytedb/yugabyte:2024.2.5.0-b59
+    container_name: ansible-test-yb
+    command: bin/yugabyted start --background=false --advertise_address=yugabyte
+    networks:
+      ansible-test:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "bin/ysqlsh", "-h", "yugabyte", "-U", "yugabyte", "-tAc", "select 1", "-d", "yugabyte"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  # Kuri target hosts
+  kuri-01:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: ansible-test-kuri-01
+    hostname: kuri-01
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - kuri-01-data:/data/fgw
+      - binaries:/opt/fgw/bin
+    networks:
+      ansible-test:
+        ipv4_address: 172.28.0.21
+    depends_on:
+      yugabyte:
+        condition: service_healthy
+
+  kuri-02:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: ansible-test-kuri-02
+    hostname: kuri-02
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - kuri-02-data:/data/fgw
+      - binaries:/opt/fgw/bin
+    networks:
+      ansible-test:
+        ipv4_address: 172.28.0.22
+    depends_on:
+      yugabyte:
+        condition: service_healthy
+
+  # S3 Frontend target hosts
+  s3-fe-01:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    container_name: ansible-test-s3-fe-01
+    hostname: s3-fe-01
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - binaries:/opt/fgw/bin
+    networks:
+      ansible-test:
+        ipv4_address: 172.28.0.31
+    depends_on:
+      - kuri-01
+      - kuri-02
+
+  # Ansible controller (runs playbooks)
+  ansible-controller:
+    image: python:3.11-slim
+    container_name: ansible-test-controller
+    working_dir: /ansible
+    entrypoint: ["tail", "-f", "/dev/null"]
+    volumes:
+      - ../../:/ansible-src:ro
+      - ./test-inventory:/test-inventory:ro
+      - ./test-wallet:/test-wallet:ro
+      - ./ssh-keys:/root/.ssh
+      - ansible-work:/ansible
+    networks:
+      ansible-test:
+        ipv4_address: 172.28.0.5
+    depends_on:
+      - kuri-01
+      - kuri-02
+      - s3-fe-01
+
+networks:
+  ansible-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
+
+volumes:
+  kuri-01-data:
+  kuri-02-data:
+  binaries:
+  ansible-work:

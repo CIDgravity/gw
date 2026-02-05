@@ -1,0 +1,27 @@
+# Ansible ignores
+
+# Inventory with real hosts
+inventory/production/hosts.yml
+inventory/staging/hosts.yml
+
+# Wallet files (sensitive!)
+files/wallet/*
+!files/wallet/.gitkeep
+
+# Ansible temp files
+*.retry
+
+# Fact cache
+/tmp/ansible_facts/
+
+# Vault password file
+.vault_pass
+vault_password.txt
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+
+# Local overrides
+*.local.yml

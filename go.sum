@@ -447,8 +447,6 @@ github.com/filecoin-project/go-legs v0.4.9 h1:9ccbv5zDPqMviEpSpf0TdfKKI64TMYGSiu
 github.com/filecoin-project/go-legs v0.4.9/go.mod h1:JQ3hA6xpJdbR8euZ2rO0jkxaMxeidXf0LDnVuqPAe9s=
 github.com/filecoin-project/go-padreader v0.0.1 h1:8h2tVy5HpoNbr2gBRr+WD6zV6VD6XHig+ynSGJg8ZOs=
 github.com/filecoin-project/go-padreader v0.0.1/go.mod h1:VYVPJqwpsfmtoHnAmPx6MUwmrK6HIcDqZJiuZhtmfLQ=
-github.com/filecoin-project/go-retrieval-types v1.2.0 h1:fz6DauLVP3GRg7UuW7HZ6sE+GTmaUW70DTXBF1r9cK0=
-github.com/filecoin-project/go-retrieval-types v1.2.0/go.mod h1:ojW6wSw2GPyoRDBGqw1K6JxUcbfa5NOSIiyQEeh7KK0=
 github.com/filecoin-project/go-state-types v0.0.0-20200903145444-247639ffa6ad/go.mod h1:IQ0MBPnonv35CJHtWSN3YY1Hz2gkPru1Q9qoaYLxx9I=
 github.com/filecoin-project/go-state-types v0.0.0-20200928172055-2df22083d8ab/go.mod h1:ezYnPf0bNkTsDibL/psSz5dy4B5awOJ/E7P2Saeep8g=
 github.com/filecoin-project/go-state-types v0.0.0-20201102161440-c8033295a1fc/go.mod h1:ezYnPf0bNkTsDibL/psSz5dy4B5awOJ/E7P2Saeep8g=
@@ -463,8 +461,6 @@ github.com/filecoin-project/go-statemachine v1.0.3/go.mod h1:jZdXXiHa61n4NmgWFG4
 github.com/filecoin-project/go-statestore v0.1.0/go.mod h1:LFc9hD+fRxPqiHiaqUEZOinUJB4WARkRfNl10O7kTnI=
 github.com/filecoin-project/go-statestore v0.2.0 h1:cRRO0aPLrxKQCZ2UOQbzFGn4WDNdofHZoGPjfNaAo5Q=
 github.com/filecoin-project/go-statestore v0.2.0/go.mod h1:8sjBYbS35HwPzct7iT4lIXjLlYyPor80aU7t7a/Kspo=
-github.com/filecoin-project/lassie v0.24.1-0.20250310082335-fbee09476e88 h1:McBJHOlbk5rOzXlJtoePVIYmZvXx+t3lHpoEsHIW9hg=
-github.com/filecoin-project/lassie v0.24.1-0.20250310082335-fbee09476e88/go.mod h1:KtNTKT5t3xnIugLy9MZODYVBt9Pq9fJtp5oSvRb+GGI=
 github.com/filecoin-project/lotus v1.34.1 h1:wrqkeNlfNGBhEOdYsDiOR0XTqGkzVa3Ws0u/UIPSwX0=
 github.com/filecoin-project/lotus v1.34.1/go.mod h1:2qrUwIdtAAVvduoFISqB5d+bUHRQpRWNQhLn0bmhVog=
 github.com/filecoin-project/specs-actors v0.9.13/go.mod h1:TS1AW/7LbG+615j4NsjMK1qlpAwaFsG9w0V2tg2gSao=
@@ -963,8 +959,6 @@ github.com/ipld/go-ipld-prime-proto v0.0.0-20191113031812-e32bd156a1e5/go.mod h1
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20211210234204-ce2a1c70cd73/go.mod h1:2PJ0JgxyB08t0b2WKrcuqI3di0V+5n6RS/LTUJhkoxY=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20230102063945-1a409dc236dd h1:gMlw/MhNr2Wtp5RwGdsW23cs+yCuj9k2ON7i9MiJlRo=
 github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20230102063945-1a409dc236dd/go.mod h1:wZ8hH8UxeryOs4kJEJaiui/s00hDSbE37OKsL47g+Sw=
-github.com/ipld/go-trustless-utils v0.4.1 h1:puA14381Hg2LzH724mZ5ZFKFx+FFjjT5fPFs01vwlgM=
-github.com/ipld/go-trustless-utils v0.4.1/go.mod h1:DgGuyfJ33goYwYVisjnxrlra0HVmZuHWVisVIkzVo1o=
 github.com/ipni/go-libipni v0.6.14 h1:V3iiAPDdAkjGCVC7/Ka8NOjAt8dFO/WXoaRUV7w4Svc=
 github.com/ipni/go-libipni v0.6.14/go.mod h1:YAcJzgEa37xeFl/O8Am5znfbrYME2J+3B8Lb3dfz620=
 github.com/ipni/index-provider v0.12.0 h1:R3F6dxxKNv4XkE4GJZNLOG0bDEbBQ/S5iztXwSD8jhQ=

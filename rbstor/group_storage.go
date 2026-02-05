@@ -41,7 +41,30 @@ func (r *rbs) openGroup(ctx context.Context, group iface.GroupKey, blocks, bytes
 	return g, nil
 }
 
+// withWritableGroup executes the callback with a writable group.
+// In legacy mode (parallel writes disabled), this uses global locking.
+// In parallel mode, this uses the load balancer for group selection.
 func (r *rbs) withWritableGroup(ctx context.Context, prefer iface.GroupKey, cb func(group *Group) error) (selectedGroup iface.GroupKey, err error) {
+	cfg := configuration.GetConfig().ParallelWrite
+	if cfg.Enabled {
+		return r.withWritableGroupParallel(ctx, nil, prefer, cb)
+	}
+	return r.withWritableGroupLegacy(ctx, prefer, cb)
+}
+
+// withWritableGroupForSession is like withWritableGroup but with session affinity support.
+// Used by ribBatch to maintain locality for related blocks.
+func (r *rbs) withWritableGroupForSession(ctx context.Context, session *ribSession, prefer iface.GroupKey, cb func(group *Group) error) (selectedGroup iface.GroupKey, err error) {
+	cfg := configuration.GetConfig().ParallelWrite
+	if cfg.Enabled {
+		return r.withWritableGroupParallel(ctx, session, prefer, cb)
+	}
+	return r.withWritableGroupLegacy(ctx, prefer, cb)
+}
+
+// withWritableGroupLegacy is the original single-writer implementation.
+// It uses global locking to serialize all writes to a single group.
+func (r *rbs) withWritableGroupLegacy(ctx context.Context, prefer iface.GroupKey, cb func(group *Group) error) (selectedGroup iface.GroupKey, err error) {
 	r.lk.Lock()
 	defer r.lk.Unlock()
 
@@ -98,6 +121,47 @@ func (r *rbs) withWritableGroup(ctx context.Context, prefer iface.GroupKey, cb f
 	}
 
 	return selectedGroup, cb(g)
+}
+
+// withWritableGroupParallel uses the load balancer for group selection.
+// This allows concurrent writes to multiple groups for improved throughput.
+func (r *rbs) withWritableGroupParallel(ctx context.Context, session *ribSession, prefer iface.GroupKey, cb func(group *Group) error) (selectedGroup iface.GroupKey, err error) {
+	// Estimate size for reservation (use average block size estimate)
+	// In practice, the actual Put() will handle space limits precisely
+	estimatedSize := int64(256 * 1024) // 256KB estimate
+
+	group, cleanup, err := r.loadBalancer.SelectGroup(ctx, session, prefer, estimatedSize)
+	if err != nil {
+		return iface.UndefGroupKey, xerrors.Errorf("selecting group: %w", err)
+	}
+	defer cleanup()
+
+	selectedGroup = group.id
+
+	// Execute the callback
+	err = cb(group)
+	if err != nil {
+		return selectedGroup, err
+	}
+
+	// Check if group became full and needs finalization
+	r.lk.Lock()
+	if group.state != iface.GroupStateWritable {
+		delete(r.writableGroups, selectedGroup)
+
+		// Clear session affinity for this group since it's no longer writable
+		if session != nil {
+			r.loadBalancer.clearSessionAffinity(session)
+		}
+
+		r.tasks <- task{
+			tt:    taskTypeFinalize,
+			group: selectedGroup,
+		}
+	}
+	r.lk.Unlock()
+
+	return selectedGroup, nil
 }
 
 func (r *rbs) withReadableGroup(ctx context.Context, group iface.GroupKey, cb func(group *Group) error) (err error) {

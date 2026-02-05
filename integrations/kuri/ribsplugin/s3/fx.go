@@ -1,6 +1,8 @@
 package s3
 
 import (
+	"os"
+
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/CIDgravity/filecoin-gateway/integrations/blockstore"
@@ -42,9 +44,17 @@ func MakeS3Server(in ServerIn) (*s3.S3Server, error) {
 	bsv := blockservice.New(in.Rbs, offline.Exchange(in.Rbs))
 	dag := merkledag.NewDAGService(bsv)
 
+	// Get node ID from environment for scalable architecture
+	nodeID := os.Getenv("FGW_NODE_ID")
+	if nodeID == "" {
+		nodeID = "default" // Fallback for single-node deployments
+	}
+	log.Infow("S3 region initialized", "node_id", nodeID)
+
 	region := &Region{
-		name:  in.Cfg.Region,
-		index: in.Index,
+		name:   in.Cfg.Region,
+		nodeID: nodeID,
+		index:  in.Index,
 
 		blockstore:  in.Rbs,
 		dag:         dag,

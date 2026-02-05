@@ -24,9 +24,25 @@ var log = logging.Logger("gw/db/cql")
 var migrationsfs embed.FS
 
 type yugabyteCqlDb struct {
-	*gocql.Session
+	session *gocql.Session
 	cluster *gocql.ClusterConfig
 	ctx     context.Context
+}
+
+func (db *yugabyteCqlDb) Session() *gocql.Session {
+	return db.session
+}
+
+func (db *yugabyteCqlDb) Query(stmt string, values ...interface{}) *gocql.Query {
+	return db.session.Query(stmt, values...)
+}
+
+func (db *yugabyteCqlDb) NewBatch(typ gocql.BatchType) *gocql.Batch {
+	return db.session.NewBatch(typ)
+}
+
+func (db *yugabyteCqlDb) ExecuteBatch(batch *gocql.Batch) error {
+	return db.session.ExecuteBatch(batch)
 }
 
 func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) {
@@ -62,7 +78,7 @@ func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) 
 	}
 
 	db := &yugabyteCqlDb{
-		Session: session,
+		session: session,
 		cluster: cluster,
 		ctx:     context.Background(),
 	}
@@ -95,7 +111,8 @@ func runMigrations(config configuration.YugabyteCqlConfig) error {
 	}
 
 	driver, err := cassandra.WithInstance(session, &cassandra.Config{
-		KeyspaceName: config.Keyspace,
+		KeyspaceName:          config.Keyspace,
+		MultiStatementEnabled: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create cql migrations driver: %w", err)

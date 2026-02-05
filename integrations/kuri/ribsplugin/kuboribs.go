@@ -69,6 +69,7 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 	opts = append(opts,
 		fx.Provide(makeSqlDb),
 		fx.Provide(makeCqlDb),
+		fx.Provide(makeS3CqlDb), // Separate S3 CQL connection (shared keyspace)
 		fx.Provide(provideConfig),
 		rbstor.Module,
 		cidlocation2.Module,
@@ -110,12 +111,28 @@ func makeSqlDb() (sqldb2.Database, error) {
 	return sqldb2.NewYugabyteDB(configuration.GetConfig().YugabyteSql)
 }
 
+// makeCqlDb creates the RIBS CQL connection (per-node: groups, deals, blockstore index)
 func makeCqlDb() (cqldb2.Database, error) {
 	return cqldb2.NewYugabyteCqlDb(configuration.GetConfig().YugabyteCql)
 }
 
-func makeS3ObjectIndex(db cqldb2.Database) iface.S3ObjectIndex {
-	return s3.NewObjectIndexCql(db)
+// S3CqlDB is a separate CQL connection for shared S3 object metadata
+type S3CqlDB struct {
+	cqldb2.Database
+}
+
+// makeS3CqlDb creates the S3 CQL connection (shared across all nodes)
+func makeS3CqlDb() (*S3CqlDB, error) {
+	cfg := configuration.GetConfig().GetS3CqlConfig()
+	db, err := cqldb2.NewYugabyteCqlDb(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &S3CqlDB{db}, nil
+}
+
+func makeS3ObjectIndex(db *S3CqlDB) iface.S3ObjectIndex {
+	return s3.NewObjectIndexCql(db.Database)
 }
 
 func provideConfig() (*configuration.RibsConfig, *configuration.S3APIConfig) {

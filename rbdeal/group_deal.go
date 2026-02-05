@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/cidgravity"
@@ -38,6 +39,35 @@ func (e ErrRejected) Error() string {
 	return fmt.Sprintf("deal proposal rejected: %s", e.Reason)
 }
 
+// parseFallbackProviders parses a comma-separated list of provider IDs.
+// Input format: "f02620,f03623016,f03623017" or "02620,03623016,03623017"
+// Returns a slice of provider IDs in f0XXXX format.
+func parseFallbackProviders(providers string) []string {
+	if providers == "" {
+		return nil
+	}
+	parts := strings.Split(providers, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// Normalize to f0XXXX format
+		if !strings.HasPrefix(p, "f0") {
+			if strings.HasPrefix(p, "f") {
+				// Already has f prefix but missing 0
+				p = "f0" + p[1:]
+			} else {
+				// No prefix at all
+				p = "f0" + p
+			}
+		}
+		result = append(result, p)
+	}
+	return result
+}
+
 func (r *ribs) canSendMoreDeals(since time.Time) bool {
 	log.Debugw("CanSendDeal?")
 	cfg := configuration.GetConfig()
@@ -62,7 +92,7 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	if checks_start != nil {
 		check_start = *checks_start
 	}
-	log.Debugw("makeMoreDeals", "id", id, "time", check_start)
+	log.Infow("makeMoreDeals: starting", "group", id)
 
 	r.dealsLk.Lock()
 	defer r.dealsLk.Unlock()
@@ -90,8 +120,10 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 
 	// now that offload is handled, check if we are allowed to send a deal now
 	if !r.canSendMoreDeals(check_start) {
+		log.Infow("makeMoreDeals: canSendMoreDeals returned false", "group", id)
 		return nil
 	}
+	log.Infow("makeMoreDeals: passed canSendMoreDeals check", "group", id)
 
 	dealInfo, err := r.db.GetDealParams(ctx, id)
 	if err != nil {
@@ -120,12 +152,13 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 	copiesRequired := max(0, cfg.Ribs.MinimumReplicaCount-notFailed)
 	copiesRequired = max(copiesRequired, cfg.Ribs.MinimumRetrievableCount-(notFailed-unretrievable))
 	copiesRequired = min(copiesRequired, cfg.Ribs.MaximumReplicaCount-notFailed)
-	log.Debugw("makeMoreDeals", "group", id, "copiesRequired", copiesRequired, "notFailed", notFailed, "unretrievable", unretrievable)
+	log.Infow("makeMoreDeals: copies check", "group", id, "copiesRequired", copiesRequired, "notFailed", notFailed, "unretrievable", unretrievable)
 	if copiesRequired <= 0 {
-		// occasionally in some racy cases we can end up here
+		log.Infow("makeMoreDeals: no copies required", "group", id)
 		return nil
 	}
 
+	log.Infow("makeMoreDeals: creating gateway client", "group", id)
 	gw, closer, err := client.NewGatewayRPCV1(ctx, r.lotusRPCAddr, nil)
 	if err != nil {
 		return xerrors.Errorf("creating gateway rpc client: %w", err)
@@ -137,10 +170,12 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("get wallet address: %w", err)
 	}
 
+	log.Infow("makeMoreDeals: getting verified client status", "group", id, "wallet", walletAddr)
 	vc, err := gw.StateVerifiedClientStatus(ctx, walletAddr, ctypes.EmptyTSK)
 	if err != nil {
 		return xerrors.Errorf("getting verified client status: %w", err)
 	}
+	log.Infow("makeMoreDeals: got verified client status", "group", id, "datacap", vc)
 
 	verified := false
 	maxToPay := maxPrice
@@ -194,9 +229,27 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		RemoveUnsealedCopy:   &removeUnsealed,
 	}
 
-	provsIds, err := r.cidg.GetBestAvailableProviders(req)
-	if err != nil {
-		return xerrors.Errorf("select deal providers: %w", err)
+	var provsIds []string
+
+	// Check if we should skip GBAP and use only fallback providers
+	if cfg.Deal.FallbackProvidersOnly && cfg.Deal.FallbackProviders != "" {
+		log.Infow("makeMoreDeals: using fallback providers only (skipping GBAP)", "group", id)
+		provsIds = parseFallbackProviders(cfg.Deal.FallbackProviders)
+	} else {
+		log.Infow("makeMoreDeals: calling GBAP", "group", id, "pieceCid", pieceCid.String(), "carSize", dealInfo.CarSize)
+		var err error
+		provsIds, err = r.cidg.GetBestAvailableProviders(req)
+		if err != nil {
+			return xerrors.Errorf("select deal providers: %w", err)
+		}
+		log.Infow("makeMoreDeals: GBAP returned providers", "group", id, "count", len(provsIds))
+
+		// If GBAP returns no providers, try fallback providers
+		if len(provsIds) == 0 && cfg.Deal.FallbackProviders != "" {
+			log.Infow("makeMoreDeals: GBAP returned no providers, using fallback providers", "group", id)
+			provsIds = parseFallbackProviders(cfg.Deal.FallbackProviders)
+			log.Infow("makeMoreDeals: fallback providers parsed", "group", id, "count", len(provsIds), "providers", provsIds)
+		}
 	}
 
 	log.Debugw("making more deal", "group", id, "providers", provsIds, "req", req)

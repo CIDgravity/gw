@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/carlog"
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/iface"
-	"github.com/filecoin-project/lassie/pkg/types"
+	"github.com/CIDgravity/filecoin-gateway/rbcache"
+	"github.com/CIDgravity/filecoin-gateway/rbstor"
+	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	pool "github.com/libp2p/go-buffer-pool"
 
 	"github.com/CIDgravity/filecoin-gateway/ributil"
@@ -20,7 +23,6 @@ import (
 	"github.com/filecoin-project/lotus/lib/must"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/ipfs/go-cid"
-	"github.com/ipni/go-libipni/metadata"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
@@ -47,11 +49,19 @@ type retrievalProvider struct {
 	ongoingRequestsLk sync.Mutex
 	ongoingRequests   map[cid.Cid]*requestPromise
 
-	blockCache *lru.Cache[mhStr, []byte] // todo 2q with large ghost cache?
+	// Multi-tier caching
+	l1Cache    *rbcache.ARCCache[mhStr, []byte] // L1 in-memory ARC cache
+	l2Cache    *rbcache.SSDCache                // L2 SSD cache (optional)
+	prefetcher *rbcache.Prefetcher              // Prefetch engine (optional)
+
+	// Legacy LRU cache for fallback
+	blockCache *lru.Cache[mhStr, []byte]
 
 	candidateCache *lru.Cache[iface.GroupKey, cachedRetrCandidates]
 
 	metrics *RetrievalMetrics
+
+	accessTracker *rbstor.AccessTracker
 }
 
 type cachedRetrCandidates struct {
@@ -110,133 +120,6 @@ func (r *retrievalProvider) retrievalCandidatesForGroupCached(source iface.Group
 	return v, nil
 }
 
-func (r *retrievalProvider) FindCandidates(ctx context.Context, cid cid.Cid, f func(types.RetrievalCandidate)) error {
-	var source iface.GroupKey
-
-	r.reqSourcesLk.Lock()
-	if _, ok := r.requests[mhStr(cid.Hash())]; !ok {
-		r.reqSourcesLk.Unlock()
-		return xerrors.Errorf("no requests for cid")
-	}
-
-	for s := range r.requests[mhStr(cid.Hash())] {
-		source = s
-		break
-	}
-	r.reqSourcesLk.Unlock()
-
-	cc, err := r.retrievalCandidatesForGroupCached(source)
-	if err != nil {
-		return xerrors.Errorf("failed to get retrieval candidates: %w", err)
-	}
-	candidates := cc.candidates
-
-	gm, err := r.r.Storage().DescibeGroup(ctx, source) // todo cache
-	if err != nil {
-		return xerrors.Errorf("failed to get group metadata: %w", err)
-	}
-
-	log.Debugw("got retrieval candidates", "cid", cid, "candidates", len(candidates))
-
-	cs := make([]types.RetrievalCandidate, 0, len(candidates))
-
-	for _, candidate := range candidates {
-		addrInfo, err := r.getAddrInfoCached(candidate.Provider)
-		if err != nil {
-			log.Warnw("failed to get addrinfo", "provider", candidate.Provider, "err", err)
-			continue
-		}
-
-		if len(addrInfo.BitswapMaddrs) > 0 {
-			log.Debugw("candidate has bitswap addrs", "provider", candidate.Provider)
-
-			bsAddrInfo, err := peer.AddrInfosFromP2pAddrs(addrInfo.BitswapMaddrs...)
-			if err != nil {
-				log.Warnw("failed to parse bitswap addrinfo", "provider", candidate.Provider, "err", err)
-				continue
-			}
-
-			for _, ai := range bsAddrInfo {
-				cs = append(cs, types.RetrievalCandidate{
-					MinerPeer: ai,
-					RootCid:   cid,
-					Metadata:  metadata.Default.New(&metadata.Bitswap{}),
-				})
-			}
-		}
-
-		gsAddrInfo, err := peer.AddrInfosFromP2pAddrs(addrInfo.LibP2PMaddrs...)
-		if err != nil {
-			log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-			continue
-		}
-
-		if len(gsAddrInfo) == 0 {
-			log.Warnw("no gs addrinfo", "provider", candidate.Provider)
-			continue
-		}
-
-		cs = append(cs, types.RetrievalCandidate{
-			MinerPeer: gsAddrInfo[0],
-			RootCid:   cid,
-			Metadata: metadata.Default.New(&metadata.GraphsyncFilecoinV1{
-				PieceCID:      gm.PieceCid,
-				VerifiedDeal:  candidate.Verified,
-				FastRetrieval: candidate.FastRetr,
-			}),
-		})
-	}
-
-	r.statLk.Lock()
-	/*sort.SliceStable(cs, func(i, j int) bool {
-		if cs[i].MinerPeer.ID == cs[j].MinerPeer.ID {
-			return true
-		}
-
-		iattempts := r.attempts[cs[i].MinerPeer.ID]
-		jattempts := r.success[cs[j].MinerPeer.ID]
-
-		ifails := r.fails[cs[i].MinerPeer.ID]
-		jfails := r.fails[cs[j].MinerPeer.ID]
-
-		ifailRatio := float64(ifails) / float64(iattempts+1)
-		jfailRatio := float64(jfails) / float64(jattempts+1)
-
-		if ifailRatio == jfailRatio {
-			// prefer bitswap
-			if cs[i].Metadata.Protocols()[0] == multicodec.TransportBitswap {
-				return true
-			}
-		}
-
-		return ifailRatio < jfailRatio // prefer peers that have failed less
-	})*/
-
-	rand.Shuffle(len(cs), func(i, j int) { cs[i], cs[j] = cs[j], cs[i] })
-	r.statLk.Unlock()
-
-	/*n := len(cs)
-	if n > 6 { // only return the top 6
-		n = 6
-	}*/
-
-	for _, c := range cs /*[:n]*/ {
-		r.statLk.Lock()
-		log.Debugw("select", "p", c.MinerPeer.ID, "tpt", c.Metadata.Protocols()[0].String(), "attempts", r.attempts[c.MinerPeer.ID], "fails", r.fails[c.MinerPeer.ID], "success", r.success[c.MinerPeer.ID])
-		r.statLk.Unlock()
-
-		f(c)
-
-		/*select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(100 * time.Millisecond):
-		}*/
-	}
-
-	return nil
-}
-
 func newRetrievalProvider(ctx context.Context, r *ribs) (*retrievalProvider, error) {
 	gw, closer, err := client.NewGatewayRPCV1(ctx, r.lotusRPCAddr, nil)
 	if err != nil {
@@ -247,6 +130,9 @@ func newRetrievalProvider(ctx context.Context, r *ribs) (*retrievalProvider, err
 		<-ctx.Done()
 		closer()
 	}()
+
+	cfg := configuration.GetConfig()
+	cacheCfg := cfg.Cache
 
 	rp := &retrievalProvider{
 		r: r,
@@ -262,33 +148,288 @@ func newRetrievalProvider(ctx context.Context, r *ribs) (*retrievalProvider, err
 
 		ongoingRequests: map[cid.Cid]*requestPromise{},
 
-		blockCache:     must.One(lru.New[mhStr, []byte](BlockCacheSize)),
 		candidateCache: must.One(lru.New[iface.GroupKey, cachedRetrCandidates](RetrievalCandidateCacheSize)),
 
 		metrics: newRetrievalMetrics(),
 	}
 
+	// Initialize L1 cache based on configuration
+	l1SizeBytes := int64(cacheCfg.L1SizeMiB) * 1024 * 1024
+	if l1SizeBytes <= 0 {
+		l1SizeBytes = BlockCacheSizeMiB << 20 // Default 512MB
+	}
+
+	if cacheCfg.L1Policy == "arc" || cacheCfg.L1Policy == "" {
+		// Use new ARC cache
+		rp.l1Cache = rbcache.NewARCCache[mhStr, []byte](
+			l1SizeBytes,
+			func(data []byte) int64 { return int64(len(data)) },
+			"l1_block",
+		)
+		log.Infow("initialized L1 ARC cache", "size_mib", cacheCfg.L1SizeMiB)
+	} else {
+		// Fallback to legacy LRU cache
+		rp.blockCache = must.One(lru.New[mhStr, []byte](BlockCacheSize))
+		log.Infow("initialized legacy LRU cache", "size_entries", BlockCacheSize)
+	}
+
+	// Initialize L2 SSD cache if enabled
+	if cacheCfg.L2Enabled && cacheCfg.L2Path != "" {
+		l2SizeBytes := int64(cacheCfg.L2SizeGB) * 1024 * 1024 * 1024
+		l2Cache, err := rbcache.NewSSDCache(rbcache.SSDCacheConfig{
+			Path:          cacheCfg.L2Path,
+			MaxSizeBytes:  l2SizeBytes,
+			FlushSize:     100,
+			FlushInterval: time.Second,
+			MetricsName:   "l2_ssd",
+		})
+		if err != nil {
+			log.Warnw("failed to initialize L2 SSD cache, continuing without it", "error", err, "path", cacheCfg.L2Path)
+		} else {
+			rp.l2Cache = l2Cache
+			log.Infow("initialized L2 SSD cache", "size_gb", cacheCfg.L2SizeGB, "path", cacheCfg.L2Path)
+		}
+	}
+
+	// Set up L1→L2 promotion callback if both caches are enabled
+	if rp.l1Cache != nil && rp.l2Cache != nil {
+		rp.l1Cache.SetEvictionCallback(func(key mhStr, value []byte, stats rbcache.EvictionStats) {
+			// Only admit to L2 if item was accessed at least twice (from T2) or
+			// if it was in T1 but had some access count
+			if stats.AccessCount >= 2 || !stats.FromT1 {
+				rp.l2Cache.Put(string(key), value)
+			}
+		})
+		log.Infow("enabled L1→L2 cache promotion")
+	}
+
+	// Initialize prefetcher if enabled
+	if cacheCfg.PrefetchEnabled && rp.l1Cache != nil {
+		prefetchCfg := rbcache.DefaultPrefetcherConfig()
+		prefetchCfg.NumWorkers = cacheCfg.PrefetchWorkers
+		prefetchCfg.MaxDAGDepth = cacheCfg.PrefetchDepth
+
+		// Create a simple fetcher adapter
+		fetcher := &retrievalFetcher{rp: rp}
+
+		// Use the L1 cache as the target (with adapter)
+		l1Adapter := &l1CacheAdapter{cache: rp.l1Cache}
+		var l2Adapter rbcache.CacheInterface
+		if rp.l2Cache != nil {
+			l2Adapter = &l2CacheAdapter{cache: rp.l2Cache}
+		}
+
+		rp.prefetcher = rbcache.NewPrefetcher(
+			l1Adapter,
+			l2Adapter,
+			fetcher,
+			rbcache.NullLinkResolver{}, // TODO: implement proper link resolver for UnixFS
+			prefetchCfg,
+		)
+		log.Infow("initialized prefetcher", "workers", prefetchCfg.NumWorkers, "depth", prefetchCfg.MaxDAGDepth)
+	}
+
+	// Initialize access tracker
+	rp.accessTracker = rbstor.NewAccessTracker(rbstor.DefaultAccessTrackerConfig())
+	log.Infow("initialized access tracker")
+
 	return rp, nil
 }
 
+// l1CacheAdapter adapts ARCCache to CacheInterface
+type l1CacheAdapter struct {
+	cache *rbcache.ARCCache[mhStr, []byte]
+}
+
+func (a *l1CacheAdapter) Has(key string) bool {
+	return a.cache.Has(mhStr(key))
+}
+
+func (a *l1CacheAdapter) Put(key string, data []byte) {
+	a.cache.Put(mhStr(key), data)
+}
+
+// l2CacheAdapter adapts SSDCache to CacheInterface
+type l2CacheAdapter struct {
+	cache *rbcache.SSDCache
+}
+
+func (a *l2CacheAdapter) Has(key string) bool {
+	return a.cache.Has(key)
+}
+
+func (a *l2CacheAdapter) Put(key string, data []byte) {
+	a.cache.Put(key, data)
+}
+
+// retrievalFetcher implements DataFetcher for the prefetcher
+type retrievalFetcher struct {
+	rp *retrievalProvider
+}
+
+func (f *retrievalFetcher) Fetch(ctx context.Context, c cid.Cid) ([]byte, error) {
+	// Try to fetch the block using the retrieval provider's existing logic
+	key := mhStr(c.Hash())
+
+	// Check if already in cache
+	if f.rp.l1Cache != nil {
+		if data, ok := f.rp.l1Cache.Get(key); ok {
+			return data, nil
+		}
+	}
+
+	if f.rp.l2Cache != nil {
+		if data, ok := f.rp.l2Cache.Get(string(key)); ok {
+			// Promote to L1
+			if f.rp.l1Cache != nil {
+				f.rp.l1Cache.Put(key, data)
+			}
+			return data, nil
+		}
+	}
+
+	// Try local RIBS storage first
+	var localData []byte
+	session := f.rp.r.Session(ctx)
+	err := session.View(ctx, []multihash.Multihash{c.Hash()}, func(cidx int, data []byte) {
+		localData = make([]byte, len(data))
+		copy(localData, data)
+	})
+	if err == nil && localData != nil {
+		// Cache and return
+		f.rp.cacheBlock(key, localData)
+		return localData, nil
+	}
+
+	// Try HTTP retrieval from any available provider
+	// Find which group this CID belongs to
+	groups, err := f.rp.r.Storage().FindHashes(ctx, c.Hash())
+	if err != nil || len(groups) == 0 {
+		return nil, xerrors.Errorf("failed to find group for cid %s: %w", c, err)
+	}
+	foundGroup := groups[0]
+
+	// Get retrieval candidates for this group
+	candidates, err := f.rp.retrievalCandidatesForGroupCached(foundGroup)
+	if err != nil {
+		return nil, xerrors.Errorf("failed to get retrieval candidates for group %d: %w", foundGroup, err)
+	}
+
+	if len(candidates.candidates) == 0 {
+		return nil, xerrors.Errorf("no retrieval candidates available for group %d", foundGroup)
+	}
+
+	// Try each candidate
+	var retrievedData []byte
+	for _, candidate := range candidates.candidates {
+		addrInfo, err := f.rp.getAddrInfoCached(candidate.Provider)
+		if err != nil {
+			continue
+		}
+
+		if len(addrInfo.HttpMaddrs) == 0 {
+			continue
+		}
+
+		u, err := ributil.MaddrsToUrl(addrInfo.HttpMaddrs)
+		if err != nil {
+			continue
+		}
+
+		err = f.rp.doHttpRetrieval(ctx, foundGroup, candidate.Provider, u, c, func(data []byte) {
+			retrievedData = make([]byte, len(data))
+			copy(retrievedData, data)
+		})
+
+		if err == nil && retrievedData != nil {
+			// Cache and return
+			f.rp.cacheBlock(key, retrievedData)
+			return retrievedData, nil
+		}
+	}
+
+	return nil, xerrors.Errorf("failed to retrieve cid %s from any provider", c)
+}
+
+// cacheBlock stores a block in the cache hierarchy (L1, and optionally L2)
+func (r *retrievalProvider) cacheBlock(key mhStr, data []byte) {
+	if r.l1Cache != nil {
+		r.l1Cache.Put(key, data)
+	} else if r.blockCache != nil {
+		r.blockCache.Add(key, data)
+	}
+	// Note: L2 cache uses admission policy, blocks are demoted from L1 on eviction
+	// For now, we only insert into L1; L2 admission happens via the ARC eviction callback
+}
+
+// Close cleans up cache resources
+func (r *retrievalProvider) Close() error {
+	if r.prefetcher != nil {
+		r.prefetcher.Close()
+	}
+	if r.l2Cache != nil {
+		return r.l2Cache.Close()
+	}
+	return nil
+}
+
 func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKey, mh []multihash.Multihash, cb func(cidx int, data []byte)) error {
-	// try cache
-	var cacheHits int
+	// try cache hierarchy: L1 (memory) -> L2 (SSD) -> network
+	var l1Hits, l2Hits int
 	var bytesServed int64
 
 	defer func() {
 		r.metrics.AddBytesTotal(bytesServed)
 	}()
 
+	// Track access for each multihash
+	for _, m := range mh {
+		r.accessTracker.RecordAccess(rbstor.AccessEvent{
+			Key:      m.String(),
+			GroupKey: group,
+		})
+	}
+
 	for i, m := range mh {
-		if b, ok := r.blockCache.Get(mhStr(m)); ok {
-			cb(i, b)
-			cacheHits++
-			bytesServed += int64(len(b))
-			mh[i] = nil
+		key := mhStr(m)
+
+		// Try L1 ARC cache first
+		if r.l1Cache != nil {
+			if b, ok := r.l1Cache.Get(key); ok {
+				cb(i, b)
+				l1Hits++
+				bytesServed += int64(len(b))
+				mh[i] = nil
+				continue
+			}
+		} else if r.blockCache != nil {
+			// Legacy LRU fallback
+			if b, ok := r.blockCache.Get(key); ok {
+				cb(i, b)
+				l1Hits++
+				bytesServed += int64(len(b))
+				mh[i] = nil
+				continue
+			}
+		}
+
+		// Try L2 SSD cache
+		if r.l2Cache != nil {
+			if b, ok := r.l2Cache.Get(string(key)); ok {
+				cb(i, b)
+				l2Hits++
+				bytesServed += int64(len(b))
+				// Promote to L1 on L2 hit
+				if r.l1Cache != nil {
+					r.l1Cache.Put(key, b)
+				}
+				mh[i] = nil
+				continue
+			}
 		}
 	}
 
+	cacheHits := l1Hits + l2Hits
 	r.metrics.AddCacheHits(int64(cacheHits))
 	r.metrics.AddCacheMisses(int64(len(mh) - cacheHits))
 
@@ -386,7 +527,8 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 								delete(r.ongoingRequests, cidToGet)
 								r.ongoingRequestsLk.Unlock()
 
-								r.blockCache.Add(mhStr(hashToGet), data) // todo pool copy stuff
+								// Insert into cache hierarchy
+								r.cacheBlock(mhStr(hashToGet), data)
 
 								promise.res = data
 								close(promise.done)
@@ -408,7 +550,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 
 				cancel()
 				if !anySuccess {
-					promise.claimed = false // lassie fetch will take over the promise
+					promise.claimed = false // allow retry from another source
 					continue
 				}
 
@@ -423,7 +565,7 @@ func (r *retrievalProvider) FetchBlocks(ctx context.Context, group iface.GroupKe
 	}
 
 	if cacheHits+httpHits == len(mh) {
-		log.Debugw("http retrieval success before lassie!", "group", group, "cacheHits", cacheHits, "httpHits", httpHits)
+		log.Debugw("http retrieval success", "group", group, "cacheHits", cacheHits, "httpHits", httpHits)
 		return nil
 	}
 
@@ -526,4 +668,43 @@ func (r *retrievalProvider) retrievalPromise(ctx context.Context, cidToGet cid.C
 	r.ongoingRequestsLk.Unlock()
 
 	return promise, nil
+}
+
+// CacheStats returns combined L1/L2 cache statistics
+func (r *retrievalProvider) CacheStats() iface.CacheStats {
+	stats := iface.CacheStats{}
+
+	// L1 ARC cache stats
+	if r.l1Cache != nil {
+		stats.L1Enabled = true
+		l1Stats := r.l1Cache.Stats()
+		stats.L1Size = l1Stats.Size
+		stats.L1Capacity = l1Stats.Capacity
+		stats.L1Items = l1Stats.Items
+		stats.L1T1Size = l1Stats.T1Size
+		stats.L1T2Size = l1Stats.T2Size
+		stats.L1B1Len = l1Stats.B1Len
+		stats.L1B2Len = l1Stats.B2Len
+		stats.L1P = l1Stats.P
+	}
+
+	// L2 SSD cache stats
+	if r.l2Cache != nil {
+		stats.L2Enabled = true
+		l2Stats := r.l2Cache.Stats()
+		stats.L2Size = l2Stats.Size
+		stats.L2MaxSize = l2Stats.MaxSize
+		stats.L2Items = l2Stats.Items
+		stats.L2ProbationSize = l2Stats.ProbationSize
+		stats.L2ProtectedSize = l2Stats.ProtectedSize
+		stats.L2FreeSpace = l2Stats.FreeSpace
+	}
+
+	// Hit/miss counters from metrics
+	if r.metrics != nil {
+		stats.Hits = int64(metrics.GetCounterValue(r.metrics.cacheHit))
+		stats.Misses = int64(metrics.GetCounterValue(r.metrics.cacheMiss))
+	}
+
+	return stats
 }

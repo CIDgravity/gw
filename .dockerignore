@@ -1,0 +1,21 @@
+# Build artifacts
+kuri
+gwcfg
+*.exe
+
+# Data directories (created by docker-compose)
+data/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+
+# OS files
+.DS_Store
+Thumbs.db

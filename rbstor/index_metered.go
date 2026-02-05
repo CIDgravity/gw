@@ -2,6 +2,7 @@ package rbstor
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
 	"github.com/CIDgravity/filecoin-gateway/iface"
@@ -14,6 +15,33 @@ const (
 	write string = "write"
 	read  string = "read"
 )
+
+// Metrics are registered once and shared across all MeteredIndex instances
+var (
+	metricsOnce         sync.Once
+	groupIndexCounters  *prometheus.CounterVec
+	groupIndexDurations *prometheus.HistogramVec
+)
+
+func initMetrics() {
+	metricsOnce.Do(func() {
+		groupIndexCounters = promauto.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "fgw",
+			Subsystem: "group_index",
+			Name:      "operations_total",
+		}, []string{"operation", "type"})
+
+		groupIndexDurations = promauto.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "fgw",
+			Subsystem: "group_index",
+			Name:      "request_duration_seconds",
+			Help:      "Duration of the group index requests.",
+			Buckets:   prometheus.DefBuckets,
+		},
+			[]string{"operation", "type"},
+		)
+	})
+}
 
 type MeteredIndex struct {
 	sub iface.GroupIndex
@@ -83,22 +111,11 @@ func (m *MeteredIndex) incrementCounter(operation string, t string) *prometheus.
 }
 
 func NewMeteredIndex(sub iface.GroupIndex) *MeteredIndex {
-	return &MeteredIndex{sub: sub,
-		counters: promauto.NewCounterVec(prometheus.CounterOpts{
-			Namespace: "fgw",
-			Subsystem: "group_index",
-			Name:      "operations_total",
-		}, []string{"operation", "type"}),
-
-		durations: promauto.NewHistogramVec(prometheus.HistogramOpts{
-			Namespace: "fgw",
-			Subsystem: "group_index",
-			Name:      "request_duration_seconds",
-			Help:      "Duration of the group index requests.",
-			Buckets:   prometheus.DefBuckets,
-		},
-			[]string{"operation", "type"},
-		),
+	initMetrics()
+	return &MeteredIndex{
+		sub:       sub,
+		counters:  groupIndexCounters,
+		durations: groupIndexDurations,
 	}
 }
 

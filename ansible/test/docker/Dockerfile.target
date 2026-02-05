@@ -1,0 +1,71 @@
+# Test target host for Ansible playbook testing
+# Simulates a production Ubuntu server with SSH access
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    sudo \
+    python3 \
+    python3-apt \
+    systemd \
+    systemd-sysv \
+    curl \
+    wget \
+    jq \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    iproute2 \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Setup SSH
+RUN mkdir /var/run/sshd
+RUN echo 'root:testpass' | chpasswd
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Create fgw user for Ansible
+RUN useradd -m -s /bin/bash fgw && \
+    echo 'fgw:fgwpass' | chpasswd && \
+    usermod -aG sudo fgw && \
+    echo 'fgw ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Create SSH directory for fgw user
+RUN mkdir -p /home/fgw/.ssh && \
+    chmod 700 /home/fgw/.ssh && \
+    chown -R fgw:fgw /home/fgw/.ssh
+
+# Create data directories
+RUN mkdir -p /data/fgw /opt/fgw/bin /opt/fgw/config && \
+    chown -R fgw:fgw /data/fgw /opt/fgw
+
+# Setup systemd
+RUN cd /lib/systemd/system/sysinit.target.wants/ && \
+    ls | grep -v systemd-tmpfiles-setup | xargs rm -f
+RUN rm -f /lib/systemd/system/multi-user.target.wants/* \
+    /etc/systemd/system/*.wants/* \
+    /lib/systemd/system/local-fs.target.wants/* \
+    /lib/systemd/system/sockets.target.wants/*udev* \
+    /lib/systemd/system/sockets.target.wants/*initctl* \
+    /lib/systemd/system/basic.target.wants/* \
+    /lib/systemd/system/anaconda.target.wants/* \
+    /lib/systemd/system/plymouth* \
+    /lib/systemd/system/systemd-update-utmp*
+
+# Enable SSH service
+RUN systemctl enable ssh
+
+# Disable nologin during boot (allows SSH immediately)
+RUN rm -f /lib/systemd/system/systemd-user-sessions.service
+
+VOLUME ["/sys/fs/cgroup"]
+
+EXPOSE 22
+
+# Start systemd
+CMD ["/lib/systemd/systemd"]

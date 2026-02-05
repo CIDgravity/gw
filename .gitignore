@@ -1,7 +1,17 @@
 /build.sh
 /deploy.sh
-./ritool
-./gwcfg
+ritool
+gwcfg
+kuri
 settings.env
+.env
 *~
 .idea/
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+*.app

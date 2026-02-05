@@ -27,6 +27,22 @@ func (rc *RIBSRpc) WalletWithdraw(ctx context.Context, amt abi.TokenAmount, to a
 	return rc.ribs.Wallet().Withdraw(ctx, amt, to)
 }
 
+func (rc *RIBSRpc) BalanceManagerInfo(ctx context.Context) (iface2.BalanceManagerInfo, error) {
+	return rc.ribs.Wallet().BalanceManagerInfo(ctx)
+}
+
+func (rc *RIBSRpc) RequestFaucetFil(ctx context.Context) error {
+	return rc.ribs.Wallet().RequestFaucetFil(ctx)
+}
+
+func (rc *RIBSRpc) RequestFaucetDatacap(ctx context.Context) error {
+	return rc.ribs.Wallet().RequestFaucetDatacap(ctx)
+}
+
+func (rc *RIBSRpc) TopUpMarketBalance(ctx context.Context) error {
+	return rc.ribs.Wallet().TopUpMarketBalance(ctx)
+}
+
 func (rc *RIBSRpc) Groups(ctx context.Context) ([]iface2.GroupKey, error) {
 	return rc.ribs.StorageDiag().Groups()
 }
@@ -116,6 +132,61 @@ func (rc *RIBSRpc) RepairQueue() (iface2.RepairQueueStats, error) {
 
 func (rc *RIBSRpc) RepairStats() (map[int]iface2.RepairJob, error) {
 	return rc.ribs.DealDiag().RepairStats()
+}
+
+func (rc *RIBSRpc) CIDGravityStatus(ctx context.Context) (iface2.CIDGravityStatus, error) {
+	return rc.ribs.DealDiag().CIDGravityStatus(ctx), nil
+}
+
+func (rc *RIBSRpc) CacheStats(ctx context.Context) (iface2.CacheStats, error) {
+	return rc.ribs.DealDiag().CacheStats(), nil
+}
+
+func (rc *RIBSRpc) ParallelWriteStats(ctx context.Context) (iface2.ParallelWriteStats, error) {
+	return rc.ribs.StorageDiag().ParallelWriteStats(), nil
+}
+
+func (rc *RIBSRpc) LoadBalancerMetrics(ctx context.Context) (iface2.LoadBalancerMetrics, error) {
+	return rc.ribs.StorageDiag().LoadBalancerMetrics(), nil
+}
+
+func (rc *RIBSRpc) WritableGroups(ctx context.Context) ([]iface2.WritableGroupInfo, error) {
+	return rc.ribs.StorageDiag().WritableGroups(), nil
+}
+
+// ClusterTopology returns the current cluster layout and node health
+func (rc *RIBSRpc) ClusterTopology(ctx context.Context) (iface2.ClusterTopology, error) {
+	return rc.ribs.StorageDiag().ClusterTopology(), nil
+}
+
+// RequestThroughput returns historical request throughput data
+func (rc *RIBSRpc) RequestThroughput(ctx context.Context, duration string) (iface2.ThroughputHistory, error) {
+	return rc.ribs.StorageDiag().RequestThroughput(duration), nil
+}
+
+// IOThroughput returns historical I/O bytes throughput data
+func (rc *RIBSRpc) IOThroughput(ctx context.Context, duration string) (iface2.IOThroughputHistory, error) {
+	return rc.ribs.StorageDiag().IOThroughput(duration), nil
+}
+
+// LatencyDistribution returns latency percentiles over time
+func (rc *RIBSRpc) LatencyDistribution(ctx context.Context, duration string) (iface2.LatencyDistribution, error) {
+	return rc.ribs.StorageDiag().LatencyDistribution(duration), nil
+}
+
+// ErrorRates returns error statistics per node
+func (rc *RIBSRpc) ErrorRates(ctx context.Context) (iface2.ErrorRates, error) {
+	return rc.ribs.StorageDiag().ErrorRates(), nil
+}
+
+// ActiveRequests returns current in-flight request counts
+func (rc *RIBSRpc) ActiveRequests(ctx context.Context) (iface2.ActiveRequests, error) {
+	return rc.ribs.StorageDiag().ActiveRequests(), nil
+}
+
+// ClusterEvents returns recent cluster events
+func (rc *RIBSRpc) ClusterEvents(ctx context.Context, limit int) ([]iface2.ClusterEvent, error) {
+	return rc.ribs.StorageDiag().ClusterEvents(limit), nil
 }
 
 func MakeRPCServer(ctx context.Context, ribs iface2.RIBS) (*jsonrpc.RPCServer, jsonrpc.ClientCloser, error) {

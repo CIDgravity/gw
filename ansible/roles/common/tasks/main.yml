@@ -1,0 +1,67 @@
+---
+# Common setup tasks for all FGW hosts
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - jq
+      - ca-certificates
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Create fgw group
+  ansible.builtin.group:
+    name: "{{ fgw_group }}"
+    state: present
+
+- name: Create fgw user
+  ansible.builtin.user:
+    name: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    shell: /bin/bash
+    home: "/home/{{ fgw_user }}"
+    create_home: yes
+    state: present
+
+- name: Create binary directory
+  ansible.builtin.file:
+    path: "{{ fgw_binary_path }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+
+- name: Create config directory
+  ansible.builtin.file:
+    path: "{{ fgw_config_path }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+
+- name: Create log directory
+  ansible.builtin.file:
+    path: /var/log/fgw
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+
+- name: Configure logrotate for FGW
+  ansible.builtin.template:
+    src: logrotate-fgw.j2
+    dest: /etc/logrotate.d/fgw
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add fgw user to systemd-journal group
+  ansible.builtin.user:
+    name: "{{ fgw_user }}"
+    groups: systemd-journal
+    append: yes

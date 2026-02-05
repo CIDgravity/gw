@@ -1,0 +1,84 @@
+---
+# Main playbook for deploying Filecoin Gateway cluster
+
+- name: Verify prerequisites
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Check required variables are set
+      ansible.builtin.assert:
+        that:
+          - cidgravity_api_token is defined
+          - cidgravity_api_token != "CHANGE_ME"
+          - yb_ysql_host is defined
+        fail_msg: |
+          Missing required variables. Please check:
+          - inventory/production/group_vars/all.yml
+          - Ensure cidgravity_api_token is set (use ansible-vault)
+          - Ensure YugabyteDB hosts are configured
+      run_once: true
+      delegate_to: localhost
+
+- name: Setup YugabyteDB keyspaces and tables
+  hosts: localhost
+  gather_facts: no
+  roles:
+    - role: yugabyte_init
+  tags:
+    - yb
+    - database
+    - init
+
+- name: Deploy Kuri storage nodes
+  hosts: kuri
+  become: yes
+  serial: 1  # Sequential to avoid DB migration race conditions
+  gather_facts: yes
+  roles:
+    - role: common
+    - role: wallet
+    - role: kuri
+  tags:
+    - kuri
+    - storage
+
+- name: Deploy S3 Frontend proxies
+  hosts: s3_frontend
+  become: yes
+  gather_facts: yes
+  roles:
+    - role: common
+    - role: s3_frontend
+  tags:
+    - frontend
+    - proxy
+
+- name: Display deployment summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Show cluster information
+      ansible.builtin.debug:
+        msg: |
+          ==========================================
+          FGW Cluster Deployment Complete
+          ==========================================
+          
+          Kuri Storage Nodes:
+          {% for host in groups.get('kuri', []) %}
+            - {{ hostvars[host]['fgw_node_id'] }}: {{ hostvars[host]['ansible_host'] }}
+          {% endfor %}
+          
+          S3 Frontend Proxies:
+          {% for host in groups.get('s3_frontend', []) %}
+            - {{ hostvars[host]['fgw_node_id'] }}: http://{{ hostvars[host]['ansible_host'] }}:{{ hostvars[host].get('s3_frontend_port', 8078) }}
+          {% endfor %}
+          
+          S3 API Endpoint(s):
+          {% for host in groups.get('s3_frontend', []) %}
+            http://{{ hostvars[host]['ansible_host'] }}:{{ hostvars[host].get('s3_frontend_port', 8078) }}
+          {% endfor %}
+          
+          Prometheus Metrics: Port {{ ribs_prometheus_port | default(2112) }}
+          
+          To verify: ansible-playbook playbooks/verify.yml

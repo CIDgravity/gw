@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/huh v0.7.0
 	github.com/cheggaaa/pb v1.0.29
 	github.com/docker/docker v28.2.2+incompatible
+	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.18.0
 	github.com/filecoin-project/go-address v1.2.0
 	github.com/filecoin-project/go-cbor-util v0.0.2
@@ -25,7 +26,6 @@ require (
 	github.com/filecoin-project/go-jsonrpc v0.8.0
 	github.com/filecoin-project/go-legs v0.4.9
 	github.com/filecoin-project/go-state-types v0.17.0
-	github.com/filecoin-project/lassie v0.24.1-0.20250310082335-fbee09476e88
 	github.com/filecoin-project/lotus v1.34.1
 	github.com/filecoin-project/specs-storage v0.4.1
 	github.com/gbrlsnchs/jwt/v3 v3.0.1
@@ -163,7 +163,6 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/elastic/gosigar v0.14.3 // indirect
 	github.com/elgris/jsondiff v0.0.0-20160530203242-765b5c24c302 // indirect
@@ -184,7 +183,6 @@ require (
 	github.com/filecoin-project/go-hamt-ipld/v2 v2.0.0 // indirect
 	github.com/filecoin-project/go-hamt-ipld/v3 v3.4.1 // indirect
 	github.com/filecoin-project/go-padreader v0.0.1 // indirect
-	github.com/filecoin-project/go-retrieval-types v1.2.0 // indirect
 	github.com/filecoin-project/go-statemachine v1.0.3 // indirect
 	github.com/filecoin-project/go-statestore v0.2.0 // indirect
 	github.com/filecoin-project/specs-actors v0.9.15 // indirect
@@ -244,6 +242,7 @@ require (
 	github.com/ipfs/go-ds-pebble v0.5.1 // indirect
 	github.com/ipfs/go-fs-lock v0.1.1 // indirect
 	github.com/ipfs/go-ipfs-blockstore v1.3.1 // indirect
+	github.com/ipfs/go-ipfs-blocksutil v0.0.2 // indirect
 	github.com/ipfs/go-ipfs-cmds v0.15.0 // indirect
 	github.com/ipfs/go-ipfs-delay v0.0.1 // indirect
 	github.com/ipfs/go-ipfs-ds-help v1.1.1 // indirect
@@ -261,7 +260,6 @@ require (
 	github.com/ipfs/go-verifcid v0.0.3 // indirect
 	github.com/ipld/go-car/v2 v2.15.0 // indirect
 	github.com/ipld/go-codec-dagpb v1.7.0 // indirect
-	github.com/ipld/go-trustless-utils v0.4.1 // indirect
 	github.com/ipshipyard/p2p-forge v0.6.0 // indirect
 	github.com/jackc/chunkreader/v2 v2.0.1 // indirect
 	github.com/jackc/pgconn v1.14.3 // indirect

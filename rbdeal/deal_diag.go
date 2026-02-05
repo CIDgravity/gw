@@ -92,7 +92,7 @@ func (r *ribs) P2PNodes(ctx context.Context) (map[string]iface2.Libp2pInfo, erro
 
 	out["main"] = getLibP2PInfoForHost(r.host)
 	out["crawl"] = getLibP2PInfoForHost(r.crawlHost)
-	out["lassie"] = getLibP2PInfoForHost(r.retrHost)
+	out["retrieval"] = getLibP2PInfoForHost(r.retrHost)
 
 	return out, nil
 }
@@ -130,4 +130,23 @@ func (r *ribs) RepairStats() (map[int]iface2.RepairJob, error) {
 	}
 
 	return out, nil
+}
+
+// CIDGravityStatus checks the connection status to the CIDGravity service
+func (r *ribs) CIDGravityStatus(ctx context.Context) iface2.CIDGravityStatus {
+	status := r.cidg.CheckStatus(ctx)
+	return iface2.CIDGravityStatus{
+		Connected:       status.Connected,
+		TokenValid:      status.TokenValid,
+		Endpoint:        status.Endpoint,
+		Error:           status.Error,
+		LastCheck:       status.LastCheck,
+		ResponseTimeMs:  status.ResponseTimeMs,
+		TokenConfigured: status.TokenConfigured,
+	}
+}
+
+// CacheStats returns L1/L2 cache statistics
+func (r *ribs) CacheStats() iface2.CacheStats {
+	return r.retrProv.CacheStats()
 }

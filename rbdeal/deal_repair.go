@@ -1,32 +1,81 @@
 package rbdeal
 
-/*
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
+	agw "github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/ributil"
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multihash"
+	"golang.org/x/xerrors"
+)
+
+/*
 REPAIR WORKERS:
 * check if they have active work
 * if not, manage repair queue
 * go to top
 
 If they have active work:
-* Fetch sector
-	* Http if possible
-	* lassie if not..
-* Verify and send to storage, move group to deals in progress
+* Fetch group data via HTTP from storage providers
+* Verify PieceCID matches
+* Re-import to local storage
 
 Tables:
 * repair_queue: group, retrievable_deals, assigned_worker, last_attempt
-
 */
 
-// todo repairs are unused currently
-
-/*
 var RepairCheckInterval = time.Minute
 
-func (r *ribs) repairWorker(ctx context.Context, workerID int) { // root, id?
+func (r *ribs) startRepairWorkers(ctx context.Context) {
+	cfg := configuration.GetConfig()
+
+	// Use configured path or default to repairDir (set in ribs constructor)
+	stagingPath := cfg.Ribs.RepairStagingPath
+	if stagingPath == "" {
+		stagingPath = r.repairDir
+	}
+
+	if stagingPath == "" {
+		log.Info("repair workers disabled: no staging path configured")
+		return
+	}
+
+	// Update repairDir to the resolved path
+	r.repairDir = stagingPath
+
+	// Ensure staging directory exists
+	if err := os.MkdirAll(stagingPath, 0755); err != nil {
+		log.Errorw("failed to create repair staging directory, repair workers disabled", "error", err, "path", stagingPath)
+		return
+	}
+
+	workers := cfg.Ribs.RepairWorkers
+	if workers <= 0 {
+		workers = 4 // default
+	}
+
+	log.Infow("starting repair workers", "workers", workers, "stagingPath", stagingPath)
+
+	for i := 0; i < workers; i++ {
+		go r.repairWorker(ctx, i)
+	}
+}
+
+func (r *ribs) repairWorker(ctx context.Context, workerID int) {
 	for {
 		select {
 		case <-r.close:
+			return
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -52,7 +101,7 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 		log.Warnw("repair worker has more than one assigned group", "worker", workerID, "groups", len(assignedGroups))
 	}
 
-	var assigned *fgw.GroupKey
+	var assigned *agw.GroupKey
 
 	if len(assignedGroups) == 0 {
 		if err := r.db.AddRepairsForLowRetrievableDeals(); err != nil {
@@ -70,16 +119,19 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 	if assigned == nil {
 		select {
 		case <-r.close:
+		case <-ctx.Done():
 		case <-time.After(RepairCheckInterval):
 		}
 
 		return nil
 	}
 
-	// fetch sector if not fetched
-	groupFile, err := r.fetchGroup(ctx, workerID, *assigned)
+	log.Infow("starting repair for group", "group", *assigned, "worker", workerID)
+
+	// fetch group if not fetched
+	groupFile, err := r.fetchGroupForRepair(ctx, workerID, *assigned)
 	if err != nil {
-		return xerrors.Errorf("fetch sector (group %d): %w", *assigned, err)
+		return xerrors.Errorf("fetch group (group %d): %w", *assigned, err)
 	}
 
 	groupReader, err := os.OpenFile(groupFile, os.O_RDONLY, 0644)
@@ -93,9 +145,10 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 		return xerrors.Errorf("stat repair file: %w", err)
 	}
 
-	// here we have the sector fetched and verified
+	// here we have the group fetched and verified
+	log.Infow("importing repaired group", "group", *assigned, "size", st.Size(), "worker", workerID)
 
-	err = r.RBS.Storage().LoadFilCar(ctx, *assigned, groupReader, int64(st.Size()))
+	err = r.RBS.Storage().LoadFilCar(ctx, *assigned, groupReader, st.Size())
 	if err != nil {
 		return xerrors.Errorf("reload data file (group %d): %w", *assigned, err)
 	}
@@ -106,13 +159,15 @@ func (r *ribs) repairStep(ctx context.Context, workerID int) error {
 
 	// remove repair file
 	if err := os.Remove(groupFile); err != nil {
-		return xerrors.Errorf("removing repair file: %w", err)
+		log.Warnw("failed to remove repair file", "error", err, "file", groupFile)
 	}
+
+	log.Infow("repair complete", "group", *assigned, "worker", workerID)
 
 	return nil
 }
 
-func (r *ribs) fetchGroup(ctx context.Context, workerID int, group agw.GroupKey) (string, error) {
+func (r *ribs) fetchGroupForRepair(ctx context.Context, workerID int, group agw.GroupKey) (string, error) {
 	rstat := agw.RepairJob{
 		GroupKey:      group,
 		State:         agw.RepairJobStateFetching,
@@ -125,7 +180,6 @@ func (r *ribs) fetchGroup(ctx context.Context, workerID int, group agw.GroupKey)
 	r.repairStatsLk.Unlock()
 
 	workerDir := filepath.Join(r.repairDir, fmt.Sprintf("w%d", workerID))
-	// todo check if anything else is in the worker dir, cleanup if needed
 
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
 		return "", xerrors.Errorf("mkdir repair worker dir: %w", err)
@@ -133,23 +187,58 @@ func (r *ribs) fetchGroup(ctx context.Context, workerID int, group agw.GroupKey)
 
 	groupFile := filepath.Join(workerDir, fmt.Sprintf("group-%d.car", group))
 
-	if err := r.fetchGroupHttp(ctx, workerID, group, groupFile); err != nil {
-		log.Errorw("failed to fetch group with http, will attempt lassie", "err", err, "group", group, "worker", workerID)
-
-		if err := r.fetchGroupLassie(ctx, workerID, group, groupFile); err != nil {
-			log.Errorw("failed to fetch group with lassie", "err", err, "group", group, "worker", workerID)
-			return "", xerrors.Errorf("fetch group lassie: %w", err)
+	// Check if file already exists and is complete (from a previous interrupted attempt)
+	if fi, err := os.Stat(groupFile); err == nil {
+		gm, err := r.Storage().DescibeGroup(ctx, group)
+		if err == nil && fi.Size() == gm.CarSize {
+			// File exists and is the right size, verify it
+			if err := r.verifyGroupFile(groupFile, gm.PieceCid); err == nil {
+				log.Infow("using existing repair file", "group", group, "file", groupFile)
+				return groupFile, nil
+			}
+			// File is corrupt, remove it
+			_ = os.Remove(groupFile)
 		}
 	}
 
+	if err := r.fetchGroupHttp(ctx, workerID, group, groupFile); err != nil {
+		return "", xerrors.Errorf("http fetch failed: %w", err)
+	}
+
 	return groupFile, nil
+}
+
+func (r *ribs) verifyGroupFile(groupFile string, expectedPieceCid cid.Cid) error {
+	f, err := os.Open(groupFile)
+	if err != nil {
+		return xerrors.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	cc := new(ributil.DataCidWriter)
+	if _, err := io.Copy(cc, f); err != nil {
+		return xerrors.Errorf("read file: %w", err)
+	}
+
+	dc, err := cc.Sum()
+	if err != nil {
+		return xerrors.Errorf("compute piece cid: %w", err)
+	}
+
+	if dc.PieceCID != expectedPieceCid {
+		return xerrors.Errorf("piece cid mismatch: got %s, expected %s", dc.PieceCID, expectedPieceCid)
+	}
+
+	return nil
 }
 
 func (r *ribs) updateRepairStats(worker int, cb func(*agw.RepairJob)) {
 	r.repairStatsLk.Lock()
 	defer r.repairStatsLk.Unlock()
 
-	cb(r.repairStats[worker])
+	if r.repairStats[worker] != nil {
+		cb(r.repairStats[worker])
+	}
 }
 
 func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.GroupKey, groupFile string) error {
@@ -175,16 +264,13 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.Group
 
 	var sources []retrievalSource
 
-	{
-		// TODO: HACK: make this use the db
-		// local data import
-		envName := fmt.Sprintf("RIBS_IMPORT_%d", group)
-		if importUrl, ok := os.LookupEnv(envName); ok {
-			u, err := url.Parse(importUrl)
-			if err != nil {
-				return xerrors.Errorf("failed to parse import url: %w", err)
-			}
-
+	// Check for local import URL override (useful for manual recovery)
+	envName := fmt.Sprintf("RIBS_IMPORT_%d", group)
+	if importUrl, ok := os.LookupEnv(envName); ok {
+		u, err := url.Parse(importUrl)
+		if err != nil {
+			log.Warnw("failed to parse import url", "error", err, "url", importUrl)
+		} else {
 			sources = append(sources, retrievalSource{
 				provider: "local",
 				reqUrl:   *u,
@@ -192,11 +278,11 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.Group
 		}
 	}
 
+	// Add HTTP retrieval sources from storage providers
 	for _, candidate := range candidates {
-		// booster-http providers
 		addrInfo, err := r.retrProv.getAddrInfoCached(candidate.Provider)
 		if err != nil {
-			log.Warnw("failed to get addrinfo", "provider", candidate.Provider, "err", err)
+			log.Debugw("failed to get addrinfo", "provider", candidate.Provider, "err", err)
 			continue
 		}
 
@@ -210,7 +296,6 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.Group
 			continue
 		}
 
-		// start fetch into the file
 		reqUrl := *u
 		reqUrl.Path = path.Join(reqUrl.Path, "piece", gm.PieceCid.String())
 
@@ -220,265 +305,127 @@ func (r *ribs) fetchGroupHttp(ctx context.Context, workerID int, group agw.Group
 		})
 	}
 
-	for _, candidate := range sources {
+	if len(sources) == 0 {
+		return xerrors.Errorf("no HTTP retrieval sources available for group %d", group)
+	}
+
+	log.Infow("attempting repair retrieval", "group", group, "sources", len(sources), "worker", workerID)
+
+	var lastErr error
+	for _, source := range sources {
 		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 			r.State = agw.RepairJobStateFetching
-		})
-
-		reqUrl := candidate.reqUrl
-
-		log.Infow("attempting http repair retrieval", "url", reqUrl.String(), "group", group, "provider", candidate.provider)
-
-		// make the request!!
-
-		robustReqReader := ributil.RobustGet(reqUrl.String(), gm.CarSize, func() *ributil.RateCounter {
-			return r.repairFetchCounters.Get(group)
-		})
-
-		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 			r.FetchProgress = 0
-			r.FetchUrl = reqUrl.String()
+			r.FetchUrl = source.reqUrl.String()
 		})
 
-		// copy response body to file
-		f, err := os.OpenFile(groupFile, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
-		if err != nil {
-			return xerrors.Errorf("open group file: %w", err)
+		log.Infow("trying repair source", "url", source.reqUrl.String(), "group", group, "provider", source.provider)
+
+		err := r.fetchFromSource(ctx, workerID, group, groupFile, source.reqUrl, gm)
+		if err == nil {
+			return nil
 		}
 
-		ctx, done := context.WithCancel(ctx)
-		go func() {
-			// watch fetch progress with file stat
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(1 * time.Second):
-				}
-
-				fi, err := f.Stat()
-				if err != nil {
-					log.Errorw("failed to stat group file", "err", err)
-					continue
-				}
-
-				r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-					r.FetchProgress = fi.Size()
-				})
-			}
-		}()
-
-		repairReader, err := ributil.NewCarRepairReader(robustReqReader, gm.RootCid, func(b cid.Cid, badData []byte) ([]byte, error) {
-			var outData []byte
-			err := r.retrProv.FetchBlocks(ctx, group, []multihash.Multihash{b.Hash()}, func(cidx int, data []byte) {
-				outData = make([]byte, len(data))
-				copy(outData, data)
-			})
-			if err == nil {
-				return outData, nil
-			}
-
-			log.Errorw("failed to fetch repair block", "err", err, "group", group, "provider", candidate.provider, "url", reqUrl.String())
-				//
-				//// try bitflip repair
-				//NOTE: this bit flip repair is not really useful, apparently bitflips tend to come in groups,
-				//	and we're not fixing more that one bitfilp
-				//
-				//if len(badData) == 0 {
-				//	return nil, xerrors.Errorf("can't attempt bitflip repair and repair retrieval failed: %w", err)
-				//}
-				//
-				//log.Errorw("attempting bitflip repair", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "dataSize", len(badData))
-				//for i := 0; i < len(badData)*8; i++ {
-				//	if i > 0 {
-				//		// unflip previous bit
-				//		prevBit := i - 1
-				//		badData[prevBit/8] ^= 1 << (prevBit % 8)
-				//	}
-				//
-				//	// flip bit
-				//	badData[i/8] ^= 1 << (i % 8)
-				//
-				//	hash, err := b.Prefix().Sum(badData)
-				//	if err != nil {
-				//		return nil, xerrors.Errorf("hash data: %w", err)
-				//	}
-				//
-				//	if hash.Equals(b) {
-				//		log.Errorw("bitflip repair successful", "group", group, "provider", candidate.Provider, "url", reqUrl.String(), "flippedBit", i)
-				//		return badData, nil
-				//	}
-				//}
-				//
-				//// unflip last bit
-				//badData[len(badData)-1] ^= 1 << 7
-				//log.Errorw("bitflip repair failed", "group", group, "provider", candidate.Provider, "url", reqUrl.String())
-				//
-			return nil, xerrors.Errorf("repair retrieval failed: %w", err)
-		})
-		if err != nil {
-			_ = f.Close()
-			_ = os.Remove(groupFile)
-			_ = robustReqReader.Close()
-			done()
-			log.Errorw("failed to create repair reader", "err", err, "group", group, "provider", candidate.provider, "url", reqUrl.String())
-			continue
-		}
-
-		cc := new(ributil.DataCidWriter)
-		commdReader := io.TeeReader(repairReader, cc)
-
-		_, err = io.Copy(f, commdReader)
-		done()
-		if err != nil {
-			_ = f.Close()
-			_ = os.Remove(groupFile)
-			_ = robustReqReader.Close()
-			log.Errorw("failed to copy response body", "err", err, "group", group, "provider", candidate.provider, "url", reqUrl.String())
-			continue
-		}
-
-		if err := f.Close(); err != nil {
-			_ = robustReqReader.Close()
-			return xerrors.Errorf("close group file: %w", err)
-		}
-
-		if err := robustReqReader.Close(); err != nil {
-			return xerrors.Errorf("close response body: %w", err)
-		}
-
-		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-			r.FetchProgress = r.FetchSize
-			r.State = agw.RepairJobStateVerifying
-		})
-
-		dc, err := cc.Sum()
-		if err != nil {
-			return xerrors.Errorf("sum car: %w", err)
-		}
-
-		if dc.PieceCID != gm.PieceCid {
-			//return xerrors.Errorf("piece cid mismatch: %s != %s", dc.PieceCID, gm.PieceCid)
-			// todo record
-			log.Errorw("piece cid mismatch", "cid", dc.PieceCID, "expected", gm.PieceCid, "provider", candidate.provider, "group", group, "file", groupFile)
-
-			// remove the file
-			_ = os.Remove(groupFile)
-
-			continue
-		}
-
-		r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-			r.FetchProgress = r.FetchSize
-			r.State = agw.RepairJobStateImporting
-		})
-
-		return nil
+		lastErr = err
+		log.Warnw("repair source failed", "error", err, "provider", source.provider, "group", group)
 	}
 
-	return xerrors.Errorf("no retrieval candidates")
+	return xerrors.Errorf("all retrieval sources failed, last error: %w", lastErr)
 }
 
-func (r *ribs) fetchGroupLassie(ctx context.Context, workerID int, group agw.GroupKey, groupFile string) error {
-	gm, err := r.Storage().DescibeGroup(ctx, group)
-	if err != nil {
-		return xerrors.Errorf("failed to get group metadata: %w", err)
-	}
-
-	log.Infow("attempting lassie repair retrieval", "group", group, "root", gm.RootCid, "piece", gm.PieceCid, "file", groupFile, "worker", workerID)
-
-	tempDir := fmt.Sprintf("%s.temp", groupFile)
-	err = os.MkdirAll(tempDir, 0755)
-	if err != nil {
-		return xerrors.Errorf("mkdir temp dir: %w", err)
-	}
-
-	defer func() {
-		err := os.RemoveAll(tempDir)
-		if err != nil {
-			log.Errorw("failed to remove lassie temp dir", "err", err, "dir", tempDir, "group", group, "worker", workerID)
-		}
-	}()
-
-	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-		r.FetchProgress = 0
-		r.State = agw.RepairJobStateFetching
-		r.FetchUrl = "lassie+[bitswap,graphsync]"
+func (r *ribs) fetchFromSource(ctx context.Context, workerID int, group agw.GroupKey, groupFile string, reqUrl url.URL, gm agw.GroupDesc) error {
+	robustReqReader := ributil.RobustGet(reqUrl.String(), gm.CarSize, func() *ributil.RateCounter {
+		return r.repairFetchCounters.Get(group)
 	})
+	defer robustReqReader.Close()
 
-	ctx, done := context.WithCancel(ctx)
+	// Create output file
+	f, err := os.OpenFile(groupFile, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0644)
+	if err != nil {
+		return xerrors.Errorf("open group file: %w", err)
+	}
+
+	// Progress monitoring goroutine
+	progressCtx, cancelProgress := context.WithCancel(ctx)
+	defer cancelProgress()
+
 	go func() {
-		// watch fetch progress with file stat
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
 
 		for {
 			select {
-			case <-ctx.Done():
+			case <-progressCtx.Done():
 				return
-			case <-time.After(1 * time.Second):
+			case <-ticker.C:
+				fi, err := f.Stat()
+				if err == nil {
+					r.updateRepairStats(workerID, func(r *agw.RepairJob) {
+						r.FetchProgress = fi.Size()
+					})
+				}
 			}
-
-			fi, err := os.Stat(groupFile)
-			if err != nil {
-				log.Errorw("failed to stat group file", "err", err)
-				continue
-			}
-
-			r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-				r.FetchProgress = fi.Size()
-			})
 		}
 	}()
 
-	err = errors.New("lassie is gone")
-	done()
-
+	// Create repair reader that can fetch individual blocks on error
+	repairReader, err := ributil.NewCarRepairReader(robustReqReader, gm.RootCid, func(b cid.Cid, badData []byte) ([]byte, error) {
+		var outData []byte
+		err := r.retrProv.FetchBlocks(ctx, group, []multihash.Multihash{b.Hash()}, func(cidx int, data []byte) {
+			outData = make([]byte, len(data))
+			copy(outData, data)
+		})
+		if err != nil {
+			return nil, xerrors.Errorf("fetch repair block: %w", err)
+		}
+		return outData, nil
+	})
 	if err != nil {
+		_ = f.Close()
 		_ = os.Remove(groupFile)
-		log.Errorw("failed to fetch deal with lassie", "err", err, "group", group, "worker", workerID)
-		return xerrors.Errorf("failed to fetch deal: %w", err)
+		return xerrors.Errorf("create repair reader: %w", err)
 	}
 
+	// Stream through piece CID calculator
+	cc := new(ributil.DataCidWriter)
+	commdReader := io.TeeReader(repairReader, cc)
+
+	_, err = io.Copy(f, commdReader)
+	cancelProgress()
+
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(groupFile)
+		return xerrors.Errorf("copy data: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		_ = os.Remove(groupFile)
+		return xerrors.Errorf("close group file: %w", err)
+	}
+
+	// Verify piece CID
 	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
 		r.FetchProgress = r.FetchSize
 		r.State = agw.RepairJobStateVerifying
 	})
 
-	f, err := os.OpenFile(groupFile, os.O_RDONLY, 0644)
-	if err != nil {
-		return xerrors.Errorf("open group file: %w", err)
-	}
-
-	cc := new(ributil.DataCidWriter)
-
-	_, err = io.Copy(cc, f)
-	if err != nil {
-		_ = f.Close()
-		_ = os.Remove(groupFile)
-		return xerrors.Errorf("copy group file: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		return xerrors.Errorf("close group file: %w", err)
-	}
-
 	dc, err := cc.Sum()
 	if err != nil {
 		_ = os.Remove(groupFile)
-		return xerrors.Errorf("sum car: %w", err)
+		return xerrors.Errorf("compute piece cid: %w", err)
 	}
 
 	if dc.PieceCID != gm.PieceCid {
 		_ = os.Remove(groupFile)
-		log.Errorw("piece cid mismatch in lassie fetch", "cid", dc.PieceCID, "expected", gm.PieceCid, "group", group, "file", groupFile)
-		return xerrors.Errorf("piece cid mismatch: %s != %s", dc.PieceCID, gm.PieceCid)
+		return xerrors.Errorf("piece cid mismatch: got %s, expected %s", dc.PieceCID, gm.PieceCid)
 	}
 
 	r.updateRepairStats(workerID, func(r *agw.RepairJob) {
-		r.FetchProgress = r.FetchSize
 		r.State = agw.RepairJobStateImporting
 	})
 
+	log.Infow("repair fetch complete", "group", group, "pieceCid", dc.PieceCID, "size", dc.PayloadSize, "worker", workerID)
+
 	return nil
 }
-*/

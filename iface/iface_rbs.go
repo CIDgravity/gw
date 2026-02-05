@@ -107,6 +107,67 @@ type RBSDiag interface {
 	GroupIOStats() GroupIOStats
 
 	WorkerStats() WorkerStats
+
+	// Parallel write diagnostics
+	ParallelWriteStats() ParallelWriteStats
+	LoadBalancerMetrics() LoadBalancerMetrics
+	WritableGroups() []WritableGroupInfo
+
+	// Cluster monitoring
+	ClusterTopology() ClusterTopology
+	RequestThroughput(duration string) ThroughputHistory
+	IOThroughput(duration string) IOThroughputHistory
+	LatencyDistribution(duration string) LatencyDistribution
+	ErrorRates() ErrorRates
+	ActiveRequests() ActiveRequests
+	ClusterEvents(limit int) []ClusterEvent
+}
+
+// ParallelWriteStats provides metrics for parallel write operations.
+type ParallelWriteStats struct {
+	Enabled bool
+
+	// Write counts
+	TotalWrites    int64
+	ParallelWrites int64
+	LegacyWrites   int64
+	WriteErrors    int64
+
+	// Group selection
+	AffinityHitRate  float64
+	PreferredHitRate float64
+	GroupCreations   int64
+
+	// Flush stats
+	TotalFlushes    int64
+	ParallelFlushes int64
+	LegacyFlushes   int64
+
+	// Timing (milliseconds)
+	AvgWriteTimeMs  float64
+	AvgFlushTimeMs  float64
+	AvgSelectTimeMs float64
+
+	// Throughput
+	BytesWritten  int64
+	BlocksWritten int64
+}
+
+// LoadBalancerMetrics provides current load balancer state.
+type LoadBalancerMetrics struct {
+	WritableGroupCount int
+	TotalActiveWriters int32
+	SessionAffinities  int
+}
+
+// WritableGroupInfo provides information about a writable group.
+type WritableGroupInfo struct {
+	GroupKey       GroupKey
+	Blocks         int64
+	Bytes          int64
+	AvailableSpace int64
+	ActiveWriters  int32
+	HasAffinity    bool
 }
 
 type WorkerStats struct {

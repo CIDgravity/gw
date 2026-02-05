@@ -8,19 +8,20 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/iface"
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/mitchellh/go-homedir"
-	"go.uber.org/fx"
-	"golang.org/x/xerrors"
-
 	"github.com/filecoin-project/lotus/lib/must"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	logging "github.com/ipfs/go-log/v2"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/mitchellh/go-homedir"
 	mh "github.com/multiformats/go-multihash"
+	"go.uber.org/fx"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/xerrors"
 )
 
 var log = logging.Logger("ribs:rbs")
@@ -75,6 +76,12 @@ func Open(config *configuration.RibsConfig, db *RbsDB, idx iface.GroupIndex) (if
 		close: make(chan struct{}),
 	}
 
+	// Initialize load balancer for parallel writes support
+	r.loadBalancer = NewLoadBalancer(r)
+
+	// Enable parallel writes based on config
+	SetParallelWritesEnabled(configuration.GetConfig().ParallelWrite.Enabled)
+
 	for i := 0; i < workerCount; i++ {
 		r.workerClosed = append(r.workerClosed, make(chan struct{}))
 	}
@@ -112,7 +119,11 @@ type rbs struct {
 	index *MeteredIndex
 
 	lk      sync.Mutex
-	writeLk sync.Mutex
+	writeLk sync.Mutex // Legacy: global write lock (used when parallel writes disabled)
+
+	// loadBalancer manages group selection for parallel writes.
+	// When parallel writes are enabled, this replaces the global writeLk.
+	loadBalancer *LoadBalancer
 
 	/* subs */
 	subLk sync.Mutex
@@ -174,7 +185,8 @@ type ribSession struct {
 }
 
 type ribBatch struct {
-	r *rbs
+	r       *rbs
+	session *ribSession // Back-reference to session for affinity tracking
 
 	currentWriteTarget iface.GroupKey
 	toFlush            map[iface.GroupKey]struct{}
@@ -252,6 +264,7 @@ func (r *ribSession) GetSize(ctx context.Context, c []mh.Multihash, cb func(i []
 func (r *ribSession) Batch(ctx context.Context) iface.Batch {
 	return &ribBatch{
 		r:                  r.r,
+		session:            r,
 		currentWriteTarget: iface.UndefGroupKey,
 		toFlush:            map[iface.GroupKey]struct{}{},
 	}
@@ -261,14 +274,31 @@ func (r *ribBatch) Put(ctx context.Context, b []blocks.Block) error {
 	// todo filter blocks that already exist
 	var done int
 	for done < len(b) {
-		gk, err := r.r.withWritableGroup(ctx, r.currentWriteTarget, func(g *Group) error {
+		// Note: We pass nil for session to disable session affinity.
+		// Session affinity is counterproductive when there's a single global session
+		// (as in the Blockstore). Instead, we rely on currentWriteTarget for locality
+		// within a batch, while allowing different batches to use different groups.
+		startTime := time.Now()
+		var bytesWritten int64
+		var blocksWritten int
+		gk, err := r.r.withWritableGroupForSession(ctx, nil, r.currentWriteTarget, func(g *Group) error {
 			wrote, err := g.Put(ctx, b[done:])
 			if err != nil {
 				return err
 			}
+			blocksWritten = wrote
+			// Calculate bytes written
+			for i := done; i < done+wrote; i++ {
+				bytesWritten += int64(len(b[i].RawData()))
+			}
 			done += wrote
 			return nil
 		})
+
+		// Record metrics
+		isParallel := IsParallelWritesEnabled()
+		parallelMetrics.RecordWrite(isParallel, time.Since(startTime), bytesWritten, int64(blocksWritten), err)
+
 		if err != nil {
 			return xerrors.Errorf("write to group: %w", err)
 		}
@@ -281,15 +311,67 @@ func (r *ribBatch) Put(ctx context.Context, b []blocks.Block) error {
 }
 
 func (r *ribBatch) Unlink(ctx context.Context, c []mh.Multihash) error {
-	//TODO implement me
-	panic("implement me")
+	// Group multihashes by their current group location
+	byGroup := make(map[iface.GroupKey][]mh.Multihash)
+
+	err := r.r.index.GetGroups(ctx, c, func(cidx int, gk iface.GroupKey) (bool, error) {
+		if gk == iface.UndefGroupKey {
+			// Block doesn't exist, nothing to unlink
+			return true, nil
+		}
+		byGroup[gk] = append(byGroup[gk], c[cidx])
+		return true, nil
+	})
+	if err != nil {
+		return xerrors.Errorf("lookup groups for unlink: %w", err)
+	}
+
+	// Unlink from each group
+	for gk, mhs := range byGroup {
+		// Try to open the group (may be offloaded)
+		err := r.r.withReadableGroup(ctx, gk, func(g *Group) error {
+			return g.Unlink(ctx, mhs)
+		})
+		if err != nil {
+			if err == ErrOffloaded {
+				// Group is offloaded - we can still remove from index
+				// The data will be cleaned up when the group is reloaded or through GC
+				log.Debugw("unlink from offloaded group - removing index entries only",
+					"group", gk, "count", len(mhs))
+			} else {
+				// Log but continue - some groups may be unavailable
+				log.Warnw("unlink from group failed", "group", gk, "error", err, "count", len(mhs))
+				continue
+			}
+		}
+
+		// Remove from index regardless of group state
+		if err := r.r.index.DropGroup(ctx, mhs, gk); err != nil {
+			log.Errorw("failed to drop group from index", "group", gk, "error", err)
+			continue
+		}
+
+		r.toFlush[gk] = struct{}{}
+	}
+
+	return nil
 }
 
 func (r *ribBatch) Flush(ctx context.Context) error {
+	cfg := configuration.GetConfig().ParallelWrite
+	if cfg.Enabled && len(r.toFlush) > 1 {
+		return r.flushParallel(ctx)
+	}
+	return r.flushLegacy(ctx)
+}
+
+// flushLegacy is the original sequential flush implementation.
+func (r *ribBatch) flushLegacy(ctx context.Context) error {
+	startTime := time.Now()
 	r.r.lk.Lock()
 	defer r.r.lk.Unlock()
 
-	for key := range r.toFlush { // todo run in parallel
+	for key := range r.toFlush {
 		g, found := r.r.writableGroups[key]
 		if !found {
 			continue // already flushed
@@ -298,16 +380,76 @@ func (r *ribBatch) Flush(ctx context.Context) error {
 		err := g.Sync(ctx)
 		r.r.lk.Lock()
 		if err != nil {
+			parallelMetrics.RecordFlush(false, time.Since(startTime), err)
 			return xerrors.Errorf("sync group %d: %w", key, err)
 		}
 	}
 
 	if err := r.r.index.Sync(ctx); err != nil {
+		parallelMetrics.RecordFlush(false, time.Since(startTime), err)
 		return xerrors.Errorf("flush top index: %w", err)
 	}
 
 	r.toFlush = map[iface.GroupKey]struct{}{}
 
+	parallelMetrics.RecordFlush(false, time.Since(startTime), nil)
+	return nil
+}
+
+// flushParallel syncs multiple groups concurrently for improved throughput.
+func (r *ribBatch) flushParallel(ctx context.Context) error {
+	startTime := time.Now()
+
+	// Collect groups to flush
+	r.r.lk.Lock()
+	groupsToFlush := make([]*Group, 0, len(r.toFlush))
+	for key := range r.toFlush {
+		g, found := r.r.writableGroups[key]
+		if found {
+			groupsToFlush = append(groupsToFlush, g)
+		}
+	}
+	r.r.lk.Unlock()
+
+	if len(groupsToFlush) == 0 {
+		// Nothing to flush, just sync the index
+		if err := r.r.index.Sync(ctx); err != nil {
+			parallelMetrics.RecordFlush(true, time.Since(startTime), err)
+			return xerrors.Errorf("flush top index: %w", err)
+		}
+		r.toFlush = map[iface.GroupKey]struct{}{}
+		parallelMetrics.RecordFlush(true, time.Since(startTime), nil)
+		return nil
+	}
+
+	// Flush groups in parallel using errgroup
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	for _, g := range groupsToFlush {
+		g := g // capture for goroutine
+		eg.Go(func() error {
+			if err := g.Sync(egCtx); err != nil {
+				return xerrors.Errorf("sync group %d: %w", g.id, err)
+			}
+			return nil
+		})
+	}
+
+	// Wait for all group syncs to complete
+	if err := eg.Wait(); err != nil {
+		parallelMetrics.RecordFlush(true, time.Since(startTime), err)
+		return err
+	}
+
+	// Sync the top-level index after all groups are synced
+	if err := r.r.index.Sync(ctx); err != nil {
+		parallelMetrics.RecordFlush(true, time.Since(startTime), err)
+		return xerrors.Errorf("flush top index: %w", err)
+	}
+
+	r.toFlush = map[iface.GroupKey]struct{}{}
+
+	parallelMetrics.RecordFlush(true, time.Since(startTime), nil)
 	return nil
 }
 

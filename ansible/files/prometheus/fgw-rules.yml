@@ -1,0 +1,334 @@
+# FGW Prometheus Recording Rules
+# These rules pre-compute expensive queries for dashboards and alerts
+#
+# Install by adding to prometheus.yml:
+#   rule_files:
+#     - "/etc/prometheus/rules/fgw-rules.yml"
+
+groups:
+  # ============================================================================
+  # S3 Frontend SLA Metrics
+  # ============================================================================
+  - name: fgw_s3_sla
+    interval: 30s
+    rules:
+      # Request rate by operation (5m window)
+      - record: fgw:s3_request_rate:5m
+        expr: sum(rate(fgw_s3_requests_total[5m])) by (operation, status)
+
+      # Overall success rate
+      - record: fgw:s3_success_rate:5m
+        expr: |
+          sum(rate(fgw_s3_requests_total{status="success"}[5m])) /
+          sum(rate(fgw_s3_requests_total[5m]))
+
+      # P50 latency by operation
+      - record: fgw:s3_latency_p50:5m
+        expr: histogram_quantile(0.50, sum(rate(fgw_s3_request_duration_seconds_bucket[5m])) by (le, operation))
+
+      # P95 latency by operation
+      - record: fgw:s3_latency_p95:5m
+        expr: histogram_quantile(0.95, sum(rate(fgw_s3_request_duration_seconds_bucket[5m])) by (le, operation))
+
+      # P99 latency by operation
+      - record: fgw:s3_latency_p99:5m
+        expr: histogram_quantile(0.99, sum(rate(fgw_s3_request_duration_seconds_bucket[5m])) by (le, operation))
+
+      # Bytes transferred per second
+      - record: fgw:s3_bytes_per_second:5m
+        expr: sum(rate(fgw_s3_bytes_transferred_total[5m])) by (direction)
+
+      # Error rate by type
+      - record: fgw:s3_error_rate:5m
+        expr: sum(rate(fgw_s3_requests_total{status!="success"}[5m])) by (status, operation)
+
+      # SLA compliance (99.9% availability target)
+      - record: fgw:s3_sla_compliance:1h
+        expr: |
+          (sum(increase(fgw_s3_requests_total{status="success"}[1h])) /
+           sum(increase(fgw_s3_requests_total[1h]))) >= 0.999
+
+  # ============================================================================
+  # Deal Pipeline Metrics
+  # ============================================================================
+  - name: fgw_deals
+    interval: 1m
+    rules:
+      # Active deals by state
+      - record: fgw:deals_by_state:current
+        expr: sum(fgw_deal_state_total) by (state)
+
+      # Deal creation rate
+      - record: fgw:deal_creation_rate:1h
+        expr: sum(increase(fgw_deals_created_total[1h]))
+
+      # Deal success rate (over 24h for statistical significance)
+      - record: fgw:deal_success_rate:24h
+        expr: |
+          sum(increase(fgw_deals_completed_total{status="success"}[24h])) /
+          sum(increase(fgw_deals_completed_total[24h]))
+
+      # Average deal duration by provider
+      - record: fgw:deal_duration_avg:24h
+        expr: |
+          sum(rate(fgw_deal_duration_seconds_sum[24h])) by (provider) /
+          sum(rate(fgw_deal_duration_seconds_count[24h])) by (provider)
+
+      # Deals pending by age bucket
+      - record: fgw:deals_pending_age:current
+        expr: sum(fgw_deals_pending_by_age) by (age_bucket)
+
+      # Storage providers performance
+      - record: fgw:provider_success_rate:7d
+        expr: |
+          sum(increase(fgw_deals_completed_total{status="success"}[7d])) by (provider) /
+          sum(increase(fgw_deals_completed_total[7d])) by (provider)
+
+      # Deal sector sealing time (average)
+      - record: fgw:seal_time_avg:24h
+        expr: |
+          sum(rate(fgw_deal_seal_duration_seconds_sum[24h])) by (provider) /
+          sum(rate(fgw_deal_seal_duration_seconds_count[24h])) by (provider)
+
+  # ============================================================================
+  # Storage & Retrieval Metrics
+  # ============================================================================
+  - name: fgw_storage
+    interval: 1m
+    rules:
+      # Total stored data
+      - record: fgw:storage_total_bytes:current
+        expr: sum(fgw_storage_bytes_total) by (tier)
+
+      # Cache hit rate by tier
+      - record: fgw:cache_hit_rate:5m
+        expr: |
+          sum(rate(fgw_cache_hits_total[5m])) by (tier) /
+          (sum(rate(fgw_cache_hits_total[5m])) by (tier) + sum(rate(fgw_cache_misses_total[5m])) by (tier))
+
+      # L1 (ARC) cache efficiency
+      - record: fgw:l1_cache_efficiency:5m
+        expr: |
+          sum(rate(fgw_cache_hits_total{tier="l1"}[5m])) /
+          sum(rate(fgw_cache_requests_total{tier="l1"}[5m]))
+
+      # L2 (SSD) cache efficiency
+      - record: fgw:l2_cache_efficiency:5m
+        expr: |
+          sum(rate(fgw_cache_hits_total{tier="l2"}[5m])) /
+          sum(rate(fgw_cache_requests_total{tier="l2"}[5m]))
+
+      # Retrieval rate from providers
+      - record: fgw:retrieval_rate:5m
+        expr: sum(rate(fgw_retrievals_total[5m])) by (source)
+
+      # Retrieval latency by source
+      - record: fgw:retrieval_latency_p95:5m
+        expr: histogram_quantile(0.95, sum(rate(fgw_retrieval_duration_seconds_bucket[5m])) by (le, source))
+
+      # Prefetcher effectiveness
+      - record: fgw:prefetch_hit_rate:1h
+        expr: |
+          sum(increase(fgw_prefetch_hits_total[1h])) /
+          sum(increase(fgw_prefetch_requests_total[1h]))
+
+      # Block reference count distribution
+      - record: fgw:block_refcount_distribution:current
+        expr: sum(fgw_blocks_by_refcount) by (refcount_bucket)
+
+      # GC candidates (groups marked for deletion)
+      - record: fgw:gc_candidates:current
+        expr: sum(fgw_gc_candidate_groups_total)
+
+      # GC freed space rate
+      - record: fgw:gc_freed_bytes:1h
+        expr: sum(increase(fgw_gc_freed_bytes_total[1h]))
+
+  # ============================================================================
+  # Financial Metrics
+  # ============================================================================
+  - name: fgw_financials
+    interval: 5m
+    rules:
+      # Wallet balance
+      - record: fgw:wallet_balance_fil:current
+        expr: fgw_wallet_balance_attofil / 1e18
+
+      # Daily spend rate
+      - record: fgw:daily_spend_rate_fil:24h
+        expr: |
+          sum(increase(fgw_wallet_spent_attofil_total[24h])) / 1e18
+
+      # Cost per GB stored (30 day average)
+      - record: fgw:cost_per_gb:30d
+        expr: |
+          (sum(increase(fgw_deal_cost_attofil_total[30d])) / 1e18) /
+          (sum(avg_over_time(fgw_storage_bytes_total[30d])) / 1e9)
+
+      # Projected days until wallet depletion
+      - record: fgw:wallet_runway_days:current
+        expr: |
+          (fgw_wallet_balance_attofil / 1e18) /
+          (sum(increase(fgw_wallet_spent_attofil_total[7d])) / 1e18 / 7)
+
+      # Deal cost by provider (average)
+      - record: fgw:provider_cost_avg:30d
+        expr: |
+          sum(increase(fgw_deal_cost_attofil_total[30d])) by (provider) / 1e18 /
+          sum(increase(fgw_deals_completed_total[30d])) by (provider)
+
+      # Revenue (if applicable)
+      - record: fgw:revenue_rate:24h
+        expr: sum(increase(fgw_revenue_attofil_total[24h])) / 1e18
+
+  # ============================================================================
+  # Database Metrics
+  # ============================================================================
+  - name: fgw_database
+    interval: 30s
+    rules:
+      # Query rate by type
+      - record: fgw:db_query_rate:5m
+        expr: sum(rate(fgw_db_queries_total[5m])) by (query_type, table)
+
+      # Query latency P95
+      - record: fgw:db_latency_p95:5m
+        expr: histogram_quantile(0.95, sum(rate(fgw_db_query_duration_seconds_bucket[5m])) by (le, query_type))
+
+      # Connection pool utilization
+      - record: fgw:db_pool_utilization:current
+        expr: fgw_db_connections_active / fgw_db_connections_max
+
+      # Error rate
+      - record: fgw:db_error_rate:5m
+        expr: sum(rate(fgw_db_errors_total[5m])) by (error_type)
+
+  # ============================================================================
+  # System Health Metrics
+  # ============================================================================
+  - name: fgw_health
+    interval: 30s
+    rules:
+      # Overall system health score (0-1)
+      - record: fgw:health_score:current
+        expr: |
+          (
+            (fgw:s3_success_rate:5m > 0.99) * 0.3 +
+            (fgw:cache_hit_rate:5m{tier="l1"} > 0.8) * 0.2 +
+            (fgw:db_pool_utilization:current < 0.9) * 0.2 +
+            (fgw:wallet_runway_days:current > 30) * 0.15 +
+            (fgw:deal_success_rate:24h > 0.95) * 0.15
+          )
+
+      # Component status (1 = healthy, 0 = unhealthy)
+      - record: fgw:component_health:current
+        expr: |
+          label_replace(
+            vector(1) and on() (up{job="fgw"} == 1),
+            "component", "fgw", "", ""
+          )
+
+  # ============================================================================
+  # Alerting Rules
+  # ============================================================================
+  - name: fgw_alerts
+    rules:
+      # Critical: Wallet balance low
+      - alert: FGWWalletBalanceLow
+        expr: fgw:wallet_runway_days:current < 7
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "FGW wallet balance critically low"
+          description: "Wallet will be depleted in {{ $value | humanize }} days at current spend rate"
+
+      # Critical: S3 availability below SLA
+      - alert: FGWS3AvailabilityLow
+        expr: fgw:s3_success_rate:5m < 0.999
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FGW S3 availability below SLA"
+          description: "S3 success rate is {{ $value | humanizePercentage }}, below 99.9% SLA target"
+
+      # Warning: High S3 latency
+      - alert: FGWS3LatencyHigh
+        expr: fgw:s3_latency_p95:5m{operation="GetObject"} > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FGW S3 GET latency high"
+          description: "P95 latency for GetObject is {{ $value | humanizeDuration }}"
+
+      # Warning: Cache hit rate low
+      - alert: FGWCacheHitRateLow
+        expr: fgw:l1_cache_efficiency:5m < 0.5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FGW L1 cache hit rate low"
+          description: "L1 cache hit rate is {{ $value | humanizePercentage }}"
+
+      # Warning: Deal success rate declining
+      - alert: FGWDealSuccessRateLow
+        expr: fgw:deal_success_rate:24h < 0.9
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "FGW deal success rate declining"
+          description: "24h deal success rate is {{ $value | humanizePercentage }}"
+
+      # Warning: Database connection pool near exhaustion
+      - alert: FGWDatabasePoolHigh
+        expr: fgw:db_pool_utilization:current > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "FGW database connection pool high"
+          description: "Database pool utilization is {{ $value | humanizePercentage }}"
+
+      # Critical: Database errors
+      - alert: FGWDatabaseErrors
+        expr: sum(rate(fgw_db_errors_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FGW database errors detected"
+          description: "Database error rate is {{ $value }} errors/sec"
+
+      # Warning: GC backlog growing
+      - alert: FGWGCBacklogHigh
+        expr: fgw:gc_candidates:current > 1000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "FGW garbage collection backlog high"
+          description: "{{ $value }} groups pending garbage collection"
+
+      # Critical: No deals in progress
+      - alert: FGWNoActiveDeals
+        expr: sum(fgw_deal_state_total{state=~"pending|sealing|proving"}) == 0
+        for: 6h
+        labels:
+          severity: critical
+        annotations:
+          summary: "FGW has no active deals"
+          description: "No deals are currently in progress - check deal pipeline"
+
+      # Warning: Provider performance degraded
+      - alert: FGWProviderPerformanceLow
+        expr: fgw:provider_success_rate:7d < 0.8
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Storage provider {{ $labels.provider }} performing poorly"
+          description: "7-day success rate is {{ $value | humanizePercentage }}"

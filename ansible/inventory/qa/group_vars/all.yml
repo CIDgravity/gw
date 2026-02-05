@@ -1,0 +1,115 @@
+---
+# =============================================================================
+# FGW QA ENVIRONMENT CONFIGURATION
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Binary Distribution
+# -----------------------------------------------------------------------------
+fgw_version: "latest"
+fgw_binary_path: /opt/fgw/bin
+fgw_config_path: /opt/fgw/config
+
+# Download URL - set to empty to skip download (will install from local)
+fgw_binary_url: ""
+
+# -----------------------------------------------------------------------------
+# Wallet Settings
+# -----------------------------------------------------------------------------
+fgw_wallet_source: "{{ playbook_dir }}/../files/wallet"
+fgw_wallet_dest: /home/fgw/.ribswallet
+
+# -----------------------------------------------------------------------------
+# CIDGravity API
+# TODO: Replace with actual token using ansible-vault
+# ansible-vault encrypt_string 'your-token' --name 'cidgravity_api_token'
+# -----------------------------------------------------------------------------
+cidgravity_api_token: "CHANGE_ME_WITH_VAULT"
+cidgravity_api_endpoint_gbap: "https://service.cidgravity.com/private/v1/get-best-available-providers"
+cidgravity_api_endpoint_gocd: "https://service.cidgravity.com/private/v1/get-on-chain-deals"
+cidgravity_max_connections: 4
+
+# -----------------------------------------------------------------------------
+# Filecoin API (public gateway - no full node needed)
+# -----------------------------------------------------------------------------
+ribs_filecoin_api_endpoint: "https://pac-l-gw.devtty.eu/rpc/v1"
+
+# -----------------------------------------------------------------------------
+# Deal Settings (relaxed for QA)
+# -----------------------------------------------------------------------------
+ribs_minimum_replica_count: 3
+ribs_maximum_replica_count: 5
+ribs_minimum_retrievable_count: 3
+ribs_retrievable_repair_threshold: 2
+ribs_deal_start_time: 96
+ribs_deal_duration: 530
+ribs_deal_remove_unsealed: "false"
+ribs_deal_skip_ipni_announce: "false"
+
+# Fallback providers when CIDgravity GBAP returns no providers
+# These are storage providers that accept deals from this client
+ribs_deal_fallback_providers: "f02620,f03623016,f03623017,f03644166"
+ribs_deal_fallback_providers_only: "false"
+
+# -----------------------------------------------------------------------------
+# RIBS Settings (limited for QA storage)
+# -----------------------------------------------------------------------------
+ribs_max_local_group_count: 30          # ~900 GiB data per node
+ribs_max_staging_group_count: 10        # ~300 GiB staging
+ribs_deal_check_interval: "30s"
+ribs_run_sp_crawler: "true"
+
+# -----------------------------------------------------------------------------
+# Parallel Write Settings
+# -----------------------------------------------------------------------------
+ribs_enable_parallel_writes: "true"
+ribs_max_parallel_groups: 2             # 2 concurrent write groups per node
+
+# -----------------------------------------------------------------------------
+# S3 API Settings
+# -----------------------------------------------------------------------------
+ribs_s3api_region: "EU"
+ribs_s3api_auth_enabled: "false"
+
+# -----------------------------------------------------------------------------
+# LocalWeb (CAR file staging) - HTTP only, no TLS
+# -----------------------------------------------------------------------------
+external_localweb_builtin_server: "true"
+external_localweb_server_tls: "false"
+external_localweb_max_concurrent_uploads_per_deal: 15
+
+# -----------------------------------------------------------------------------
+# Prometheus Metrics
+# -----------------------------------------------------------------------------
+ribs_prometheus_port: 2112
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+ribs_loglevel: ".*:.*=info"
+
+# =============================================================================
+# YUGABYTE CLUSTER SETTINGS (single-node for QA)
+# =============================================================================
+
+yb_ysql_host: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+yb_ysql_port: 5433
+yb_ysql_user: "yugabyte"
+yb_ysql_pass: "yugabyte"
+
+yb_ycql_hosts: "{{ hostvars[groups['yugabyte'][0]]['ansible_host'] }}"
+yb_ycql_port: 9042
+yb_ycql_user: ""
+yb_ycql_pass: ""
+
+yb_shared_s3_keyspace: "filecoingw_s3"
+yb_replication_factor: 1  # Single node
+
+# =============================================================================
+# SERVICE CONFIGURATION
+# =============================================================================
+
+fgw_user: fgw
+fgw_group: fgw
+service_restart_sec: 10
+service_timeout_stop_sec: 60

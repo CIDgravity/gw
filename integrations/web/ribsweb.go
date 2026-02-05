@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
 	"path/filepath"
 	txtempl "text/template"
 
@@ -48,6 +50,41 @@ func (ri *RIBSWeb) Index(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// NodeStats is returned by the /api/stats endpoint for cluster aggregation
+type NodeStats struct {
+	NodeID            string  `json:"nodeId"`
+	GroupsCount       int     `json:"groupsCount"`
+	StorageUsed       uint64  `json:"storageUsed"`
+	RequestsPerSecond float64 `json:"requestsPerSecond"`
+}
+
+func (ri *RIBSWeb) StatsHandler(w http.ResponseWriter, r *http.Request) {
+	diag := ri.ribs.StorageDiag()
+
+	var groupsCount int
+	var storageUsed uint64
+	if gs, err := diag.GetGroupStats(); err == nil {
+		groupsCount = int(gs.GroupCount)
+		storageUsed = uint64(gs.TotalDataSize)
+	}
+
+	var reqPerSec float64
+	throughput := diag.RequestThroughput("5m")
+	if len(throughput.Total) > 0 {
+		reqPerSec = throughput.Total[len(throughput.Total)-1]
+	}
+
+	stats := NodeStats{
+		NodeID:            os.Getenv("FGW_NODE_ID"),
+		GroupsCount:       groupsCount,
+		StorageUsed:       storageUsed,
+		RequestsPerSecond: reqPerSec,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 func Serve(ctx context.Context, listen string, ribs iface.RIBS) error {
 	handlers := &RIBSWeb{
 		ribs: ribs,
@@ -61,6 +98,7 @@ func Serve(ctx context.Context, listen string, ribs iface.RIBS) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handlers.Index)
+	mux.HandleFunc("/api/stats", handlers.StatsHandler)
 
 	mux.Handle("/rpc/v0", rpc)
 

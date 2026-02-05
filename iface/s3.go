@@ -11,6 +11,7 @@ import (
 
 type Region interface {
 	Name() string
+	NodeID() string
 	ListBuckets(ctx context.Context) ([]string, error)
 	CreateBucket(ctx context.Context, name BucketName) error
 	GetBucket(ctx context.Context, name BucketName) (Bucket, error)
@@ -47,11 +48,13 @@ func (k S3Key) String() string {
 }
 
 type S3Object struct {
-	Bucket  BucketName `cql:"bucket"`
-	Key     S3Key      `cql:"key"`
-	Cid     cid.Cid    `cql:"cid"`
-	Size    uint64     `cql:"size"`
-	Updated time.Time  `cql:"updated"`
+	Bucket    BucketName `cql:"bucket"`
+	Key       S3Key      `cql:"key"`
+	Cid       cid.Cid    `cql:"cid"`
+	Size      uint64     `cql:"size"`
+	Updated   time.Time  `cql:"updated"`
+	NodeID    string     `cql:"node_id"`    // Node storing this object (for scalable architecture)
+	ExpiresAt *time.Time `cql:"expires_at"` // For temporary multipart parts
 }
 
 func NewS3Object(bucket BucketName, key S3Key, cid cid.Cid, size uint64, updated time.Time) S3Object {
