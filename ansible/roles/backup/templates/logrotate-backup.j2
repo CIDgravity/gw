@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+# Logrotate configuration for FGW backup logs
+
+{{ backup_log_dir }}/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 {{ fgw_user }} {{ fgw_group }}
+    sharedscripts
+}

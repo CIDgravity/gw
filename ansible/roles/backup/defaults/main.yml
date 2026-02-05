@@ -1,0 +1,72 @@
+---
+# Backup role defaults
+
+# =============================================================================
+# S3 Configuration
+# =============================================================================
+backup_s3_endpoint: "https://s3.amazonaws.com"
+backup_s3_bucket: ""
+backup_s3_access_key: ""
+backup_s3_secret_key: ""
+backup_s3_region: "us-east-1"
+
+# =============================================================================
+# Encryption
+# =============================================================================
+# Path to GPG encryption key file for wallet backups
+# CRITICAL: Keep this key safe - loss means inability to restore wallet backups
+backup_encryption_key_path: "{{ fgw_config_dir }}/backup-key"
+
+# =============================================================================
+# Wallet Backup Settings
+# =============================================================================
+backup_wallet_enabled: true
+backup_wallet_interval: "4h"
+# Cron format: every 4 hours
+backup_wallet_cron_minute: "0"
+backup_wallet_cron_hour: "*/4"
+
+# Source wallet path
+backup_wallet_source: "{{ fgw_wallet_dest | default('/home/' + fgw_user + '/.ribswallet') }}"
+
+# =============================================================================
+# Database Backup Settings
+# =============================================================================
+backup_database_enabled: true
+backup_database_interval: "24h"
+# Cron format: daily at 2am
+backup_database_cron_minute: "0"
+backup_database_cron_hour: "2"
+
+# YugabyteDB connection settings (inherited from kuri role if not set)
+backup_yb_ysql_host: "{{ yb_ysql_host | default('localhost') }}"
+backup_yb_ysql_port: "{{ yb_ysql_port | default(5433) }}"
+backup_yb_ysql_user: "{{ yb_ysql_user | default('postgres') }}"
+backup_yb_ysql_pass: "{{ yb_ysql_pass | default('postgres') }}"
+backup_yb_ysql_db: "filecoingw_{{ fgw_node_id | replace('-', '_') }}"
+
+backup_yb_ycql_hosts: "{{ yb_ycql_hosts | default('localhost') }}"
+backup_yb_ycql_port: "{{ yb_ycql_port | default(9042) }}"
+backup_yb_ycql_keyspace: "filecoingw_{{ fgw_node_id | replace('-', '_') }}"
+
+# CQL tables to export
+backup_cql_tables:
+  - MultihashToGroup
+  - S3Objects
+  - CidGroups
+
+# =============================================================================
+# Retention Settings
+# =============================================================================
+# Number of days to retain backups
+backup_retention_days: 30
+
+# Number of local backups to keep before cleanup
+backup_local_retention_count: 3
+
+# =============================================================================
+# Paths
+# =============================================================================
+backup_dir: "/var/backup/fgw"
+backup_scripts_dir: "{{ fgw_config_dir }}/backup-scripts"
+backup_log_dir: "/var/log/fgw/backup"

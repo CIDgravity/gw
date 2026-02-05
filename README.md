@@ -255,4 +255,16 @@ Dual-licensed under **Apache 2.0** and **MIT**. See LICENSE files.
 ---
 
 ## Contributing
-Contributions, issues, and feature requests are welcome.
+
+Contributions, issues, and feature requests are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) to get started.
+
+---
+
+## Support
+
+Need help? Here's how to get support:
+
+- **GitHub Issues** — [Report bugs or request features](https://github.com/CIDgravity/filecoin-gateway/issues)
+- **Filecoin Slack** — Join the **#filecoin-gateway** channel on [Filecoin Slack](https://filecoin.io/slack) for community discussion
+- **Contributing** — See our [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to the project
+- **CIDGravity Support** — For enterprise support and service-related questions, visit [CIDGravity](https://www.cidgravity.com/contact)

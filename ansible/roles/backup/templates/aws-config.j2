@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+# AWS configuration for FGW backups
+
+[default]
+region = {{ backup_s3_region }}
+output = json
+{% if 's3.amazonaws.com' not in backup_s3_endpoint %}
+# Using custom S3 endpoint (MinIO, Backblaze, etc.)
+s3 =
+    endpoint_url = {{ backup_s3_endpoint }}
+    signature_version = s3v4
+{% endif %}

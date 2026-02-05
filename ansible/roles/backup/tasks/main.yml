@@ -1,0 +1,191 @@
+---
+# Backup role - Automated backup for Filecoin Gateway
+# Handles wallet and database backups to S3-compatible storage
+
+# =============================================================================
+# Install Dependencies
+# =============================================================================
+- name: Install backup dependencies
+  ansible.builtin.apt:
+    name:
+      - awscli
+      - gnupg
+      - gzip
+      - tar
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+# =============================================================================
+# Create Directories
+# =============================================================================
+- name: Create backup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0750"
+  loop:
+    - "{{ backup_dir }}"
+    - "{{ backup_dir }}/wallet"
+    - "{{ backup_dir }}/database"
+    - "{{ backup_scripts_dir }}"
+    - "{{ backup_log_dir }}"
+
+# =============================================================================
+# Encryption Key Setup
+# =============================================================================
+- name: Check if encryption key exists
+  ansible.builtin.stat:
+    path: "{{ backup_encryption_key_path }}"
+  register: encryption_key_stat
+
+- name: Generate encryption key if not exists
+  ansible.builtin.shell: |
+    openssl rand -base64 32 > {{ backup_encryption_key_path }}
+    chmod 0600 {{ backup_encryption_key_path }}
+    chown {{ fgw_user }}:{{ fgw_group }} {{ backup_encryption_key_path }}
+  when: not encryption_key_stat.stat.exists
+  args:
+    creates: "{{ backup_encryption_key_path }}"
+
+- name: Set encryption key permissions
+  ansible.builtin.file:
+    path: "{{ backup_encryption_key_path }}"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+  when: encryption_key_stat.stat.exists
+
+# =============================================================================
+# AWS CLI Configuration
+# =============================================================================
+- name: Create AWS config directory
+  ansible.builtin.file:
+    path: "/home/{{ fgw_user }}/.aws"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0700"
+
+- name: Configure AWS credentials for backups
+  ansible.builtin.template:
+    src: aws-credentials.j2
+    dest: "/home/{{ fgw_user }}/.aws/credentials"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+  when: backup_s3_access_key | length > 0
+
+- name: Configure AWS config
+  ansible.builtin.template:
+    src: aws-config.j2
+    dest: "/home/{{ fgw_user }}/.aws/config"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+
+# =============================================================================
+# Wallet Backup Setup
+# =============================================================================
+- name: Deploy wallet backup script
+  ansible.builtin.template:
+    src: backup-wallet.sh.j2
+    dest: "{{ backup_scripts_dir }}/backup-wallet.sh"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0750"
+  when: backup_wallet_enabled
+
+- name: Deploy wallet restore script
+  ansible.builtin.template:
+    src: restore-wallet.sh.j2
+    dest: "{{ backup_scripts_dir }}/restore-wallet.sh"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0750"
+  when: backup_wallet_enabled
+
+- name: Set up wallet backup cron job
+  ansible.builtin.cron:
+    name: "FGW wallet backup - {{ fgw_node_id }}"
+    user: "{{ fgw_user }}"
+    minute: "{{ backup_wallet_cron_minute }}"
+    hour: "{{ backup_wallet_cron_hour }}"
+    job: "{{ backup_scripts_dir }}/backup-wallet.sh >> {{ backup_log_dir }}/wallet-backup.log 2>&1"
+    state: "{{ 'present' if backup_wallet_enabled else 'absent' }}"
+
+# =============================================================================
+# Database Backup Setup
+# =============================================================================
+- name: Deploy database backup script
+  ansible.builtin.template:
+    src: backup-database.sh.j2
+    dest: "{{ backup_scripts_dir }}/backup-database.sh"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0750"
+  when: backup_database_enabled
+
+- name: Deploy database restore script
+  ansible.builtin.template:
+    src: restore-database.sh.j2
+    dest: "{{ backup_scripts_dir }}/restore-database.sh"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0750"
+  when: backup_database_enabled
+
+- name: Set up database backup cron job
+  ansible.builtin.cron:
+    name: "FGW database backup - {{ fgw_node_id }}"
+    user: "{{ fgw_user }}"
+    minute: "{{ backup_database_cron_minute }}"
+    hour: "{{ backup_database_cron_hour }}"
+    job: "{{ backup_scripts_dir }}/backup-database.sh >> {{ backup_log_dir }}/database-backup.log 2>&1"
+    state: "{{ 'present' if backup_database_enabled else 'absent' }}"
+
+# =============================================================================
+# Logrotate for Backup Logs
+# =============================================================================
+- name: Configure logrotate for backup logs
+  ansible.builtin.template:
+    src: logrotate-backup.j2
+    dest: /etc/logrotate.d/fgw-backup
+    owner: root
+    group: root
+    mode: "0644"
+
+# =============================================================================
+# Validation
+# =============================================================================
+- name: Validate S3 connectivity
+  ansible.builtin.shell: |
+    aws s3 ls s3://{{ backup_s3_bucket }}/ \
+      --endpoint-url {{ backup_s3_endpoint }} \
+      --region {{ backup_s3_region }} \
+      2>&1 | head -5
+  become: yes
+  become_user: "{{ fgw_user }}"
+  register: s3_test
+  ignore_errors: yes
+  changed_when: false
+  when: 
+    - backup_s3_bucket | length > 0
+    - backup_s3_access_key | length > 0
+
+- name: Display S3 connectivity status
+  ansible.builtin.debug:
+    msg: "{{ 'S3 connectivity OK' if s3_test.rc == 0 else 'WARNING: S3 connectivity test failed - ' + s3_test.stderr }}"
+  when: s3_test is defined and s3_test.rc is defined
+
+- name: Display backup configuration summary
+  ansible.builtin.debug:
+    msg: |
+      Backup configuration for {{ fgw_node_id }}:
+      - Wallet backup: {{ 'ENABLED (every ' + backup_wallet_interval + ')' if backup_wallet_enabled else 'DISABLED' }}
+      - Database backup: {{ 'ENABLED (every ' + backup_database_interval + ')' if backup_database_enabled else 'DISABLED' }}
+      - S3 bucket: {{ backup_s3_bucket if backup_s3_bucket | length > 0 else 'NOT CONFIGURED' }}
+      - Retention: {{ backup_retention_days }} days
+      - Scripts: {{ backup_scripts_dir }}

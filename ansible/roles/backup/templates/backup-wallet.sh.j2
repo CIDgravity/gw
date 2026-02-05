@@ -1,0 +1,209 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Wallet backup script for {{ fgw_node_id }}
+# Generated: {{ ansible_date_time.iso8601 }}
+#
+# CRITICAL: Wallet loss is UNRECOVERABLE. This script backs up the wallet
+# to S3 with GPG encryption for disaster recovery.
+
+set -euo pipefail
+
+# =============================================================================
+# Configuration
+# =============================================================================
+NODE_ID="{{ fgw_node_id }}"
+WALLET_SOURCE="{{ backup_wallet_source }}"
+BACKUP_DIR="{{ backup_dir }}/wallet"
+ENCRYPTION_KEY="{{ backup_encryption_key_path }}"
+S3_ENDPOINT="{{ backup_s3_endpoint }}"
+S3_BUCKET="{{ backup_s3_bucket }}"
+S3_REGION="{{ backup_s3_region }}"
+S3_PREFIX="wallets/${NODE_ID}"
+RETENTION_DAYS="{{ backup_retention_days }}"
+LOCAL_RETENTION="{{ backup_local_retention_count }}"
+LOG_FILE="{{ backup_log_dir }}/wallet-backup.log"
+
+# Timestamp for this backup
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_NAME="wallet-${NODE_ID}-${TIMESTAMP}"
+
+# =============================================================================
+# Functions
+# =============================================================================
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log "Backup failed with exit code $exit_code"
+        # Clean up partial files
+        rm -f "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# =============================================================================
+# Pre-flight Checks
+# =============================================================================
+log "Starting wallet backup for ${NODE_ID}"
+
+# Check wallet source exists
+if [[ ! -d "${WALLET_SOURCE}" ]]; then
+    error "Wallet directory not found: ${WALLET_SOURCE}"
+fi
+
+# Check wallet is not empty
+if [[ -z "$(ls -A ${WALLET_SOURCE} 2>/dev/null)" ]]; then
+    error "Wallet directory is empty: ${WALLET_SOURCE}"
+fi
+
+# Check encryption key exists
+if [[ ! -f "${ENCRYPTION_KEY}" ]]; then
+    error "Encryption key not found: ${ENCRYPTION_KEY}"
+fi
+
+# Check S3 bucket is configured
+if [[ -z "${S3_BUCKET}" ]]; then
+    error "S3 bucket not configured"
+fi
+
+# =============================================================================
+# Create Backup
+# =============================================================================
+log "Creating encrypted backup: ${BACKUP_NAME}"
+
+# Create backup directory if needed
+mkdir -p "${BACKUP_DIR}"
+
+# Create tarball and encrypt with GPG (symmetric encryption using key file)
+PASSPHRASE=$(cat "${ENCRYPTION_KEY}")
+tar czf - -C "$(dirname ${WALLET_SOURCE})" "$(basename ${WALLET_SOURCE})" | \
+    gpg --batch --yes --symmetric --cipher-algo AES256 \
+        --passphrase "${PASSPHRASE}" \
+        -o "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg"
+
+if [[ ! -f "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg" ]]; then
+    error "Failed to create backup file"
+fi
+
+BACKUP_SIZE=$(stat -c%s "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg" 2>/dev/null || stat -f%z "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg")
+log "Backup created: ${BACKUP_SIZE} bytes"
+
+# =============================================================================
+# Verify Backup (test decrypt)
+# =============================================================================
+log "Verifying backup integrity..."
+
+VERIFY_OUTPUT=$(gpg --batch --yes --decrypt \
+    --passphrase "${PASSPHRASE}" \
+    "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg" 2>/dev/null | tar tzf - 2>&1)
+
+if [[ $? -ne 0 ]]; then
+    error "Backup verification failed - cannot decrypt/extract backup"
+fi
+
+# Check that wallet files are in the backup
+if ! echo "${VERIFY_OUTPUT}" | grep -q "ribswallet"; then
+    error "Backup verification failed - wallet files not found in archive"
+fi
+
+log "Backup verification successful"
+
+# =============================================================================
+# Upload to S3
+# =============================================================================
+log "Uploading to S3: s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz.gpg"
+
+aws s3 cp \
+    "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.gpg" \
+    "s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz.gpg" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}"
+
+if [[ $? -ne 0 ]]; then
+    error "S3 upload failed"
+fi
+
+log "S3 upload complete"
+
+# =============================================================================
+# Verify S3 Upload
+# =============================================================================
+log "Verifying S3 upload..."
+
+S3_SIZE=$(aws s3api head-object \
+    --bucket "${S3_BUCKET}" \
+    --key "${S3_PREFIX}/${BACKUP_NAME}.tar.gz.gpg" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}" \
+    --query "ContentLength" \
+    --output text 2>/dev/null || echo "0")
+
+if [[ "${S3_SIZE}" != "${BACKUP_SIZE}" ]]; then
+    error "S3 upload verification failed - size mismatch (local: ${BACKUP_SIZE}, S3: ${S3_SIZE})"
+fi
+
+log "S3 upload verified: ${S3_SIZE} bytes"
+
+# =============================================================================
+# Cleanup Old Local Backups
+# =============================================================================
+log "Cleaning up old local backups (keeping ${LOCAL_RETENTION})..."
+
+# Keep only the most recent LOCAL_RETENTION backups
+cd "${BACKUP_DIR}" && \
+    ls -t wallet-${NODE_ID}-*.tar.gz.gpg 2>/dev/null | \
+    tail -n +$((LOCAL_RETENTION + 1)) | \
+    xargs -r rm -f
+
+LOCAL_COUNT=$(ls -1 "${BACKUP_DIR}"/wallet-${NODE_ID}-*.tar.gz.gpg 2>/dev/null | wc -l)
+log "Local backups after cleanup: ${LOCAL_COUNT}"
+
+# =============================================================================
+# Cleanup Old S3 Backups
+# =============================================================================
+log "Cleaning up old S3 backups (older than ${RETENTION_DAYS} days)..."
+
+# Calculate cutoff date
+CUTOFF_DATE=$(date -d "-${RETENTION_DAYS} days" +%Y%m%d 2>/dev/null || \
+              date -v-${RETENTION_DAYS}d +%Y%m%d)
+
+# List and delete old backups
+OLD_BACKUPS=$(aws s3 ls "s3://${S3_BUCKET}/${S3_PREFIX}/" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}" 2>/dev/null | \
+    awk '{print $4}' | \
+    grep "^wallet-${NODE_ID}-[0-9]*-" | \
+    while read -r backup; do
+        BACKUP_DATE=$(echo "$backup" | grep -oP 'wallet-[^-]+-\K[0-9]{8}')
+        if [[ -n "${BACKUP_DATE}" && "${BACKUP_DATE}" < "${CUTOFF_DATE}" ]]; then
+            echo "$backup"
+        fi
+    done)
+
+if [[ -n "${OLD_BACKUPS}" ]]; then
+    echo "${OLD_BACKUPS}" | while read -r backup; do
+        log "Deleting old backup: ${backup}"
+        aws s3 rm "s3://${S3_BUCKET}/${S3_PREFIX}/${backup}" \
+            --endpoint-url "${S3_ENDPOINT}" \
+            --region "${S3_REGION}" 2>/dev/null || true
+    done
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+log "=========================================="
+log "Wallet backup completed successfully"
+log "  Node: ${NODE_ID}"
+log "  Backup: ${BACKUP_NAME}.tar.gz.gpg"
+log "  Size: ${BACKUP_SIZE} bytes"
+log "  S3 Location: s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz.gpg"
+log "=========================================="
