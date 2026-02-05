@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/golang-migrate/migrate/v4"
@@ -25,6 +26,29 @@ func NewYugabyteDB(config configuration.YugabyteSqlConfig) (*YugabyteDB, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open yugabyte sql db: %w", err)
 	}
+
+	// Configure connection pool settings from config (with sensible defaults)
+	maxOpenConns := config.MaxOpenConns
+	if maxOpenConns <= 0 {
+		maxOpenConns = 100
+	}
+	maxIdleConns := config.MaxIdleConns
+	if maxIdleConns <= 0 {
+		maxIdleConns = 25
+	}
+	connMaxLifetime := time.Duration(config.ConnMaxLifetimeMins) * time.Minute
+	if connMaxLifetime <= 0 {
+		connMaxLifetime = 30 * time.Minute
+	}
+	connMaxIdleTime := time.Duration(config.ConnMaxIdleTimeMins) * time.Minute
+	if connMaxIdleTime <= 0 {
+		connMaxIdleTime = 5 * time.Minute
+	}
+
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxLifetime(connMaxLifetime)
+	db.SetConnMaxIdleTime(connMaxIdleTime)
 
 	yugabyte := &YugabyteDB{
 		db,

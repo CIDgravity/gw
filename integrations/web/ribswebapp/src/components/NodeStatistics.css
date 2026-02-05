@@ -1,0 +1,55 @@
+.NodeStatistics {
+    width: 100%;
+}
+
+.NodeStatistics-section {
+    margin-bottom: 20px;
+}
+
+.NodeStatistics-section:last-child {
+    margin-bottom: 0;
+}
+
+.NodeStatistics-section h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.NodeStatistics-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.NodeStatistics-table th,
+.NodeStatistics-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.NodeStatistics-table th {
+    background: #f0f0f0;
+    font-weight: 600;
+    color: #555;
+}
+
+.NodeStatistics-table tr:hover {
+    background: #f9f9f9;
+}
+
+.NodeStatistics-empty {
+    text-align: center;
+    color: #999;
+    font-style: italic;
+    padding: 20px;
+}
+
+.NodeStatistics-loading {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    font-style: italic;
+}

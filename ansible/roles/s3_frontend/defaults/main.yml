@@ -1,0 +1,18 @@
+---
+# S3 frontend role defaults
+
+fgw_node_type: frontend
+
+s3_frontend_port: 8078
+s3_frontend_internal_api_port: 9090
+
+s3_frontend_service_name: "s3-frontend-{{ fgw_node_id }}"
+
+s3_frontend_max_memory: "4G"
+s3_frontend_cpu_quota: 400
+
+s3_frontend_health_check_url: "http://127.0.0.1:{{ s3_frontend_port }}/healthz"
+s3_frontend_health_check_timeout: 30
+
+service_restart_sec: 10
+service_timeout_stop_sec: 60

@@ -1,0 +1,79 @@
+---
+# Deploy S3 frontend proxy
+
+- name: Create config directory
+  ansible.builtin.file:
+    path: "{{ fgw_config_dir }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+
+- name: Download s3-proxy binary
+  ansible.builtin.get_url:
+    url: "{{ fgw_binary_url }}/s3-proxy"
+    dest: "{{ fgw_binary_path }}/s3-proxy"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+  when: fgw_binary_url | length > 0
+  notify: Restart s3-frontend
+
+- name: Check if s3-proxy binary exists (when not downloading)
+  ansible.builtin.stat:
+    path: "{{ fgw_binary_path }}/s3-proxy"
+  register: s3proxy_binary
+  when: fgw_binary_url | length == 0
+
+- name: Fail if s3-proxy binary not found
+  ansible.builtin.fail:
+    msg: |
+      s3-proxy binary not found at {{ fgw_binary_path }}/s3-proxy
+      Either set fgw_binary_url or pre-install the binary.
+  when:
+    - fgw_binary_url | length == 0
+    - not s3proxy_binary.stat.exists
+
+# Backend node list is built directly in the template
+- name: Generate settings.env
+  ansible.builtin.template:
+    src: settings.env.j2
+    dest: "{{ fgw_config_dir }}/settings.env"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+  notify: Restart s3-frontend
+
+- name: Create systemd service file
+  ansible.builtin.template:
+    src: s3-frontend.service.j2
+    dest: "/etc/systemd/system/{{ s3_frontend_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart s3-frontend
+
+- name: Enable and start s3-frontend service
+  ansible.builtin.systemd:
+    name: "{{ s3_frontend_service_name }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for s3-frontend to be healthy
+  ansible.builtin.uri:
+    url: "{{ s3_frontend_health_check_url }}"
+    method: GET
+    status_code: [200, 503]  # 503 is valid when no healthy backends
+  register: health_result
+  until: health_result.status in [200, 503]
+  retries: 12
+  delay: 5
+  ignore_errors: yes
+
+- name: Display health check warning
+  ansible.builtin.debug:
+    msg: "WARNING: S3 frontend health check returned {{ health_result.status }}. Check backend connectivity."
+  when: health_result.status == 503 or health_result is failed

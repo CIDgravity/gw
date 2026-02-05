@@ -1,0 +1,7 @@
+---
+# Common role defaults
+
+fgw_user: fgw
+fgw_group: fgw
+fgw_binary_path: /opt/fgw/bin
+fgw_config_path: /opt/fgw/config

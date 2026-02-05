@@ -1,0 +1,11 @@
+.Chart-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: #999;
+    font-style: italic;
+    font-size: 14px;
+    background: #fafafa;
+    border-radius: 4px;
+}

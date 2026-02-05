@@ -3,8 +3,10 @@ package s3
 import (
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/iface"
+	"github.com/CIDgravity/filecoin-gateway/rbstor"
 	logging "github.com/ipfs/go-log/v2"
 )
 
@@ -22,21 +24,43 @@ func NewS3Server(region iface.Region, auth *Authenticator) *S3Server {
 	}
 }
 
+// responseRecorder wraps http.ResponseWriter to capture the response size
+type responseRecorder struct {
+	http.ResponseWriter
+	bytesWritten int64
+}
+
+func (rr *responseRecorder) Write(b []byte) (int, error) {
+	n, err := rr.ResponseWriter.Write(b)
+	rr.bytesWritten += int64(n)
+	return n, err
+}
+
 func (srv *S3Server) handleGet(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	metrics := rbstor.GetClusterMetrics()
+	metrics.StartRead()
+	defer metrics.EndRead()
+
+	// Wrap response writer to track bytes
+	rr := &responseRecorder{ResponseWriter: w}
+
 	params, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		goto out
 	}
 
 	if params.Has("location") {
-		err = srv.handleGetLocation(w, r)
+		err = srv.handleGetLocation(rr, r)
 	} else if params.Get("list-type") == "2" {
-		err = srv.handleListObjects(w, r)
+		err = srv.handleListObjects(rr, r)
 	} else {
-		err = srv.handleGetObject(w, r)
+		err = srv.handleGetObject(rr, r)
 	}
 
 out:
+	latencyMs := float64(time.Since(start).Milliseconds())
+	metrics.RecordRead(latencyMs, rr.bytesWritten, err)
 	if err != nil {
 		log.Errorw("error handling HTTP GET request", "URL", r.URL, "error", err.Error())
 		w.WriteHeader(500)
@@ -44,6 +68,17 @@ out:
 }
 
 func (srv *S3Server) handlePut(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	metrics := rbstor.GetClusterMetrics()
+	metrics.StartWrite()
+	defer metrics.EndWrite()
+
+	// Get content length for byte tracking
+	contentLength := r.ContentLength
+	if contentLength < 0 {
+		contentLength = 0
+	}
+
 	params, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		goto out
@@ -59,6 +94,8 @@ func (srv *S3Server) handlePut(w http.ResponseWriter, r *http.Request) {
 	}
 
 out:
+	latencyMs := float64(time.Since(start).Milliseconds())
+	metrics.RecordWrite(latencyMs, contentLength, err)
 	if err != nil {
 		log.Errorw("Error handling HTTP PUT request", "URL", r.URL, "error", err.Error())
 		w.WriteHeader(500)
@@ -107,10 +144,23 @@ out:
 }
 
 func (srv *S3Server) handleHead(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	metrics := rbstor.GetClusterMetrics()
+	metrics.StartRead()
+	defer metrics.EndRead()
+
 	err := srv.handleHeadObject(w, r)
 
+	latencyMs := float64(time.Since(start).Milliseconds())
+	// HEAD requests don't transfer body bytes
+	metrics.RecordRead(latencyMs, 0, err)
 	if err != nil {
 		log.Errorf("Error handling head request: %s", err)
 		w.WriteHeader(500)
 	}
+}
+
+func (srv *S3Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

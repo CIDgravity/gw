@@ -1,0 +1,59 @@
+---
+# Example inventory file for FGW cluster deployment
+# Copy to hosts.yml and customize for your environment
+
+all:
+  children:
+    # YugabyteDB cluster nodes
+    yugabyte:
+      hosts:
+        yb-node-01:
+          ansible_host: 10.0.1.10
+        yb-node-02:
+          ansible_host: 10.0.1.11
+        yb-node-03:
+          ansible_host: 10.0.1.12
+      vars:
+        yb_ysql_port: 5433
+        yb_ycql_port: 9042
+
+    # Kuri storage nodes
+    kuri:
+      hosts:
+        kuri-01:
+          ansible_host: 10.0.2.10
+          fgw_node_id: "kuri-01"
+          ribs_data: /data/fgw/kuri-01
+          # Optional per-host port overrides:
+          # kuri_s3_port: 8079
+          # kuri_localweb_port: 8443
+          # kuri_webui_port: 9010
+
+        kuri-02:
+          ansible_host: 10.0.2.11
+          fgw_node_id: "kuri-02"
+          ribs_data: /data/fgw/kuri-02
+
+        kuri-03:
+          ansible_host: 10.0.2.12
+          fgw_node_id: "kuri-03"
+          ribs_data: /data/fgw/kuri-03
+
+    # S3 frontend proxies
+    s3_frontend:
+      hosts:
+        s3-fe-01:
+          ansible_host: 10.0.3.10
+          fgw_node_id: "s3-fe-01"
+          # Optional per-host port override:
+          # s3_frontend_port: 8078
+
+        s3-fe-02:
+          ansible_host: 10.0.3.11
+          fgw_node_id: "s3-fe-02"
+
+  # Global variables
+  vars:
+    ansible_user: fgw
+    ansible_ssh_private_key_file: ~/.ssh/fgw_deploy_key
+    ansible_python_interpreter: /usr/bin/python3

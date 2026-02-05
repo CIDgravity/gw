@@ -34,3 +34,9 @@ func (yh *YugabyteHarness) GetYugabyteCqlPort(t *testing.T) int {
 	require.NoError(t, err)
 	return port.Int()
 }
+
+func (yh *YugabyteHarness) GetYugabyteSqlPort(t *testing.T) int {
+	port, err := (*yh.ch.yugabyte).MappedPort(context.Background(), "5433/tcp")
+	require.NoError(t, err)
+	return port.Int()
+}

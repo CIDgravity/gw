@@ -1,0 +1,113 @@
+---
+# Deploy Kuri storage node
+
+- name: Create data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+  loop:
+    - "{{ ribs_data }}"
+    - "{{ fgw_config_dir }}"
+    - "{{ fgw_cardata_path }}"
+    - "{{ ribs_repair_staging_path }}"
+
+- name: Download kuri binary
+  ansible.builtin.get_url:
+    url: "{{ fgw_binary_url }}/kuri"
+    dest: "{{ fgw_binary_path }}/kuri"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0755"
+  when: fgw_binary_url | length > 0
+  notify: Restart kuri
+
+- name: Check if kuri binary exists (when not downloading)
+  ansible.builtin.stat:
+    path: "{{ fgw_binary_path }}/kuri"
+  register: kuri_binary
+  when: fgw_binary_url | length == 0
+
+- name: Fail if kuri binary not found
+  ansible.builtin.fail:
+    msg: |
+      Kuri binary not found at {{ fgw_binary_path }}/kuri
+      Either set fgw_binary_url or pre-install the binary.
+  when: 
+    - fgw_binary_url | length == 0
+    - not kuri_binary.stat.exists
+
+- name: Generate settings.env
+  ansible.builtin.template:
+    src: settings.env.j2
+    dest: "{{ fgw_config_dir }}/settings.env"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+  notify: Restart kuri
+
+- name: Check if IPFS is initialized
+  ansible.builtin.stat:
+    path: "{{ fgw_ipfs_path }}/config"
+  register: ipfs_config
+
+- name: Initialize IPFS/Kuri
+  ansible.builtin.shell: |
+    # Use set -a to auto-export all variables from the env file
+    set -a
+    source {{ fgw_config_dir }}/settings.env
+    set +a
+    {{ fgw_binary_path }}/kuri init
+  args:
+    creates: "{{ fgw_ipfs_path }}/config"
+    executable: /bin/bash
+  environment:
+    IPFS_PATH: "{{ fgw_ipfs_path }}"
+  become: yes
+  become_user: "{{ fgw_user }}"
+  when: not ipfs_config.stat.exists
+
+- name: Ensure settings.env is up to date
+  ansible.builtin.template:
+    src: settings.env.j2
+    dest: "{{ fgw_config_dir }}/settings.env"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+  notify: Restart kuri
+
+- name: Create systemd service file
+  ansible.builtin.template:
+    src: kuri.service.j2
+    dest: "/etc/systemd/system/{{ kuri_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart kuri
+
+- name: Enable and start kuri service
+  ansible.builtin.systemd:
+    name: "{{ kuri_service_name }}"
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for kuri to be healthy
+  ansible.builtin.uri:
+    url: "{{ kuri_health_check_url }}"
+    method: GET
+    status_code: 200
+  register: health_result
+  until: health_result.status == 200
+  retries: 30
+  delay: 10
+  ignore_errors: yes
+
+- name: Display health check warning
+  ansible.builtin.debug:
+    msg: "WARNING: Kuri health check failed. Service may still be starting."
+  when: health_result is failed

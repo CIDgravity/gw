@@ -1,0 +1,11 @@
+---
+# Kuri role handlers
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Restart kuri
+  ansible.builtin.systemd:
+    name: "{{ kuri_service_name }}"
+    state: restarted

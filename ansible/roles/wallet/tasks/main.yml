@@ -1,0 +1,69 @@
+---
+# Distribute ribswallet to Kuri nodes
+
+- name: Check if wallet source exists
+  ansible.builtin.stat:
+    path: "{{ fgw_wallet_source }}"
+  delegate_to: localhost
+  become: no
+  register: wallet_source_stat
+
+- name: Fail if wallet source does not exist
+  ansible.builtin.fail:
+    msg: |
+      Wallet directory not found at {{ fgw_wallet_source }}
+      
+      Please initialize the wallet first:
+        ./gwcfg -f settings.env
+      
+      Then copy the wallet to ansible files:
+        cp -r ~/.ribswallet {{ fgw_wallet_source }}
+  when: not wallet_source_stat.stat.exists
+
+- name: Create wallet directory
+  ansible.builtin.file:
+    path: "{{ fgw_wallet_dest }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0700"
+
+- name: Copy wallet files
+  ansible.builtin.copy:
+    src: "{{ fgw_wallet_source }}/"
+    dest: "{{ fgw_wallet_dest }}/"
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0600"
+    directory_mode: "0700"
+
+- name: Set wallet directory permissions
+  ansible.builtin.file:
+    path: "{{ fgw_wallet_dest }}"
+    state: directory
+    owner: "{{ fgw_user }}"
+    group: "{{ fgw_group }}"
+    mode: "0700"
+    recurse: no
+
+- name: Set wallet file permissions
+  ansible.builtin.shell: |
+    find {{ fgw_wallet_dest }} -type f -exec chmod 0600 {} \;
+  changed_when: false
+
+- name: Remove dotfiles from wallet directory (e.g., .gitkeep, .keep)
+  ansible.builtin.shell: |
+    find {{ fgw_wallet_dest }} -maxdepth 1 -name '.*' -type f -delete
+  changed_when: false
+
+- name: Verify wallet was copied
+  ansible.builtin.find:
+    paths: "{{ fgw_wallet_dest }}"
+    file_type: file
+    hidden: no
+  register: wallet_files
+
+- name: Warn if wallet appears empty
+  ansible.builtin.debug:
+    msg: "WARNING: Wallet directory appears empty. Ensure wallet was initialized properly."
+  when: wallet_files.matched == 0

@@ -1,0 +1,33 @@
+---
+# Deploy or update Kuri storage nodes
+# Use --limit to target specific nodes: ansible-playbook deploy-kuri.yml --limit kuri-01
+
+- name: Deploy Kuri storage nodes
+  hosts: kuri
+  become: yes
+  serial: 1  # Sequential to avoid DB migration race conditions
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Check required variables
+      ansible.builtin.assert:
+        that:
+          - fgw_node_id is defined
+          - ribs_data is defined
+          - cidgravity_api_token is defined
+        fail_msg: "Missing required variables for Kuri deployment"
+
+  roles:
+    - role: common
+    - role: wallet
+    - role: kuri
+
+  post_tasks:
+    - name: Verify service is running
+      ansible.builtin.systemd:
+        name: "{{ kuri_service_name }}"
+      register: kuri_service_status
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: "Kuri service {{ kuri_service_name }} is {{ kuri_service_status.status.ActiveState }}"

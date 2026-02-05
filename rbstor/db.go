@@ -32,6 +32,16 @@ func (r *RbsDB) GetGroupStats() (*iface.GroupStats, error) {
 	return &gs, nil
 }
 
+// WritableGroupInfo contains metadata for a writable group.
+// Used by GetAllWritableGroups for parallel writer support.
+type WritableGroupInfo struct {
+	GroupKey iface.GroupKey
+	Blocks   int64
+	Bytes    int64
+	JBHead   int64
+	State    iface.GroupState
+}
+
 func (r *RbsDB) GetWritableGroup() (selected iface.GroupKey, blocks, bytes, jbhead int64, state iface.GroupState, err error) {
 	res, err := r.db.Query("select id, blocks, bytes, jb_recorded_head, g_state from groups where g_state = 0")
 	if err != nil {
@@ -56,6 +66,47 @@ func (r *RbsDB) GetWritableGroup() (selected iface.GroupKey, blocks, bytes, jbhe
 	}
 
 	return selectedGroup, blocks, bytes, jbhead, state, nil
+}
+
+// GetAllWritableGroups returns all groups in writable state, ordered by bytes
+// (emptiest first) to support load balancing in parallel writer mode.
+// The limit parameter controls the maximum number of groups returned.
+func (r *RbsDB) GetAllWritableGroups(limit int) ([]WritableGroupInfo, error) {
+	if limit <= 0 {
+		limit = 8 // Default max parallel groups
+	}
+
+	res, err := r.db.Query(`
+		SELECT id, blocks, bytes, jb_recorded_head, g_state 
+		FROM groups 
+		WHERE g_state = 0 
+		ORDER BY bytes ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, xerrors.Errorf("finding writable groups: %w", err)
+	}
+	defer res.Close()
+
+	var groups []WritableGroupInfo
+
+	for res.Next() {
+		var info WritableGroupInfo
+		err := res.Scan(&info.GroupKey, &info.Blocks, &info.Bytes, &info.JBHead, &info.State)
+		if err != nil {
+			return nil, xerrors.Errorf("scanning group: %w", err)
+		}
+		groups = append(groups, info)
+	}
+
+	if err := res.Err(); err != nil {
+		return nil, xerrors.Errorf("iterating groups: %w", err)
+	}
+	if err := res.Close(); err != nil {
+		return nil, xerrors.Errorf("closing group iterator: %w", err)
+	}
+
+	return groups, nil
 }
 
 func (r *RbsDB) CreateGroup() (out iface.GroupKey, err error) {
@@ -352,4 +403,19 @@ func closeRows(rows *sql.Rows) {
 	if err := rows.Close(); err != nil {
 		log.Errorf("closing rows: %s", err)
 	}
+}
+
+// UpdateGroupDeadBlocks updates the dead block counters for a group.
+// This is used during unlink operations to track logically deleted data.
+func (r *RbsDB) UpdateGroupDeadBlocks(ctx context.Context, id iface.GroupKey, deadBlocks, deadBytes int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE groups 
+		SET dead_blocks = COALESCE(dead_blocks, 0) + $1, 
+		    dead_bytes = COALESCE(dead_bytes, 0) + $2 
+		WHERE id = $3`,
+		deadBlocks, deadBytes, id)
+	if err != nil {
+		return xerrors.Errorf("update group dead blocks: %w", err)
+	}
+	return nil
 }

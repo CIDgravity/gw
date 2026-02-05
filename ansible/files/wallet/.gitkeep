@@ -1,0 +1,7 @@
+# Place your ribswallet files here
+# Copy from ~/.ribswallet after running gwcfg
+#
+# WARNING: Never commit actual wallet files to git!
+# Add to .gitignore:
+#   ansible/files/wallet/*
+#   !ansible/files/wallet/.gitkeep

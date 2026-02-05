@@ -163,6 +163,7 @@ func (srv *S3Server) handleGetObject(w http.ResponseWriter, r *http.Request) err
 
 	stat := rd.Stat()
 	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	http.ServeContent(w, r, objectName.String(), stat.Timestamp, rd)
 	return nil
 }
@@ -203,6 +204,7 @@ func (srv *S3Server) handlePutObject(w http.ResponseWriter, r *http.Request) err
 	}
 
 	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
 
@@ -340,6 +342,7 @@ func (srv *S3Server) handleUploadPart(w http.ResponseWriter, r *http.Request) er
 	}
 
 	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
 
@@ -394,6 +397,7 @@ func (srv *S3Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *htt
 		return fmt.Errorf("error completing multipart upload: %w", err)
 	}
 
+	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return completeMultipartUploadTemplate.Execute(w, completeMultipartUploadResponseParams{
 		Bucket: bucketName.String(),
 		Key:    objectName.String(),
@@ -485,6 +489,7 @@ func (srv *S3Server) handleHeadObject(w http.ResponseWriter, r *http.Request) er
 	w.Header().Set("ETag", stat.ETag)
 	w.Header().Set("Last-Modified", stat.Timestamp.Format(http.TimeFormat))
 	w.Header().Set("Content-Length", strconv.Itoa(int(stat.Size)))
+	w.Header().Set("X-Node-ID", srv.region.NodeID())
 
 	if stat.OffloadStatus != "" {
 		w.Header().Set("X-Fil-Offload-Status", string(stat.OffloadStatus))

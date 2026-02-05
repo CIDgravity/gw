@@ -1,0 +1,24 @@
+---
+# Kuri role defaults
+
+fgw_node_type: storage
+
+kuri_s3_port: 8079
+kuri_localweb_port: 8443
+kuri_webui_port: 9010
+kuri_internal_api_port: 9090
+
+kuri_service_name: "kuri-{{ fgw_node_id }}"
+
+kuri_max_memory: "12G"
+kuri_cpu_quota: 800
+
+kuri_health_check_url: "http://127.0.0.1:{{ kuri_s3_port }}/healthz"
+kuri_health_check_timeout: 30
+
+service_restart_sec: 10
+service_timeout_stop_sec: 60
+
+# Repair workers (data recovery from storage providers)
+ribs_repair_workers: 4
+ribs_repair_staging_path: "{{ ribs_data }}/repair-staging"

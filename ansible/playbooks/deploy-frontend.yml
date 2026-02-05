@@ -1,0 +1,34 @@
+---
+# Deploy or update S3 frontend proxies
+# Safe to run in parallel (stateless)
+
+- name: Deploy S3 Frontend proxies
+  hosts: s3_frontend
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Check required variables
+      ansible.builtin.assert:
+        that:
+          - fgw_node_id is defined
+          - groups['kuri'] | length > 0
+        fail_msg: "Missing required variables for frontend deployment. Ensure kuri nodes are defined."
+
+  roles:
+    - role: common
+    - role: s3_frontend
+
+  post_tasks:
+    - name: Verify service is running
+      ansible.builtin.systemd:
+        name: "{{ s3_frontend_service_name }}"
+      register: frontend_service_status
+
+    - name: Display service status
+      ansible.builtin.debug:
+        msg: "S3 frontend {{ s3_frontend_service_name }} is {{ frontend_service_status.status.ActiveState }}"
+
+    - name: Show S3 endpoint
+      ansible.builtin.debug:
+        msg: "S3 API available at: http://{{ ansible_host }}:{{ s3_frontend_port }}"

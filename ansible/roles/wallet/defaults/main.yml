@@ -1,0 +1,5 @@
+---
+# Wallet role defaults
+
+fgw_wallet_source: "{{ playbook_dir }}/../files/wallet"
+fgw_wallet_dest: "/home/{{ fgw_user }}/.ribswallet"

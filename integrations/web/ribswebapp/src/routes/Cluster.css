@@ -1,0 +1,138 @@
+.Cluster {
+    padding: 20px;
+    max-width: 1800px;
+    margin: 0 auto;
+}
+
+.Cluster-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.Cluster-header h2 {
+    margin: 0;
+    color: #333;
+}
+
+.Cluster-refresh-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: #666;
+}
+
+.Cluster-refresh-toggle input {
+    cursor: pointer;
+}
+
+/* Top row: Topology + Active/Tables */
+.Cluster-top-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.Cluster-topology-section {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.Cluster-topology-section h3 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 16px;
+}
+
+.Cluster-active-section {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.Cluster-node-tables {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    flex: 1;
+    overflow: auto;
+}
+
+/* Charts grid - 2x2 */
+.Cluster-charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.Cluster-chart {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.Cluster-chart h4 {
+    margin: 0 0 10px 0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.Chart-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    color: #999;
+    font-style: italic;
+}
+
+/* Events section */
+.Cluster-events {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.Cluster-events h3 {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 16px;
+}
+
+/* Responsive design */
+@media (max-width: 1400px) {
+    .Cluster-top-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 1000px) {
+    .Cluster-charts-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .Cluster {
+        padding: 10px;
+    }
+
+    .Cluster-header {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+}

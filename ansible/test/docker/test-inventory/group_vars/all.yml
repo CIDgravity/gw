@@ -1,0 +1,73 @@
+---
+# Test configuration for Docker-based Ansible testing
+
+# Binary distribution - binaries pre-installed in shared volume
+fgw_version: "test"
+fgw_binary_path: /opt/fgw/bin
+fgw_config_path: /opt/fgw/config
+fgw_binary_url: ""  # Empty = don't download, expect pre-installed
+
+# Wallet settings
+fgw_wallet_source: "{{ playbook_dir }}/../files/wallet"
+fgw_wallet_dest: /home/fgw/.ribswallet
+
+# CIDGravity API (mock for testing)
+cidgravity_api_token: "test-token-not-real"
+cidgravity_api_endpoint_gbap: "https://service.cidgravity.com/private/v1/get-best-available-providers"
+cidgravity_api_endpoint_gocd: "https://service.cidgravity.com/private/v1/get-on-chain-deals"
+cidgravity_max_connections: 4
+
+# Filecoin API
+ribs_filecoin_api_endpoint: "https://api.chain.love/rpc/v1"
+
+# Deal settings (test values)
+ribs_minimum_replica_count: 1
+ribs_maximum_replica_count: 3
+ribs_minimum_retrievable_count: 1
+ribs_retrievable_repair_threshold: 1
+ribs_deal_start_time: 96
+ribs_deal_duration: 530
+ribs_deal_remove_unsealed: "false"
+ribs_deal_skip_ipni_announce: "true"
+
+# RIBS settings
+ribs_max_local_group_count: 4
+ribs_max_staging_group_count: 0
+ribs_deal_check_interval: "30s"
+ribs_run_sp_crawler: "false"
+
+# S3 API settings
+ribs_s3api_region: "TEST"
+ribs_s3api_auth_enabled: "false"
+
+# LocalWeb
+external_localweb_builtin_server: "true"
+external_localweb_server_tls: "false"
+external_localweb_max_concurrent_uploads_per_deal: 5
+
+# Prometheus Metrics
+ribs_prometheus_port: 2112
+
+# Logging (format: subsystem:regex=level,subsystem:regex=level,...)
+# Example: ribs:.*=debug,gw/.*=debug,ribs:rbdeal=info
+ribs_loglevel: ".*:.*=debug"
+
+# YugabyteDB (Docker test network)
+yb_ysql_host: "172.28.0.10"
+yb_ysql_port: 5433
+yb_ysql_user: "yugabyte"
+yb_ysql_pass: "yugabyte"
+
+yb_ycql_hosts: "172.28.0.10"
+yb_ycql_port: 9042
+yb_ycql_user: ""
+yb_ycql_pass: ""
+
+yb_shared_s3_keyspace: "filecoingw_s3"
+yb_replication_factor: 1  # Single node for testing
+
+# Service configuration
+fgw_user: fgw
+fgw_group: fgw
+service_restart_sec: 5
+service_timeout_stop_sec: 30

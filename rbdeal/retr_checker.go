@@ -11,21 +11,17 @@ import (
 
 	"github.com/CIDgravity/filecoin-gateway/carlog"
 	"github.com/CIDgravity/filecoin-gateway/iface"
-	"github.com/filecoin-project/lassie/pkg/types"
 	lru "github.com/hashicorp/golang-lru/v2"
 	pool "github.com/libp2p/go-buffer-pool"
-	"github.com/multiformats/go-multiaddr"
 
 	"github.com/CIDgravity/filecoin-gateway/ributil"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/lib/must"
-	"github.com/ipni/go-libipni/metadata"
 	"github.com/multiformats/go-multihash"
 	"golang.org/x/xerrors"
 
 	"github.com/ipfs/go-cid"
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 var retrievalCheckTimeout = 30 * time.Second
@@ -143,81 +139,12 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 			continue
 		}
 
-		////
-
-		cs := make([]types.RetrievalCandidate, 0, len(candidates))
-		var fixedPeer []peer.AddrInfo
-		{
-			/*if len(addrInfo.HttpMaddrs) > 0 {
-				log.Errorw("candidate has http addrs", "provider", candidate.Provider)
-
-				cs = append(cs, types.RetrievalCandidate{
-					MinerPeer: peer.AddrInfo{
-						ID:    "",
-						Addrs: addrInfo.HttpMaddrs,
-					},
-					RootCid:  cidToGet,
-					Metadata: metadata.Default.New(&metadata.IpfsGatewayHttp{}),
-				})
-			}*/
-			/*if len(addrInfo.BitswapMaddrs) > 0 {
-				bsAddrInfo, err := peer.AddrInfosFromP2pAddrs(addrInfo.BitswapMaddrs...)
-				if err != nil {
-					log.Errorw("failed to bitswap parse addrinfo", "provider", candidate.Provider, "err", err)
-					r.rckFail.Add(1)
-					r.rckFailAll.Add(1)
-					continue
-				}
-
-				for _, ai := range bsAddrInfo {
-					cs = append(cs, types.RetrievalCandidate{
-						MinerPeer: ai,
-						RootCid:   cidToGet,
-						Metadata:  metadata.Default.New(&metadata.Bitswap{}),
-					})
-				}
-			}*/
-
-			gsAddrInfo, err := peer.AddrInfosFromP2pAddrs(addrInfo.LibP2PMaddrs...)
-			if err != nil {
-				log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-				r.retrCheckMetrics.IncFailed()
-				continue
-			}
-
-			if len(gsAddrInfo) == 0 {
-				log.Debugw("no gs addrinfo", "provider", candidate.Provider)
-				r.retrCheckMetrics.IncFailed()
-				continue
-			}
-
-			allMaddrs := append([]multiaddr.Multiaddr{}, addrInfo.BitswapMaddrs...)
-			allMaddrs = append(allMaddrs, addrInfo.LibP2PMaddrs...)
-
-			fixedPeer, err = peer.AddrInfosFromP2pAddrs(allMaddrs...)
-			if err != nil {
-				log.Warnw("failed to parse addrinfo", "provider", candidate.Provider, "err", err)
-				r.retrCheckMetrics.IncFailed()
-				continue
-			}
-
-			cs = append(cs, types.RetrievalCandidate{
-				MinerPeer: gsAddrInfo[0],
-				RootCid:   cidToGet,
-				Metadata: metadata.Default.New(&metadata.GraphsyncFilecoinV1{
-					PieceCID:      group.PieceCid,
-					VerifiedDeal:  candidate.Verified,
-					FastRetrieval: candidate.FastRetr,
-				}),
-			})
-		}
-
 		checkThrottle <- struct{}{}
 		go func() {
 			defer func() {
 				<-checkThrottle
 			}()
-			err = r.retrievalCheckCandidate(ctx, candidate, addrInfo, cidToGet, group, fixedPeer, timeoutCache, cs)
+			err = r.retrievalCheckCandidate(ctx, candidate, addrInfo, cidToGet, group, timeoutCache)
 			if err != nil {
 				log.Warnw("failed to check candidate", "error", err)
 			}
@@ -231,8 +158,8 @@ func (r *ribs) doRetrievalCheck(ctx context.Context, gw api.Gateway) error {
 	return nil
 }
 
-func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckCandidate, addrInfo ProviderAddrInfo, cidToGet cid.Cid, group iface.GroupDesc, fixedPeer []peer.AddrInfo,
-	timeoutCache *lru.Cache[int64, *timeoutEntry], cs []types.RetrievalCandidate) error {
+func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckCandidate, addrInfo ProviderAddrInfo, cidToGet cid.Cid, group iface.GroupDesc,
+	timeoutCache *lru.Cache[int64, *timeoutEntry]) error {
 	//// http path, maybe
 	if len(addrInfo.HttpMaddrs) > 0 {
 		u, err := ributil.MaddrsToUrl(addrInfo.HttpMaddrs)
@@ -337,12 +264,12 @@ func (r *ribs) retrievalCheckCandidate(ctx context.Context, candidate RetrCheckC
 		return nil
 	}
 
-	log.Debugw("no http addrs, and lassie disabled", "provider", candidate.Provider)
+	log.Debugw("no http addrs available for retrieval check", "provider", candidate.Provider)
 	r.retrCheckMetrics.IncFailed()
 
 	var res RetrievalResult
 	res.Success = false
-	res.Error = "no http addrs, and lassie disabled"
+	res.Error = "no http addrs available"
 
 	err := r.db.RecordRetrievalCheckResult(candidate.DealID, res)
 	if err != nil {

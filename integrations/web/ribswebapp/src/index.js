@@ -10,10 +10,12 @@ import Root from './routes/Root';
 import Status from './routes/Status';
 import Groups from './routes/Groups';
 import Group from "./routes/Group";
+import WritableGroups from "./routes/WritableGroups";
 import Providers from './routes/Providers';
 import Provider from './routes/Provider';
 import Content from "./routes/Content";
 import Repair from "./routes/Repair";
+import Cluster from "./routes/Cluster";
 
 const router = createBrowserRouter([
     {
@@ -23,10 +25,12 @@ const router = createBrowserRouter([
             { path: "/", element: <Status /> },
             { path: "groups", element: <Groups /> },
             { path: "groups/:groupKey", element: <Group /> },
+            { path: "writable-groups", element: <WritableGroups /> },
             { path: "providers", element: <Providers /> },
             { path: "provider/:providerID", element: <Provider /> },
             { path: "content", element: <Content />},
             { path: "repair", element: <Repair />},
+            { path: "cluster", element: <Cluster />},
         ],
     },
 ]);

@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+# Systemd service for S3 Frontend Proxy: {{ fgw_node_id }}
+
+[Unit]
+Description=Filecoin Gateway S3 Frontend Proxy ({{ fgw_node_id }})
+Documentation=https://github.com/filecoin-project/filecoin-gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ fgw_user }}
+Group={{ fgw_group }}
+
+# Load environment
+EnvironmentFile={{ fgw_config_dir }}/settings.env
+
+# Binary execution
+ExecStart={{ fgw_binary_path }}/s3-proxy
+
+# Graceful shutdown
+TimeoutStopSec={{ service_timeout_stop_sec }}
+KillSignal=SIGTERM
+KillMode=mixed
+
+# Resource limits
+{% if s3_frontend_max_memory is defined %}
+MemoryMax={{ s3_frontend_max_memory }}
+{% endif %}
+{% if s3_frontend_cpu_quota is defined %}
+CPUQuota={{ s3_frontend_cpu_quota }}%
+{% endif %}
+
+# Increase file descriptor limit
+LimitNOFILE=65536
+
+# Restart policy
+Restart=always
+RestartSec={{ service_restart_sec }}
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ s3_frontend_service_name }}
+
+[Install]
+WantedBy=multi-user.target

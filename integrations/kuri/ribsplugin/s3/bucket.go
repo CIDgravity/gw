@@ -113,6 +113,7 @@ func (b *Bucket) Put(ctx context.Context, key iface.S3Key, input io.Reader) (ifa
 	}
 
 	obj := iface.NewS3Object(b.name, key, c, size, time.Now())
+	obj.NodeID = b.region.nodeID // Set the node ID for scalable routing
 	err = b.region.index.Put(ctx, obj)
 	if err != nil {
 		return iface.Stat{}, fmt.Errorf("failed to update index for %s/%s: %w", b.name, key, err)
@@ -205,12 +206,24 @@ func (b *Bucket) BeginMultipartPut(ctx context.Context, key iface.S3Key) (string
 }
 
 func (b *Bucket) ContinueMultipartPut(ctx context.Context, key iface.S3Key, uploadId string, partNumber int64, input io.Reader) (iface.Stat, error) {
-	// TODO should we track orphan uploads and gc the parts?
-	//      this needs robust logic, but it's ok for mvp.
 	partKey := fmt.Sprintf("%s/%s:%s:%d", b.name, key, uploadId, partNumber)
 	c, size, err := b.region.putObject(ctx, input)
 	if err != nil {
 		return iface.Stat{}, fmt.Errorf("failed to put object %s: %w", partKey, err)
+	}
+
+	if err = b.region.flush(ctx); err != nil {
+		return iface.Stat{}, fmt.Errorf("failed to flush region for part %s: %w", partKey, err)
+	}
+
+	// Store part with expiration for GC cleanup
+	partObj := iface.NewS3Object(b.name, iface.S3Key(partKey), c, size, time.Now())
+	partObj.NodeID = b.region.nodeID
+	expiresAt := time.Now().Add(24 * time.Hour) // Parts expire after 24 hours
+	partObj.ExpiresAt = &expiresAt
+
+	if err = b.region.index.Put(ctx, partObj); err != nil {
+		return iface.Stat{}, fmt.Errorf("failed to update index for part %s: %w", partKey, err)
 	}
 
 	log.Debugf("continue multipart upload %s -> %s %d -> %s", partKey, uploadId, partNumber, c.String())
@@ -285,6 +298,7 @@ func (b *Bucket) CompleteMultipartPut(ctx context.Context, key iface.S3Key, uplo
 	}
 
 	obj := iface.NewS3Object(b.name, key, finalNode.Cid(), totalSize, time.Now())
+	obj.NodeID = b.region.nodeID // Set the node ID for scalable routing
 	if err := b.region.index.Put(ctx, obj); err != nil {
 		return iface.Stat{}, fmt.Errorf("failed to update index: %w", err)
 	}

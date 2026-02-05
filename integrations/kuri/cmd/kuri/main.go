@@ -25,7 +25,9 @@ func mainRet() (exitCode int) {
 	} else {
 		fmt.Fprintln(os.Stderr, "Configuration loaded")
 	}
-	return kubo.Start(kubo.BuildEnv(func(loader *loader.PluginLoader) error {
+
+	exitCode = kubo.Start(kubo.BuildEnv(func(loader *loader.PluginLoader) error {
 		return loader.Load(kuboribs.Plugin)
 	}))
+	return exitCode
 }

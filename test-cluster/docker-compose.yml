@@ -1,0 +1,163 @@
+# Test cluster with proper scalable S3 architecture
+# Usage: FGW_DATA_DIR=/data/fgw-test docker-compose up -d
+#
+# Architecture:
+#   Client → S3 Frontend Proxy → Kuri Storage Nodes
+#
+# Port allocation:
+#   8078 - S3 API (Frontend Proxy)
+#   9010 - Web UI (kuri-1 - cluster-wide view)
+#   9090 - Internal API (kuri nodes, for part fetching)
+#
+# Each Kuri node has its own LocalWeb endpoint for CAR files
+
+services:
+  # Shared YugabyteDB for all nodes
+  yugabyte:
+    image: yugabytedb/yugabyte:2024.2.5.0-b59
+    volumes:
+      - ${FGW_DATA_DIR}/yugabyte:/root/var
+    environment:
+      YSQL_DB: filecoingw
+      YCQL_KEYSPACE: filecoingw
+    command: >
+      bin/yugabyted start
+        --background=false
+        --advertise_address=yugabyte
+    healthcheck:
+      test: bin/ysqlsh -h yugabyte -U yugabyte -tAc 'select 1' -d yugabyte
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fgw-test
+
+  # Database initialization
+  # Creates: 1 shared S3 keyspace + N per-node RIBS keyspaces
+  db-init:
+    image: yugabytedb/yugabyte:2024.2.5.0-b59
+    depends_on:
+      yugabyte:
+        condition: service_healthy
+    command: >
+      sh -c "
+        sleep 5 &&
+        # Per-node RIBS databases (groups, deals, blockstore)
+        (bin/ysqlsh -h yugabyte -U yugabyte -c 'CREATE DATABASE filecoingw_kuri1;' 2>/dev/null || true) &&
+        (bin/ysqlsh -h yugabyte -U yugabyte -c 'CREATE DATABASE filecoingw_kuri2;' 2>/dev/null || true) &&
+        bin/ycqlsh yugabyte -e 'CREATE KEYSPACE IF NOT EXISTS filecoingw_kuri1;' &&
+        bin/ycqlsh yugabyte -e 'CREATE KEYSPACE IF NOT EXISTS filecoingw_kuri2;' &&
+        # Shared S3 keyspace (object routing metadata)
+        bin/ycqlsh yugabyte -e 'CREATE KEYSPACE IF NOT EXISTS filecoingw_s3;' &&
+        # Create S3Objects table in shared keyspace
+        bin/ycqlsh yugabyte -e \"CREATE TABLE IF NOT EXISTS filecoingw_s3.S3Objects (
+          bucket text,
+          key text,
+          cid text,
+          size bigint,
+          updated timestamp,
+          node_id text,
+          expires_at timestamp,
+          PRIMARY KEY (bucket, key)
+        );\" &&
+        # Create MultipartUploads table
+        bin/ycqlsh yugabyte -e \"CREATE TABLE IF NOT EXISTS filecoingw_s3.MultipartUploads (
+          bucket text,
+          key text,
+          upload_id text,
+          node_id text,
+          created_at timestamp,
+          PRIMARY KEY ((bucket, key), upload_id)
+        );\" &&
+        echo 'Databases initialized successfully'
+      "
+    networks:
+      - fgw-test
+    restart: "no"
+
+  # Kuri Storage Node 1
+  kuri-1:
+    image: fgw:local
+    ports:
+      - "7001:7001"  # LocalWeb for CAR files
+    environment:
+      - FGW_NODE_TYPE=storage
+      - FGW_NODE_ID=kuri-1
+      - FGW_INTERNAL_API_BINDADDR=:9090
+      # Cluster topology for monitoring UI
+      - FGW_BACKEND_NODES=kuri-1:http://kuri-1:8078,kuri-2:http://kuri-2:8078
+    volumes:
+      - ${FGW_DATA_DIR}/kuri-1:/data/ribs
+      - ${FGW_DATA_DIR}/config/kuri-1:/app/config:ro
+    networks:
+      - fgw-test
+    depends_on:
+      yugabyte:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "set -a && . /app/config/settings.env && set +a && ./kuri init; ./kuri daemon"]
+
+  # Kuri Storage Node 2
+  kuri-2:
+    image: fgw:local
+    ports:
+      - "7002:7002"  # LocalWeb for CAR files
+    environment:
+      - FGW_NODE_TYPE=storage
+      - FGW_NODE_ID=kuri-2
+      - FGW_INTERNAL_API_BINDADDR=:9090
+      # Cluster topology for monitoring UI
+      - FGW_BACKEND_NODES=kuri-1:http://kuri-1:8078,kuri-2:http://kuri-2:8078
+    volumes:
+      - ${FGW_DATA_DIR}/kuri-2:/data/ribs
+      - ${FGW_DATA_DIR}/config/kuri-2:/app/config:ro
+    networks:
+      - fgw-test
+    depends_on:
+      yugabyte:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "set -a && . /app/config/settings.env && set +a && ./kuri init; ./kuri daemon"]
+
+  # S3 Frontend Proxy (stateless, horizontally scalable)
+  # To scale: duplicate this service with different FGW_NODE_ID (proxy-2, proxy-3, etc.)
+  # and use a load balancer (nginx/haproxy) in front
+  s3-proxy:
+    image: fgw:local
+    ports:
+      - "8078:8078"  # Public S3 API endpoint
+    environment:
+      - FGW_NODE_TYPE=frontend
+      - FGW_NODE_ID=proxy-1
+      - FGW_BACKEND_NODES=kuri-1:http://kuri-1:8078,kuri-2:http://kuri-2:8078
+      - FGW_YCQL_HOSTS=yugabyte
+      - FGW_YCQL_KEYSPACE=filecoingw_s3
+      - RIBS_S3API_BINDADDR=:8078
+      - RIBS_S3API_AUTH_ENABLED=false
+      - RIBS_LOGLEVEL=ribs=info,gw/s3frontend/backend=info
+    networks:
+      - fgw-test
+    depends_on:
+      - kuri-1
+      - kuri-2
+    command: ["./s3-proxy"]
+
+  # Web UI reverse proxy to kuri-1
+  webui:
+    image: nginx:alpine
+    ports:
+      - "9010:9010"  # Web UI for kuri-1
+      - "9011:9011"  # Web UI for kuri-2
+    volumes:
+      - ${FGW_DATA_DIR}/config/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - fgw-test
+    depends_on:
+      - kuri-1
+      - kuri-2
+
+networks:
+  fgw-test:
+    driver: bridge

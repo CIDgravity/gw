@@ -14,7 +14,8 @@ import (
 )
 
 type ObjectIndexCql struct {
-	db cqldb.Database
+	db      cqldb.Database
+	batcher *cqldb.CQLBatcher
 }
 
 type Scannable interface {
@@ -23,14 +24,15 @@ type Scannable interface {
 
 func NewObjectIndexCql(db cqldb.Database) *ObjectIndexCql {
 	return &ObjectIndexCql{
-		db: db,
+		db:      db,
+		batcher: cqldb.NewCQLBatcher(db.Session()),
 	}
 }
 
 func (or *ObjectIndexCql) List(ctx context.Context, bucket iface2.BucketName, prefix string, startAfter string, limit int32) (*iface2.ObjectList, error) {
 	var res []iface2.S3Object
 
-	statement := "select key, cid, size, updated from S3Objects where bucket = ?"
+	statement := "select key, cid, size, updated, node_id from S3Objects where bucket = ?"
 	args := []interface{}{bucket.String()}
 
 	if startAfter != "" && startAfter > prefix {
@@ -85,7 +87,7 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 	end, endPrefixFound := prefixEnd(prefix)
 
 	buildStatement := func(prefix, startAfter string) (string, []interface{}) {
-		s := "select key, cid, size, updated from S3Objects where bucket = ?"
+		s := "select key, cid, size, updated, node_id from S3Objects where bucket = ?"
 		args := []interface{}{bucket.String()}
 		if startAfter != "" && startAfter > prefix {
 			s += " and key > ?"
@@ -157,7 +159,7 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 }
 
 func (or *ObjectIndexCql) Get(ctx context.Context, bucket iface2.BucketName, key iface2.S3Key) (iface2.S3Object, error) {
-	query := or.db.Query("select key, cid, size, updated from S3Objects where bucket = ? and key = ?", bucket.String(), key.String()).
+	query := or.db.Query("select key, cid, size, updated, node_id from S3Objects where bucket = ? and key = ?", bucket.String(), key.String()).
 		WithContext(ctx)
 
 	obj, err := scanS3Object(bucket, query)
@@ -173,14 +175,25 @@ func (or *ObjectIndexCql) Get(ctx context.Context, bucket iface2.BucketName, key
 }
 
 func (or *ObjectIndexCql) Put(ctx context.Context, obj iface2.S3Object) error {
-	err := or.db.Query("insert into S3Objects (bucket, key, cid, size, updated) values (?, ?, ?, ?, ?)").
-		WithContext(ctx).
-		Bind(obj.Bucket.String(),
-			obj.Key.String(),
-			obj.Cid.String(),
-			obj.Size,
-			obj.Updated).
-		Exec()
+	var expiresAt interface{}
+	if obj.ExpiresAt != nil {
+		expiresAt = *obj.ExpiresAt
+	} else {
+		expiresAt = nil
+	}
+
+	// Use batcher for high-throughput writes
+	// The batcher collects writes and executes them in batches, blocking until committed
+	err := or.batcher.Submit(ctx,
+		"insert into S3Objects (bucket, key, cid, size, updated, node_id, expires_at) values (?, ?, ?, ?, ?, ?, ?)",
+		obj.Bucket.String(),
+		obj.Key.String(),
+		obj.Cid.String(),
+		obj.Size,
+		obj.Updated,
+		obj.NodeID,
+		expiresAt,
+	)
 	if err != nil {
 		return fmt.Errorf("inserting s3 object: %w", err)
 	}
@@ -217,8 +230,9 @@ func scanS3Object(bucket iface2.BucketName, scanner Scannable) (iface2.S3Object,
 	var size uint64
 	var updated time.Time
 	var key string
+	var nodeID string
 
-	err := scanner.Scan(&key, &cidString, &size, &updated)
+	err := scanner.Scan(&key, &cidString, &size, &updated, &nodeID)
 	if err != nil {
 		return iface2.S3Object{}, err
 	}
@@ -228,5 +242,7 @@ func scanS3Object(bucket iface2.BucketName, scanner Scannable) (iface2.S3Object,
 		return iface2.S3Object{}, fmt.Errorf("decoding s3 object cid: %w", err)
 	}
 
-	return iface2.NewS3Object(bucket, iface2.S3Key(key), c, size, updated), nil
+	obj := iface2.NewS3Object(bucket, iface2.S3Key(key), c, size, updated)
+	obj.NodeID = nodeID
+	return obj, nil
 }
