@@ -1,0 +1,236 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Wallet restore script for {{ fgw_node_id }}
+# Generated: {{ ansible_date_time.iso8601 }}
+#
+# USAGE: ./restore-wallet.sh [backup-name]
+#
+# If no backup name is provided, restores the most recent backup.
+# The wallet service should be STOPPED before running this script.
+
+set -euo pipefail
+
+# =============================================================================
+# Configuration
+# =============================================================================
+NODE_ID="{{ fgw_node_id }}"
+WALLET_DEST="{{ backup_wallet_source }}"
+BACKUP_DIR="{{ backup_dir }}/wallet"
+ENCRYPTION_KEY="{{ backup_encryption_key_path }}"
+S3_ENDPOINT="{{ backup_s3_endpoint }}"
+S3_BUCKET="{{ backup_s3_bucket }}"
+S3_REGION="{{ backup_s3_region }}"
+S3_PREFIX="wallets/${NODE_ID}"
+LOG_FILE="{{ backup_log_dir }}/wallet-restore.log"
+FGW_USER="{{ fgw_user }}"
+FGW_GROUP="{{ fgw_group }}"
+
+# Backup to restore (from argument or latest)
+BACKUP_NAME="${1:-}"
+
+# =============================================================================
+# Functions
+# =============================================================================
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+confirm() {
+    local prompt="$1"
+    local response
+    read -r -p "${prompt} [y/N] " response
+    case "$response" in
+        [yY][eE][sS]|[yY]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log "Restore failed with exit code $exit_code"
+    fi
+    # Clean up downloaded files
+    rm -f "${BACKUP_DIR}/restore-temp.tar.gz.gpg" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# =============================================================================
+# Pre-flight Checks
+# =============================================================================
+log "Starting wallet restore for ${NODE_ID}"
+
+# Check encryption key exists
+if [[ ! -f "${ENCRYPTION_KEY}" ]]; then
+    error "Encryption key not found: ${ENCRYPTION_KEY}"
+fi
+
+# Check S3 bucket is configured
+if [[ -z "${S3_BUCKET}" ]]; then
+    error "S3 bucket not configured"
+fi
+
+# Warning about existing wallet
+if [[ -d "${WALLET_DEST}" && "$(ls -A ${WALLET_DEST} 2>/dev/null)" ]]; then
+    log "WARNING: Existing wallet found at ${WALLET_DEST}"
+    if ! confirm "This will OVERWRITE the existing wallet. Continue?"; then
+        log "Restore cancelled by user"
+        exit 0
+    fi
+fi
+
+# =============================================================================
+# Find Backup to Restore
+# =============================================================================
+if [[ -z "${BACKUP_NAME}" ]]; then
+    log "Finding latest backup..."
+    
+    BACKUP_NAME=$(aws s3 ls "s3://${S3_BUCKET}/${S3_PREFIX}/" \
+        --endpoint-url "${S3_ENDPOINT}" \
+        --region "${S3_REGION}" 2>/dev/null | \
+        awk '{print $4}' | \
+        grep "^wallet-${NODE_ID}-.*\.tar\.gz\.gpg$" | \
+        sort -r | \
+        head -1)
+    
+    if [[ -z "${BACKUP_NAME}" ]]; then
+        error "No backups found in s3://${S3_BUCKET}/${S3_PREFIX}/"
+    fi
+    
+    log "Latest backup found: ${BACKUP_NAME}"
+fi
+
+# Ensure backup name has correct extension
+if [[ ! "${BACKUP_NAME}" =~ \.tar\.gz\.gpg$ ]]; then
+    BACKUP_NAME="${BACKUP_NAME}.tar.gz.gpg"
+fi
+
+# =============================================================================
+# Download Backup
+# =============================================================================
+log "Downloading backup: ${BACKUP_NAME}"
+
+mkdir -p "${BACKUP_DIR}"
+
+DOWNLOAD_PATH="${BACKUP_DIR}/restore-temp.tar.gz.gpg"
+
+aws s3 cp \
+    "s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}" \
+    "${DOWNLOAD_PATH}" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}"
+
+if [[ ! -f "${DOWNLOAD_PATH}" ]]; then
+    error "Failed to download backup"
+fi
+
+DOWNLOAD_SIZE=$(stat -c%s "${DOWNLOAD_PATH}" 2>/dev/null || stat -f%z "${DOWNLOAD_PATH}")
+log "Downloaded: ${DOWNLOAD_SIZE} bytes"
+
+# =============================================================================
+# Verify Backup Integrity
+# =============================================================================
+log "Verifying backup integrity..."
+
+PASSPHRASE=$(cat "${ENCRYPTION_KEY}")
+
+VERIFY_OUTPUT=$(gpg --batch --yes --decrypt \
+    --passphrase "${PASSPHRASE}" \
+    "${DOWNLOAD_PATH}" 2>/dev/null | tar tzf - 2>&1)
+
+if [[ $? -ne 0 ]]; then
+    error "Backup verification failed - cannot decrypt/extract backup"
+fi
+
+if ! echo "${VERIFY_OUTPUT}" | grep -q "ribswallet"; then
+    error "Backup verification failed - wallet files not found in archive"
+fi
+
+log "Backup verification successful"
+
+# =============================================================================
+# Create Backup of Current Wallet (if exists)
+# =============================================================================
+if [[ -d "${WALLET_DEST}" && "$(ls -A ${WALLET_DEST} 2>/dev/null)" ]]; then
+    CURRENT_BACKUP="${WALLET_DEST}.backup-$(date +%Y%m%d-%H%M%S)"
+    log "Backing up current wallet to: ${CURRENT_BACKUP}"
+    mv "${WALLET_DEST}" "${CURRENT_BACKUP}"
+fi
+
+# =============================================================================
+# Restore Wallet
+# =============================================================================
+log "Restoring wallet to: ${WALLET_DEST}"
+
+# Create parent directory
+mkdir -p "$(dirname ${WALLET_DEST})"
+
+# Decrypt and extract
+gpg --batch --yes --decrypt \
+    --passphrase "${PASSPHRASE}" \
+    "${DOWNLOAD_PATH}" | tar xzf - -C "$(dirname ${WALLET_DEST})"
+
+if [[ ! -d "${WALLET_DEST}" ]]; then
+    # The archive might have a different directory name, try to find it
+    EXTRACTED_DIR=$(gpg --batch --yes --decrypt \
+        --passphrase "${PASSPHRASE}" \
+        "${DOWNLOAD_PATH}" 2>/dev/null | tar tzf - | head -1 | cut -d'/' -f1)
+    
+    if [[ -d "$(dirname ${WALLET_DEST})/${EXTRACTED_DIR}" ]]; then
+        mv "$(dirname ${WALLET_DEST})/${EXTRACTED_DIR}" "${WALLET_DEST}"
+    else
+        error "Failed to extract wallet to expected location"
+    fi
+fi
+
+# =============================================================================
+# Set Permissions
+# =============================================================================
+log "Setting permissions..."
+
+chown -R "${FGW_USER}:${FGW_GROUP}" "${WALLET_DEST}"
+chmod 700 "${WALLET_DEST}"
+find "${WALLET_DEST}" -type f -exec chmod 600 {} \;
+
+# =============================================================================
+# Verify Restoration
+# =============================================================================
+log "Verifying restoration..."
+
+WALLET_FILES=$(find "${WALLET_DEST}" -type f -not -name '.*' | wc -l)
+
+if [[ "${WALLET_FILES}" -eq 0 ]]; then
+    error "Wallet restoration failed - no files found in ${WALLET_DEST}"
+fi
+
+log "Wallet contains ${WALLET_FILES} files"
+
+# List wallet contents (without showing sensitive data)
+log "Wallet contents:"
+ls -la "${WALLET_DEST}" | while read -r line; do
+    log "  ${line}"
+done
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+rm -f "${DOWNLOAD_PATH}"
+
+# =============================================================================
+# Summary
+# =============================================================================
+log "=========================================="
+log "Wallet restore completed successfully"
+log "  Node: ${NODE_ID}"
+log "  Restored from: ${BACKUP_NAME}"
+log "  Restored to: ${WALLET_DEST}"
+log "  Files: ${WALLET_FILES}"
+log ""
+log "IMPORTANT: Restart the Kuri service to use the restored wallet:"
+log "  sudo systemctl restart kuri-${NODE_ID}"
+log "=========================================="

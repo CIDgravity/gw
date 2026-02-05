@@ -1,0 +1,349 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Database restore script for {{ fgw_node_id }}
+# Generated: {{ ansible_date_time.iso8601 }}
+#
+# USAGE: ./restore-database.sh [backup-name] [--sql-only|--cql-only]
+#
+# If no backup name is provided, restores the most recent backup.
+# The Kuri service should be STOPPED before running this script.
+
+set -euo pipefail
+
+# =============================================================================
+# Configuration
+# =============================================================================
+NODE_ID="{{ fgw_node_id }}"
+BACKUP_DIR="{{ backup_dir }}/database"
+S3_ENDPOINT="{{ backup_s3_endpoint }}"
+S3_BUCKET="{{ backup_s3_bucket }}"
+S3_REGION="{{ backup_s3_region }}"
+S3_PREFIX="database/${NODE_ID}"
+LOG_FILE="{{ backup_log_dir }}/database-restore.log"
+
+# YugabyteDB SQL settings
+YB_YSQL_HOST="{{ backup_yb_ysql_host }}"
+YB_YSQL_PORT="{{ backup_yb_ysql_port }}"
+YB_YSQL_USER="{{ backup_yb_ysql_user }}"
+YB_YSQL_PASS="{{ backup_yb_ysql_pass }}"
+YB_YSQL_DB="{{ backup_yb_ysql_db }}"
+
+# YugabyteDB CQL settings
+YB_YCQL_HOST="{{ backup_yb_ycql_hosts | split(',') | first }}"
+YB_YCQL_PORT="{{ backup_yb_ycql_port }}"
+YB_YCQL_KEYSPACE="{{ backup_yb_ycql_keyspace }}"
+
+# CQL tables
+CQL_TABLES=({% for table in backup_cql_tables %}"{{ table }}" {% endfor %})
+
+# Arguments
+BACKUP_NAME="${1:-}"
+RESTORE_MODE="${2:-all}"  # all, --sql-only, --cql-only
+
+# =============================================================================
+# Functions
+# =============================================================================
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+confirm() {
+    local prompt="$1"
+    local response
+    read -r -p "${prompt} [y/N] " response
+    case "$response" in
+        [yY][eE][sS]|[yY]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log "Restore failed with exit code $exit_code"
+    fi
+    # Clean up work directory
+    rm -rf "${RESTORE_WORK_DIR}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# =============================================================================
+# Parse Arguments
+# =============================================================================
+RESTORE_SQL=true
+RESTORE_CQL=true
+
+case "${RESTORE_MODE}" in
+    --sql-only)
+        RESTORE_CQL=false
+        log "Mode: SQL only"
+        ;;
+    --cql-only)
+        RESTORE_SQL=false
+        log "Mode: CQL only"
+        ;;
+    all|"")
+        log "Mode: Full restore (SQL + CQL)"
+        ;;
+    *)
+        if [[ ! "${BACKUP_NAME}" =~ ^-- ]]; then
+            # Second arg might be backup name if first was empty
+            BACKUP_NAME="${RESTORE_MODE}"
+            RESTORE_MODE="all"
+        fi
+        ;;
+esac
+
+# =============================================================================
+# Pre-flight Checks
+# =============================================================================
+log "Starting database restore for ${NODE_ID}"
+
+# Check S3 bucket is configured
+if [[ -z "${S3_BUCKET}" ]]; then
+    error "S3 bucket not configured"
+fi
+
+# Warning
+log "WARNING: This will restore database data for ${NODE_ID}"
+log "  SQL Database: ${YB_YSQL_DB}"
+log "  CQL Keyspace: ${YB_YCQL_KEYSPACE}"
+if ! confirm "Continue with database restore?"; then
+    log "Restore cancelled by user"
+    exit 0
+fi
+
+# =============================================================================
+# Find Backup to Restore
+# =============================================================================
+if [[ -z "${BACKUP_NAME}" ]]; then
+    log "Finding latest backup..."
+    
+    BACKUP_NAME=$(aws s3 ls "s3://${S3_BUCKET}/${S3_PREFIX}/" \
+        --endpoint-url "${S3_ENDPOINT}" \
+        --region "${S3_REGION}" 2>/dev/null | \
+        awk '{print $4}' | \
+        grep "^database-${NODE_ID}-.*\.tar\.gz$" | \
+        sort -r | \
+        head -1)
+    
+    if [[ -z "${BACKUP_NAME}" ]]; then
+        error "No backups found in s3://${S3_BUCKET}/${S3_PREFIX}/"
+    fi
+    
+    log "Latest backup found: ${BACKUP_NAME}"
+fi
+
+# Ensure backup name has correct extension
+if [[ ! "${BACKUP_NAME}" =~ \.tar\.gz$ ]]; then
+    BACKUP_NAME="${BACKUP_NAME}.tar.gz"
+fi
+
+# =============================================================================
+# Download and Extract Backup
+# =============================================================================
+log "Downloading backup: ${BACKUP_NAME}"
+
+mkdir -p "${BACKUP_DIR}"
+RESTORE_WORK_DIR="${BACKUP_DIR}/restore-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "${RESTORE_WORK_DIR}"
+
+DOWNLOAD_PATH="${RESTORE_WORK_DIR}/${BACKUP_NAME}"
+
+aws s3 cp \
+    "s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}" \
+    "${DOWNLOAD_PATH}" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}"
+
+if [[ ! -f "${DOWNLOAD_PATH}" ]]; then
+    error "Failed to download backup"
+fi
+
+DOWNLOAD_SIZE=$(stat -c%s "${DOWNLOAD_PATH}" 2>/dev/null || stat -f%z "${DOWNLOAD_PATH}")
+log "Downloaded: ${DOWNLOAD_SIZE} bytes"
+
+log "Extracting backup..."
+tar xzf "${DOWNLOAD_PATH}" -C "${RESTORE_WORK_DIR}"
+
+# Find the extracted directory
+BACKUP_CONTENT_DIR=$(find "${RESTORE_WORK_DIR}" -mindepth 1 -maxdepth 1 -type d -name "database-*" | head -1)
+
+if [[ -z "${BACKUP_CONTENT_DIR}" || ! -d "${BACKUP_CONTENT_DIR}" ]]; then
+    error "Failed to find extracted backup content"
+fi
+
+log "Backup extracted to: ${BACKUP_CONTENT_DIR}"
+
+# Display metadata if available
+if [[ -f "${BACKUP_CONTENT_DIR}/metadata.json" ]]; then
+    log "Backup metadata:"
+    cat "${BACKUP_CONTENT_DIR}/metadata.json" | while read -r line; do
+        log "  ${line}"
+    done
+fi
+
+# =============================================================================
+# Restore SQL Data
+# =============================================================================
+if [[ "${RESTORE_SQL}" == "true" ]]; then
+    log "Restoring SQL data..."
+    
+    SQL_DUMP="${BACKUP_CONTENT_DIR}/sql.dump"
+    
+    if [[ -f "${SQL_DUMP}" ]]; then
+        export PGPASSWORD="${YB_YSQL_PASS}"
+        
+        # Determine restore command
+        SQL_RESTORE_CMD="ysql_restore"
+        if ! command -v ysql_restore &>/dev/null; then
+            SQL_RESTORE_CMD="pg_restore"
+        fi
+        
+        # First, drop existing database and recreate (if it exists)
+        log "Preparing database ${YB_YSQL_DB}..."
+        
+        psql -h "${YB_YSQL_HOST}" -p "${YB_YSQL_PORT}" -U "${YB_YSQL_USER}" -d postgres -c \
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${YB_YSQL_DB}';" \
+            2>/dev/null || true
+        
+        psql -h "${YB_YSQL_HOST}" -p "${YB_YSQL_PORT}" -U "${YB_YSQL_USER}" -d postgres -c \
+            "DROP DATABASE IF EXISTS \"${YB_YSQL_DB}\";" \
+            2>/dev/null || true
+        
+        psql -h "${YB_YSQL_HOST}" -p "${YB_YSQL_PORT}" -U "${YB_YSQL_USER}" -d postgres -c \
+            "CREATE DATABASE \"${YB_YSQL_DB}\";" || error "Failed to create database"
+        
+        # Restore
+        log "Restoring SQL dump..."
+        ${SQL_RESTORE_CMD} \
+            -h "${YB_YSQL_HOST}" \
+            -p "${YB_YSQL_PORT}" \
+            -U "${YB_YSQL_USER}" \
+            -d "${YB_YSQL_DB}" \
+            "${SQL_DUMP}" 2>&1 || {
+                log "WARNING: SQL restore completed with warnings (this may be normal)"
+            }
+        
+        unset PGPASSWORD
+        log "SQL restore completed"
+    else
+        log "WARNING: SQL dump not found in backup, skipping SQL restore"
+    fi
+else
+    log "Skipping SQL restore (--cql-only mode)"
+fi
+
+# =============================================================================
+# Restore CQL Data
+# =============================================================================
+if [[ "${RESTORE_CQL}" == "true" ]]; then
+    log "Restoring CQL data..."
+    
+    CQL_DIR="${BACKUP_CONTENT_DIR}/cql"
+    
+    if [[ -d "${CQL_DIR}" ]]; then
+        # Determine CQL client
+        CQLSH_CMD="ycqlsh"
+        if ! command -v ycqlsh &>/dev/null; then
+            CQLSH_CMD="cqlsh"
+        fi
+        
+        if command -v ${CQLSH_CMD} &>/dev/null; then
+            for table in "${CQL_TABLES[@]}"; do
+                CSV_FILE="${CQL_DIR}/${table}.csv"
+                
+                if [[ -f "${CSV_FILE}" ]]; then
+                    log "Restoring CQL table: ${table}"
+                    
+                    # Truncate table first
+                    ${CQLSH_CMD} "${YB_YCQL_HOST}" "${YB_YCQL_PORT}" \
+                        -e "TRUNCATE ${YB_YCQL_KEYSPACE}.${table};" \
+                        2>&1 || {
+                            log "WARNING: Failed to truncate table ${table} (may not exist yet)"
+                        }
+                    
+                    # Import data
+                    ${CQLSH_CMD} "${YB_YCQL_HOST}" "${YB_YCQL_PORT}" \
+                        -e "COPY ${YB_YCQL_KEYSPACE}.${table} FROM '${CSV_FILE}' WITH HEADER = TRUE;" \
+                        2>&1 || {
+                            log "WARNING: Failed to restore CQL table ${table}"
+                            continue
+                        }
+                    
+                    ROWS=$(wc -l < "${CSV_FILE}" 2>/dev/null || echo "unknown")
+                    log "  Restored ${table}: ~${ROWS} rows"
+                else
+                    log "WARNING: CSV file not found for table ${table}"
+                fi
+            done
+            
+            log "CQL restore completed"
+        else
+            log "WARNING: CQL client not available, skipping CQL restore"
+        fi
+    else
+        log "WARNING: CQL data not found in backup, skipping CQL restore"
+    fi
+else
+    log "Skipping CQL restore (--sql-only mode)"
+fi
+
+# =============================================================================
+# Verify Restoration
+# =============================================================================
+log "Verifying restoration..."
+
+VERIFY_ERRORS=0
+
+if [[ "${RESTORE_SQL}" == "true" ]]; then
+    export PGPASSWORD="${YB_YSQL_PASS}"
+    
+    TABLE_COUNT=$(psql -h "${YB_YSQL_HOST}" -p "${YB_YSQL_PORT}" -U "${YB_YSQL_USER}" -d "${YB_YSQL_DB}" \
+        -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ')
+    
+    unset PGPASSWORD
+    
+    if [[ "${TABLE_COUNT}" -gt 0 ]]; then
+        log "SQL verification: ${TABLE_COUNT} tables found"
+    else
+        log "WARNING: SQL verification failed - no tables found"
+        VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+    fi
+fi
+
+if [[ "${RESTORE_CQL}" == "true" ]] && command -v ${CQLSH_CMD:-ycqlsh} &>/dev/null; then
+    for table in "${CQL_TABLES[@]}"; do
+        ROW_COUNT=$(${CQLSH_CMD:-ycqlsh} "${YB_YCQL_HOST}" "${YB_YCQL_PORT}" \
+            -e "SELECT count(*) FROM ${YB_YCQL_KEYSPACE}.${table};" 2>/dev/null | \
+            grep -E "^\s*[0-9]+" | tr -d ' ' || echo "0")
+        
+        if [[ "${ROW_COUNT}" -gt 0 ]]; then
+            log "CQL verification: ${table} has ${ROW_COUNT} rows"
+        else
+            log "WARNING: CQL verification: ${table} appears empty"
+        fi
+    done
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+log "=========================================="
+log "Database restore completed"
+log "  Node: ${NODE_ID}"
+log "  Restored from: ${BACKUP_NAME}"
+log "  SQL Database: ${YB_YSQL_DB}"
+log "  CQL Keyspace: ${YB_YCQL_KEYSPACE}"
+if [[ "${VERIFY_ERRORS}" -gt 0 ]]; then
+    log "  Warnings: ${VERIFY_ERRORS}"
+fi
+log ""
+log "IMPORTANT: Restart the Kuri service to use the restored database:"
+log "  sudo systemctl restart kuri-${NODE_ID}"
+log "=========================================="

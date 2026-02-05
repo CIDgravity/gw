@@ -1,0 +1,282 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Database backup script for {{ fgw_node_id }}
+# Generated: {{ ansible_date_time.iso8601 }}
+#
+# Backs up YugabyteDB (SQL and CQL) data to S3.
+
+set -euo pipefail
+
+# =============================================================================
+# Configuration
+# =============================================================================
+NODE_ID="{{ fgw_node_id }}"
+BACKUP_DIR="{{ backup_dir }}/database"
+S3_ENDPOINT="{{ backup_s3_endpoint }}"
+S3_BUCKET="{{ backup_s3_bucket }}"
+S3_REGION="{{ backup_s3_region }}"
+S3_PREFIX="database/${NODE_ID}"
+RETENTION_DAYS="{{ backup_retention_days }}"
+LOCAL_RETENTION="{{ backup_local_retention_count }}"
+LOG_FILE="{{ backup_log_dir }}/database-backup.log"
+
+# YugabyteDB SQL settings
+YB_YSQL_HOST="{{ backup_yb_ysql_host }}"
+YB_YSQL_PORT="{{ backup_yb_ysql_port }}"
+YB_YSQL_USER="{{ backup_yb_ysql_user }}"
+YB_YSQL_PASS="{{ backup_yb_ysql_pass }}"
+YB_YSQL_DB="{{ backup_yb_ysql_db }}"
+
+# YugabyteDB CQL settings
+YB_YCQL_HOST="{{ backup_yb_ycql_hosts | split(',') | first }}"
+YB_YCQL_PORT="{{ backup_yb_ycql_port }}"
+YB_YCQL_KEYSPACE="{{ backup_yb_ycql_keyspace }}"
+
+# CQL tables to backup
+CQL_TABLES=({% for table in backup_cql_tables %}"{{ table }}" {% endfor %})
+
+# Timestamp for this backup
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_NAME="database-${NODE_ID}-${TIMESTAMP}"
+BACKUP_WORK_DIR="${BACKUP_DIR}/${BACKUP_NAME}"
+
+# =============================================================================
+# Functions
+# =============================================================================
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+error() {
+    log "ERROR: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log "Backup failed with exit code $exit_code"
+    fi
+    # Clean up work directory
+    rm -rf "${BACKUP_WORK_DIR}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# =============================================================================
+# Pre-flight Checks
+# =============================================================================
+log "Starting database backup for ${NODE_ID}"
+
+# Check S3 bucket is configured
+if [[ -z "${S3_BUCKET}" ]]; then
+    error "S3 bucket not configured"
+fi
+
+# Check ysql_dump is available (YugabyteDB tool)
+if ! command -v ysql_dump &>/dev/null && ! command -v pg_dump &>/dev/null; then
+    log "WARNING: ysql_dump not found, falling back to pg_dump"
+fi
+
+# Check ycqlsh is available
+if ! command -v ycqlsh &>/dev/null && ! command -v cqlsh &>/dev/null; then
+    log "WARNING: ycqlsh/cqlsh not found, CQL backup will be skipped"
+fi
+
+# =============================================================================
+# Create Work Directory
+# =============================================================================
+mkdir -p "${BACKUP_WORK_DIR}"
+
+# =============================================================================
+# SQL Backup (ysql_dump / pg_dump)
+# =============================================================================
+log "Creating SQL backup..."
+
+export PGPASSWORD="${YB_YSQL_PASS}"
+
+# Try ysql_dump first (YugabyteDB native), fall back to pg_dump
+SQL_DUMP_CMD="ysql_dump"
+if ! command -v ysql_dump &>/dev/null; then
+    SQL_DUMP_CMD="pg_dump"
+fi
+
+${SQL_DUMP_CMD} \
+    -h "${YB_YSQL_HOST}" \
+    -p "${YB_YSQL_PORT}" \
+    -U "${YB_YSQL_USER}" \
+    -d "${YB_YSQL_DB}" \
+    -F c \
+    -f "${BACKUP_WORK_DIR}/sql.dump" \
+    2>&1 || {
+        log "WARNING: SQL dump failed, continuing with CQL backup"
+        echo "SQL dump failed at $(date)" > "${BACKUP_WORK_DIR}/sql.error"
+    }
+
+if [[ -f "${BACKUP_WORK_DIR}/sql.dump" ]]; then
+    SQL_SIZE=$(stat -c%s "${BACKUP_WORK_DIR}/sql.dump" 2>/dev/null || stat -f%z "${BACKUP_WORK_DIR}/sql.dump")
+    log "SQL dump created: ${SQL_SIZE} bytes"
+fi
+
+unset PGPASSWORD
+
+# =============================================================================
+# CQL Backup (ycqlsh COPY TO)
+# =============================================================================
+log "Creating CQL backup..."
+
+# Determine CQL client
+CQLSH_CMD="ycqlsh"
+if ! command -v ycqlsh &>/dev/null; then
+    CQLSH_CMD="cqlsh"
+fi
+
+if command -v ${CQLSH_CMD} &>/dev/null; then
+    mkdir -p "${BACKUP_WORK_DIR}/cql"
+    
+    for table in "${CQL_TABLES[@]}"; do
+        log "Exporting CQL table: ${table}"
+        
+        ${CQLSH_CMD} "${YB_YCQL_HOST}" "${YB_YCQL_PORT}" \
+            -e "COPY ${YB_YCQL_KEYSPACE}.${table} TO '${BACKUP_WORK_DIR}/cql/${table}.csv' WITH HEADER = TRUE;" \
+            2>&1 || {
+                log "WARNING: Failed to export CQL table ${table}"
+                echo "Export failed at $(date)" > "${BACKUP_WORK_DIR}/cql/${table}.error"
+                continue
+            }
+        
+        if [[ -f "${BACKUP_WORK_DIR}/cql/${table}.csv" ]]; then
+            TABLE_SIZE=$(stat -c%s "${BACKUP_WORK_DIR}/cql/${table}.csv" 2>/dev/null || stat -f%z "${BACKUP_WORK_DIR}/cql/${table}.csv")
+            TABLE_ROWS=$(wc -l < "${BACKUP_WORK_DIR}/cql/${table}.csv" 2>/dev/null || echo "unknown")
+            log "  Exported ${table}: ${TABLE_SIZE} bytes, ~${TABLE_ROWS} rows"
+        fi
+    done
+else
+    log "WARNING: CQL client not available, skipping CQL backup"
+    echo "CQL client not available" > "${BACKUP_WORK_DIR}/cql.skipped"
+fi
+
+# =============================================================================
+# Create Metadata File
+# =============================================================================
+cat > "${BACKUP_WORK_DIR}/metadata.json" << EOF
+{
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "node_id": "${NODE_ID}",
+    "backup_name": "${BACKUP_NAME}",
+    "ysql_host": "${YB_YSQL_HOST}",
+    "ysql_port": "${YB_YSQL_PORT}",
+    "ysql_db": "${YB_YSQL_DB}",
+    "ycql_host": "${YB_YCQL_HOST}",
+    "ycql_port": "${YB_YCQL_PORT}",
+    "ycql_keyspace": "${YB_YCQL_KEYSPACE}",
+    "cql_tables": [$(printf '"%s",' "${CQL_TABLES[@]}" | sed 's/,$//')]
+}
+EOF
+
+# =============================================================================
+# Compress Backup
+# =============================================================================
+log "Compressing backup..."
+
+ARCHIVE_PATH="${BACKUP_DIR}/${BACKUP_NAME}.tar.gz"
+
+tar czf "${ARCHIVE_PATH}" -C "${BACKUP_DIR}" "${BACKUP_NAME}"
+
+if [[ ! -f "${ARCHIVE_PATH}" ]]; then
+    error "Failed to create backup archive"
+fi
+
+ARCHIVE_SIZE=$(stat -c%s "${ARCHIVE_PATH}" 2>/dev/null || stat -f%z "${ARCHIVE_PATH}")
+log "Backup archive created: ${ARCHIVE_SIZE} bytes"
+
+# =============================================================================
+# Upload to S3
+# =============================================================================
+log "Uploading to S3: s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz"
+
+aws s3 cp \
+    "${ARCHIVE_PATH}" \
+    "s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}"
+
+if [[ $? -ne 0 ]]; then
+    error "S3 upload failed"
+fi
+
+log "S3 upload complete"
+
+# =============================================================================
+# Verify S3 Upload
+# =============================================================================
+log "Verifying S3 upload..."
+
+S3_SIZE=$(aws s3api head-object \
+    --bucket "${S3_BUCKET}" \
+    --key "${S3_PREFIX}/${BACKUP_NAME}.tar.gz" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}" \
+    --query "ContentLength" \
+    --output text 2>/dev/null || echo "0")
+
+if [[ "${S3_SIZE}" != "${ARCHIVE_SIZE}" ]]; then
+    error "S3 upload verification failed - size mismatch (local: ${ARCHIVE_SIZE}, S3: ${S3_SIZE})"
+fi
+
+log "S3 upload verified: ${S3_SIZE} bytes"
+
+# =============================================================================
+# Cleanup Old Local Backups
+# =============================================================================
+log "Cleaning up old local backups (keeping ${LOCAL_RETENTION})..."
+
+# Keep only the most recent LOCAL_RETENTION backups
+cd "${BACKUP_DIR}" && \
+    ls -t database-${NODE_ID}-*.tar.gz 2>/dev/null | \
+    tail -n +$((LOCAL_RETENTION + 1)) | \
+    xargs -r rm -f
+
+LOCAL_COUNT=$(ls -1 "${BACKUP_DIR}"/database-${NODE_ID}-*.tar.gz 2>/dev/null | wc -l)
+log "Local backups after cleanup: ${LOCAL_COUNT}"
+
+# =============================================================================
+# Cleanup Old S3 Backups
+# =============================================================================
+log "Cleaning up old S3 backups (older than ${RETENTION_DAYS} days)..."
+
+# Calculate cutoff date
+CUTOFF_DATE=$(date -d "-${RETENTION_DAYS} days" +%Y%m%d 2>/dev/null || \
+              date -v-${RETENTION_DAYS}d +%Y%m%d)
+
+# List and delete old backups
+OLD_BACKUPS=$(aws s3 ls "s3://${S3_BUCKET}/${S3_PREFIX}/" \
+    --endpoint-url "${S3_ENDPOINT}" \
+    --region "${S3_REGION}" 2>/dev/null | \
+    awk '{print $4}' | \
+    grep "^database-${NODE_ID}-[0-9]*-" | \
+    while read -r backup; do
+        BACKUP_DATE=$(echo "$backup" | grep -oP 'database-[^-]+-\K[0-9]{8}')
+        if [[ -n "${BACKUP_DATE}" && "${BACKUP_DATE}" < "${CUTOFF_DATE}" ]]; then
+            echo "$backup"
+        fi
+    done)
+
+if [[ -n "${OLD_BACKUPS}" ]]; then
+    echo "${OLD_BACKUPS}" | while read -r backup; do
+        log "Deleting old backup: ${backup}"
+        aws s3 rm "s3://${S3_BUCKET}/${S3_PREFIX}/${backup}" \
+            --endpoint-url "${S3_ENDPOINT}" \
+            --region "${S3_REGION}" 2>/dev/null || true
+    done
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+log "=========================================="
+log "Database backup completed successfully"
+log "  Node: ${NODE_ID}"
+log "  Backup: ${BACKUP_NAME}.tar.gz"
+log "  Size: ${ARCHIVE_SIZE} bytes"
+log "  S3 Location: s3://${S3_BUCKET}/${S3_PREFIX}/${BACKUP_NAME}.tar.gz"
+log "=========================================="

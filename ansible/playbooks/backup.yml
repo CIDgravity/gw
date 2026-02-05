@@ -1,0 +1,194 @@
+---
+# Backup playbook for Filecoin Gateway
+#
+# This playbook configures automated backups for wallet and database data.
+#
+# USAGE:
+#   # Deploy backup configuration to all kuri nodes:
+#   ansible-playbook backup.yml
+#
+#   # Deploy to specific node:
+#   ansible-playbook backup.yml --limit kuri-01
+#
+#   # Run immediate wallet backup:
+#   ansible-playbook backup.yml --tags backup-now-wallet
+#
+#   # Run immediate database backup:
+#   ansible-playbook backup.yml --tags backup-now-database
+#
+#   # Restore wallet from backup:
+#   ansible-playbook backup.yml --tags restore-wallet -e restore_backup_name=wallet-kuri-01-20240101-120000
+#
+# REQUIRED VARIABLES (set in inventory or pass via -e):
+#   backup_s3_bucket: "my-backup-bucket"
+#   backup_s3_access_key: "access-key"
+#   backup_s3_secret_key: "secret-key"
+#
+# OPTIONAL VARIABLES:
+#   backup_s3_endpoint: "https://s3.amazonaws.com"  # or MinIO endpoint
+#   backup_s3_region: "us-east-1"
+#   backup_wallet_enabled: true
+#   backup_wallet_interval: "4h"
+#   backup_database_enabled: true
+#   backup_database_interval: "24h"
+#   backup_retention_days: 30
+
+- name: Configure FGW backups
+  hosts: kuri
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Check required backup variables
+      ansible.builtin.assert:
+        that:
+          - fgw_node_id is defined
+          - fgw_user is defined
+        fail_msg: "Missing required variables for backup configuration"
+
+    - name: Warn if S3 not configured
+      ansible.builtin.debug:
+        msg: |
+          WARNING: S3 backup destination not configured!
+          Set backup_s3_bucket, backup_s3_access_key, and backup_s3_secret_key
+          to enable remote backups. Local backups will still be created.
+      when: backup_s3_bucket is not defined or backup_s3_bucket | length == 0
+
+  roles:
+    - role: backup
+
+  post_tasks:
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: |
+          Backup configuration complete for {{ fgw_node_id }}
+          
+          Scripts installed:
+            - {{ backup_scripts_dir }}/backup-wallet.sh
+            - {{ backup_scripts_dir }}/backup-database.sh
+            - {{ backup_scripts_dir }}/restore-wallet.sh
+            - {{ backup_scripts_dir }}/restore-database.sh
+          
+          Manual backup commands:
+            sudo -u {{ fgw_user }} {{ backup_scripts_dir }}/backup-wallet.sh
+            sudo -u {{ fgw_user }} {{ backup_scripts_dir }}/backup-database.sh
+          
+          Restore commands:
+            sudo -u {{ fgw_user }} {{ backup_scripts_dir }}/restore-wallet.sh [backup-name]
+            sudo -u {{ fgw_user }} {{ backup_scripts_dir }}/restore-database.sh [backup-name]
+      vars:
+        backup_scripts_dir: "{{ fgw_config_dir | default('/opt/fgw/config') }}/backup-scripts"
+
+
+# =============================================================================
+# Manual Backup Execution
+# =============================================================================
+- name: Run immediate wallet backup
+  hosts: kuri
+  become: yes
+  gather_facts: no
+  tags:
+    - backup-now-wallet
+    - never
+
+  tasks:
+    - name: Execute wallet backup
+      ansible.builtin.shell: |
+        {{ fgw_config_dir | default('/opt/fgw/config') }}/backup-scripts/backup-wallet.sh
+      become_user: "{{ fgw_user }}"
+      register: wallet_backup_result
+      ignore_errors: yes
+
+    - name: Display wallet backup result
+      ansible.builtin.debug:
+        msg: "{{ wallet_backup_result.stdout_lines }}"
+      when: wallet_backup_result.stdout_lines is defined
+
+
+- name: Run immediate database backup
+  hosts: kuri
+  become: yes
+  gather_facts: no
+  tags:
+    - backup-now-database
+    - never
+
+  tasks:
+    - name: Execute database backup
+      ansible.builtin.shell: |
+        {{ fgw_config_dir | default('/opt/fgw/config') }}/backup-scripts/backup-database.sh
+      become_user: "{{ fgw_user }}"
+      register: db_backup_result
+      ignore_errors: yes
+
+    - name: Display database backup result
+      ansible.builtin.debug:
+        msg: "{{ db_backup_result.stdout_lines }}"
+      when: db_backup_result.stdout_lines is defined
+
+
+# =============================================================================
+# Restore Operations
+# =============================================================================
+- name: Restore wallet from backup
+  hosts: kuri
+  become: yes
+  gather_facts: no
+  tags:
+    - restore-wallet
+    - never
+
+  tasks:
+    - name: Stop Kuri service before restore
+      ansible.builtin.systemd:
+        name: "kuri-{{ fgw_node_id }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Execute wallet restore
+      ansible.builtin.shell: |
+        {{ fgw_config_dir | default('/opt/fgw/config') }}/backup-scripts/restore-wallet.sh {{ restore_backup_name | default('') }}
+      become_user: "{{ fgw_user }}"
+      register: restore_result
+
+    - name: Display restore result
+      ansible.builtin.debug:
+        msg: "{{ restore_result.stdout_lines }}"
+      when: restore_result.stdout_lines is defined
+
+    - name: Start Kuri service after restore
+      ansible.builtin.systemd:
+        name: "kuri-{{ fgw_node_id }}"
+        state: started
+
+
+- name: Restore database from backup
+  hosts: kuri
+  become: yes
+  gather_facts: no
+  tags:
+    - restore-database
+    - never
+
+  tasks:
+    - name: Stop Kuri service before restore
+      ansible.builtin.systemd:
+        name: "kuri-{{ fgw_node_id }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Execute database restore
+      ansible.builtin.shell: |
+        {{ fgw_config_dir | default('/opt/fgw/config') }}/backup-scripts/restore-database.sh {{ restore_backup_name | default('') }} {{ restore_mode | default('') }}
+      become_user: "{{ fgw_user }}"
+      register: restore_result
+
+    - name: Display restore result
+      ansible.builtin.debug:
+        msg: "{{ restore_result.stdout_lines }}"
+      when: restore_result.stdout_lines is defined
+
+    - name: Start Kuri service after restore
+      ansible.builtin.systemd:
+        name: "kuri-{{ fgw_node_id }}"
+        state: started
