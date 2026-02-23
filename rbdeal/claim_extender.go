@@ -14,11 +14,14 @@ import (
 	"github.com/filecoin-project/go-state-types/builtin/v9/verifreg"
 	"github.com/filecoin-project/lotus/api"
 	aclient "github.com/filecoin-project/lotus/api/client"
+	"github.com/filecoin-project/lotus/blockstore"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/actors"
+	"github.com/filecoin-project/lotus/chain/actors/adt"
 	verifreg2 "github.com/filecoin-project/lotus/chain/actors/builtin/verifreg"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/lib/must"
+	cbor "github.com/ipfs/go-ipld-cbor"
 	"golang.org/x/xerrors"
 )
 
@@ -95,11 +98,6 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 	r.msgSendLk.Lock()
 	defer r.msgSendLk.Unlock()
 
-	nonce, err := chain.MpoolGetNonce(ctx, clkey)
-	if err != nil {
-		return xerrors.Errorf("getting nonce: %w", err)
-	}
-
 	claimOurs := func(claim verifreg.Claim) bool {
 		return claim.Client == abi.ActorID(client)
 	}
@@ -107,9 +105,26 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 	var nclaims int
 	claims := map[address.Address]map[verifreg.ClaimId]verifreg.Claim{}
 
+
+	vact, err := chain.StateGetActor(ctx, verifreg2.Address, types.EmptyTSK)
+	if err != nil {
+		return xerrors.Errorf("getting verifreg actor: %w", err)
+	}
+	if vact == nil {
+		return xerrors.Errorf("verifreg actor not found")
+	}
+	
+	store := adt.WrapStore(ctx, cbor.NewCborStore(blockstore.NewAPIBlockstore(chain)))
+
+	vr, err := verifreg2.Load(store, vact)
+	if err != nil {
+		return xerrors.Errorf("loading verifreg actor: %w", err)
+	}
+
 	for n, prov := range provs {
 		fmt.Printf("(claim ext) Getting claims for %s (%d/%d)\n", prov, n, len(provs))
-		allProvClaims, err := chain.StateGetClaims(ctx, prov, types.EmptyTSK)
+
+		allProvClaims, err := vr.GetClaims(prov)
 		if err != nil {
 			return xerrors.Errorf("getting claims: %w", err)
 		}
@@ -134,6 +149,11 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 
 	var totalGas int64
 	totalFee := big.Zero()
+
+	nonce, err := chain.MpoolGetNonce(ctx, clkey)
+	if err != nil {
+		return xerrors.Errorf("getting nonce: %w", err)
+	}
 
 	var mkMessage func(params verifreg.ExtendClaimTermsParams) (*types.Message, error)
 	mkMessage = func(params verifreg.ExtendClaimTermsParams) (*types.Message, error) {
