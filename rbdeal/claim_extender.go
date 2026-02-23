@@ -105,7 +105,6 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 	var nclaims int
 	claims := map[address.Address]map[verifreg.ClaimId]verifreg.Claim{}
 
-
 	vact, err := chain.StateGetActor(ctx, verifreg2.Address, types.EmptyTSK)
 	if err != nil {
 		return xerrors.Errorf("getting verifreg actor: %w", err)
@@ -113,7 +112,7 @@ func (r *ribs) claimExtendCycle(ctx context.Context) error {
 	if vact == nil {
 		return xerrors.Errorf("verifreg actor not found")
 	}
-	
+
 	store := adt.WrapStore(ctx, cbor.NewCborStore(blockstore.NewAPIBlockstore(chain)))
 
 	vr, err := verifreg2.Load(store, vact)
