@@ -143,9 +143,9 @@ func saveEnv(path string, m map[string]string, commentFn EnvCommentFunc) error {
 		// Only quote values that need it (contain spaces, #, or newlines).
 		// Docker Compose env_file handles unquoted values most reliably.
 		if strings.ContainsAny(v, " \t\n#") {
-			fmt.Fprintf(w, "%s=%q\n", k, v)
+			_, _ = fmt.Fprintf(w, "%s=%q\n", k, v)
 		} else {
-			fmt.Fprintf(w, "%s=%s\n", k, v)
+			_, _ = fmt.Fprintf(w, "%s=%s\n", k, v)
 		}
 	}
 	return w.Flush()

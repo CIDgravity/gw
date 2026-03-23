@@ -16,7 +16,7 @@ func benchGenMhs(b *testing.B, n int) ([]multihash.Multihash, []int64) {
 	offs := make([]int64, n)
 	buf := make([]byte, 32)
 	for i := range mhs {
-		rand.Read(buf)
+		_, _ = rand.Read(buf)
 		mh, _ := multihash.Sum(buf, multihash.SHA2_256, -1)
 		mhs[i] = mh
 		offs[i] = makeOffsetLen(int64(i*256), 200)
@@ -49,7 +49,7 @@ func BenchmarkWalIndex_Put(b *testing.B) {
 				}
 
 				b.StopTimer()
-				idx.Close()
+				_ = idx.Close()
 			}
 		})
 	}
@@ -155,7 +155,7 @@ func BenchmarkWalIndex_List(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.List(func(c multihash.Multihash, o []int64) error {
+		_ = idx.List(func(c multihash.Multihash, o []int64) error {
 			return nil
 		})
 	}

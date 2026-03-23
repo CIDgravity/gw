@@ -349,7 +349,7 @@ func (s *FrontendServer) proxyRequest(backend *Backend, w http.ResponseWriter, r
 	w.WriteHeader(resp.StatusCode)
 
 	// Stream response body to client
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // parseBucketAndKey extracts bucket and key from the URL path

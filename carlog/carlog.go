@@ -388,13 +388,13 @@ func Open(staging CarStorageProvider, indexPath, dataPath string, tc TruncCleanu
 				}
 
 				if err := jb.fixLevelIndex(h, idx); err != nil {
-					idx.Close()
-					os.Remove(walPath)
+					_ = idx.Close()
+					_ = os.Remove(walPath)
 					return nil, xerrors.Errorf("rebuilding index from data: %w", err)
 				}
 
 				if err := idx.Sync(); err != nil {
-					idx.Close()
+					_ = idx.Close()
 					return nil, xerrors.Errorf("syncing rebuilt index: %w", err)
 				}
 

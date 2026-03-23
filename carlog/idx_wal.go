@@ -44,7 +44,7 @@ func CreateWalIndex(path string) (*WalIndex, error) {
 
 	w := bufio.NewWriterSize(f, walBufSize)
 	if _, err := w.WriteString(walMagic); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, xerrors.Errorf("writing wal magic: %w", err)
 	}
 
@@ -67,7 +67,7 @@ func OpenWalIndex(path string, truncateAt int64) (*WalIndex, error) {
 
 	m, validEnd, err := replayWal(f, truncateAt)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, xerrors.Errorf("replaying wal: %w", err)
 	}
 
@@ -76,19 +76,19 @@ func OpenWalIndex(path string, truncateAt int64) (*WalIndex, error) {
 	// a torn write or an entry past truncateAt.
 	fi, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, xerrors.Errorf("stat wal: %w", err)
 	}
 	if fi.Size() > validEnd {
 		if err := f.Truncate(validEnd); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, xerrors.Errorf("truncating wal: %w", err)
 		}
 	}
 
 	// Seek to end for appending
 	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, xerrors.Errorf("seeking wal to end: %w", err)
 	}
 
