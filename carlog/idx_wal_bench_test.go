@@ -79,7 +79,7 @@ func BenchmarkWalIndex_Has(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	idx.Close()
+	_ = idx.Close()
 }
 
 func BenchmarkWalIndex_Get(b *testing.B) {
@@ -105,7 +105,7 @@ func BenchmarkWalIndex_Get(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	idx.Close()
+	_ = idx.Close()
 }
 
 func BenchmarkWalIndex_Replay(b *testing.B) {
@@ -134,7 +134,7 @@ func BenchmarkWalIndex_Replay(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				idx.Close()
+				_ = idx.Close()
 			}
 		})
 	}
