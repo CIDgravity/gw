@@ -1251,17 +1251,17 @@ function CIDGravityStatusTile() {
 
     const getStatusColor = () => {
         if (!status) return '#f5f5f5';
-        if (!status.TokenConfigured) return '#FFE5E5'; // Light red - not configured
-        if (status.TokenValid) return '#E5F5E5'; // Light green - all good
-        if (status.Connected) return '#FFF4DD'; // Light yellow - connected but token invalid
+        if (!status.tokenConfigured) return '#FFE5E5'; // Light red - not configured
+        if (status.tokenValid) return '#E5F5E5'; // Light green - all good
+        if (status.connected) return '#FFF4DD'; // Light yellow - connected but token invalid
         return '#FFE5E5'; // Light red - not connected
     };
 
     const getStatusText = () => {
         if (!status) return 'Loading...';
-        if (!status.TokenConfigured) return 'Not Configured';
-        if (status.TokenValid) return 'Connected';
-        if (status.Connected) return 'Token Invalid';
+        if (!status.tokenConfigured) return 'Not Configured';
+        if (status.tokenValid) return 'Connected';
+        if (status.connected) return 'Token Invalid';
         return 'Disconnected';
     };
 
@@ -1276,26 +1276,26 @@ function CIDGravityStatusTile() {
                     <tr>
                         <td>Status:</td>
                         <td className="important-metric" style={{
-                            color: status?.TokenValid ? '#4caf50' : 
-                                   status?.Connected ? '#ff9800' : '#f44336'
+                            color: status?.tokenValid ? '#4caf50' : 
+                                   status?.connected ? '#ff9800' : '#f44336'
                         }}>
                             {getStatusText()}
                         </td>
                     </tr>
                     <tr>
                         <td>Token:</td>
-                        <td>{status?.TokenConfigured ? 'Configured' : 'Not Set'}</td>
+                        <td>{status?.tokenConfigured ? 'Configured' : 'Not Set'}</td>
                     </tr>
-                    {status?.Connected && (
+                    {status?.connected && (
                         <tr>
                             <td>Response:</td>
-                            <td>{status?.ResponseTimeMs}ms</td>
+                            <td>{status?.responseTimeMs}ms</td>
                         </tr>
                     )}
-                    {status?.Error && (
+                    {status?.error && (
                         <tr>
                             <td>Error:</td>
-                            <td style={{color: '#f44336', fontSize: '0.85em'}}>{status?.Error}</td>
+                            <td style={{color: '#f44336', fontSize: '0.85em'}}>{status?.error}</td>
                         </tr>
                     )}
                     <tr>
