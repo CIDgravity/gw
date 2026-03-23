@@ -38,6 +38,7 @@ const (
 	HeadSize = 512
 
 	LevelIndex     = "index.level"
+	WalIndexFile   = "idx.wal"
 	BsstIndex      = "index.bsst"
 	BsstIndexCanon = "fil.bsst"
 	HashSample     = "sample.mhlist"
@@ -210,11 +211,9 @@ func Create(staging CarStorageProvider, indexPath, dataPath string, _ TruncClean
 		return nil, xerrors.Errorf("head sync (new head: %x): %w", headBuf[:], err)
 	}
 
-	// new index is always level
-
-	idx, err := OpenLevelDBIndex(filepath.Join(indexPath, LevelIndex), true)
+	idx, err := CreateWalIndex(filepath.Join(indexPath, WalIndexFile))
 	if err != nil {
-		return nil, xerrors.Errorf("creating leveldb index: %w", err)
+		return nil, xerrors.Errorf("creating wal index: %w", err)
 	}
 
 	ac := &appendCounter{dataFile, int64(at)}
@@ -345,55 +344,66 @@ func Open(staging CarStorageProvider, indexPath, dataPath string, tc TruncCleanu
 
 			jb.rIdx = idx
 		} else {
-			idx, err := OpenLevelDBIndex(filepath.Join(indexPath, LevelIndex), false)
-			if err != nil && !os.IsNotExist(err) {
-				return nil, xerrors.Errorf("opening leveldb index: %w", err)
-			}
-			if os.IsNotExist(err) {
-				log.Warnw("leveldb index missing, attempting to fix", "error", err, "path", filepath.Join(indexPath, LevelIndex))
+			walPath := filepath.Join(indexPath, WalIndexFile)
+			levelPath := filepath.Join(indexPath, LevelIndex)
 
-				idx, err = OpenLevelDBIndex(filepath.Join(indexPath, LevelIndex+".temp"), true)
+			_, walErr := os.Stat(walPath)
+			_, levelErr := os.Stat(levelPath)
+
+			hasWal := walErr == nil
+			hasLevel := levelErr == nil
+
+			switch {
+			case hasWal:
+				// WAL index exists — open with truncation at RetiredAt
+				idx, err := OpenWalIndex(walPath, h.RetiredAt)
 				if err != nil {
-					return nil, xerrors.Errorf("creating (fixLevelIndex) leveldb index: %w", err)
+					return nil, xerrors.Errorf("opening wal index: %w", err)
 				}
 
-				err := jb.fixLevelIndex(h, idx)
+				jb.rIdx = idx
+				if !h.ReadOnly {
+					jb.wIdx = idx
+				}
+
+			case hasLevel:
+				// Legacy LevelDB index — open as before for backwards compat
+				idx, err := OpenLevelDBIndex(levelPath, false)
 				if err != nil {
-					log.Errorw("fixing leveldb index failed", "error", err, "path", filepath.Join(indexPath, LevelIndex))
-					return nil, xerrors.Errorf("fixing leveldb index: %w", err)
+					return nil, xerrors.Errorf("opening legacy leveldb index: %w", err)
 				}
 
-				if err := idx.Close(); err != nil {
-					log.Errorw("closing temp level index failed", "error", err, "path", filepath.Join(indexPath, LevelIndex))
-					return nil, xerrors.Errorf("closing temp level index: %w", err)
+				jb.rIdx = idx
+				if !h.ReadOnly {
+					jb.wIdx = idx
 				}
 
-				if err := os.RemoveAll(filepath.Join(indexPath, LevelIndex)); err != nil {
-					log.Errorw("removing old level index failed", "error", err, "path", filepath.Join(indexPath, LevelIndex))
-					return nil, xerrors.Errorf("removing old level index: %w", err)
-				}
+			default:
+				// Neither index exists — rebuild from data file into WAL
+				log.Warnw("index missing, rebuilding from data file", "path", indexPath)
 
-				if err := os.Rename(filepath.Join(indexPath, LevelIndex+".temp"), filepath.Join(indexPath, LevelIndex)); err != nil {
-					log.Errorw("renaming temp level index failed", "error", err, "path", filepath.Join(indexPath, LevelIndex))
-					return nil, xerrors.Errorf("renaming temp level index: %w", err)
-				}
-
-				idx, err = OpenLevelDBIndex(filepath.Join(indexPath, LevelIndex), false)
+				idx, err := CreateWalIndex(walPath)
 				if err != nil {
-					log.Errorw("opening fixed leveldb index failed", "error", err, "path", filepath.Join(indexPath, LevelIndex))
-					return nil, xerrors.Errorf("opening fixed leveldb index: %w", err)
+					return nil, xerrors.Errorf("creating wal index for rebuild: %w", err)
 				}
 
-				log.Infow("leveldb index fixed", "path", filepath.Join(indexPath, LevelIndex))
-			}
+				if err := jb.fixLevelIndex(h, idx); err != nil {
+					idx.Close()
+					os.Remove(walPath)
+					return nil, xerrors.Errorf("rebuilding index from data: %w", err)
+				}
 
-			jb.rIdx = idx
+				if err := idx.Sync(); err != nil {
+					idx.Close()
+					return nil, xerrors.Errorf("syncing rebuilt index: %w", err)
+				}
 
-			if h.ReadOnly {
-				// todo start finalize
-				//  (this should happen through group mgr)
-			} else {
-				jb.wIdx = idx
+				jb.rIdx = idx
+				if !h.ReadOnly {
+					jb.wIdx = idx
+				}
+
+				log.Infow("index rebuilt from data file", "path", walPath)
 			}
 		}
 	}
@@ -548,16 +558,16 @@ func (j *CarLog) fixLevelIndex(h Head, w WritableIndex) error {
 
 type WritableIndex interface {
 	// Put records entries in the index
-	// sync for now, todo
 	// -1 offset means 'skip'
 	Put(c []mh.Multihash, offs []int64) error
 
 	Del(c []mh.Multihash) error
 
-	// Truncate returns a list of multihashes to remove from the index
+	// ToTruncate returns a list of multihashes to remove from the index
 	ToTruncate(atOrAbove int64) ([]mh.Multihash, error)
 
-	// todo Sync() error
+	// Sync flushes buffered writes and fsyncs the index to stable storage.
+	Sync() error
 
 	Close() error
 }
@@ -722,13 +732,13 @@ func (j *CarLog) Commit() (int64, error) {
 		return 0, xerrors.Errorf("flushing buffered data: %w", err)
 	}
 
-	// todo call this on directory fd?
 	if err := j.data.Sync(); err != nil {
 		return 0, xerrors.Errorf("sync data: %w", err)
 	}
 
-	// todo index is sync for now, and we're single threaded, so if there were any
-	// puts, just update head
+	if err := j.wIdx.Sync(); err != nil {
+		return 0, xerrors.Errorf("sync index: %w", err)
+	}
 
 	err := j.mutHead(func(h *Head) error {
 		if h.RetiredAt == j.dataLen {
@@ -1326,7 +1336,11 @@ func (j *CarLog) dropLevel() error {
 		return xerrors.Errorf("cannot drop level on read-write jbob")
 	}
 
-	if err := os.RemoveAll(filepath.Join(j.IndexPath, LevelIndex)); err != nil {
+	// Remove whichever write index exists (WAL or legacy LevelDB)
+	if err := os.Remove(filepath.Join(j.IndexPath, WalIndexFile)); err != nil && !os.IsNotExist(err) {
+		return xerrors.Errorf("removing wal index: %w", err)
+	}
+	if err := os.RemoveAll(filepath.Join(j.IndexPath, LevelIndex)); err != nil && !os.IsNotExist(err) {
 		return xerrors.Errorf("removing leveldb index: %w", err)
 	}
 

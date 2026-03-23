@@ -23,12 +23,20 @@ services:
     environment:
       YSQL_DB: filecoingw
       YCQL_KEYSPACE: filecoingw
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+      nproc: 12000
     command: >
       bin/yugabyted start
         --background=false
         --advertise_address=yugabyte
+        --tserver_flags=rocksdb_max_background_compactions=8,rocksdb_max_background_flushes=4,db_block_cache_size_bytes=4294967296,tablet_server_svc_queue_length=10000
     healthcheck:
-      test: bin/ysqlsh -h `hostname -i` -U yugabyte -tAc 'select 1' -d yugabyte
+      test: >
+        bin/ysqlsh -h yugabyte -U yugabyte -tAc 'select 1' -d yugabyte &&
+        bin/ycqlsh yugabyte -e 'describe keyspaces'
       interval: 5s
       timeout: 5s
       retries: 10
@@ -39,13 +47,19 @@ services:
       - "2112:2112"
       - "8078:8078"
       - "9010:9010"
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+      nproc: 12000
     volumes:
       - ${DATA_DIR:-./data}/fgw/:/root/.ribsdata
       - ${DATA_DIR:-./data}/wallet:/root/.ribswallet
       - ${DATA_DIR:-./data}/ipfs/:/root/.ipfs
     command: [ "sh", "-c", "./kuri init ; ./kuri daemon" ]
     env_file:
-      - ${DATA_DIR:-./data}/config/settings.env
+      - path: ${DATA_DIR:-./data}/config/settings.env
+        required: false
     depends_on:
       yugabyte:
         condition: service_healthy

@@ -303,6 +303,14 @@ func (b *Bucket) CompleteMultipartPut(ctx context.Context, key iface.S3Key, uplo
 		return iface.Stat{}, fmt.Errorf("failed to update index: %w", err)
 	}
 
+	// Clean up part entries from S3Objects table
+	for _, part := range completion.Parts {
+		partKey := iface.S3Key(fmt.Sprintf("%s/%s:%s:%d", b.name, key, uploadId, part.PartNumber))
+		if err := b.region.index.Delete(ctx, b.name, partKey); err != nil {
+			log.Warnf("failed to clean up multipart part %s: %s", partKey, err)
+		}
+	}
+
 	log.Debugf("complete multipart upload %s/%s -> %s -> %s", b.name, key, uploadId, finalNode.Cid().String())
 	b.region.cidlocation.Schedule(obj.Cid)
 	return iface.Stat{

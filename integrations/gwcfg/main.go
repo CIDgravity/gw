@@ -139,7 +139,7 @@ func saveEnv(path string, m map[string]string, commentFn EnvCommentFunc) error {
 				fmt.Fprintf(w, "# %s\n", line)
 			}
 		}
-		fmt.Fprintf(w, "export %s=%q\n", k, m[k])
+		fmt.Fprintf(w, "%s=%q\n", k, m[k])
 	}
 	return w.Flush()
 }
@@ -292,7 +292,7 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 		env[b.key] = *b.value
 	}
 
-	if section == "Upload:LocalWeb" && !editAdvanced {
+	if section == "Staging:LocalWeb" && !editAdvanced {
 		builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
 		port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
 		urlStr := env["EXTERNAL_LOCALWEB_URL"]
@@ -300,11 +300,11 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 			// Validate port and URL
 			if !isValidPort(port) {
 				fmt.Printf("❌ Port %q is not valid. Please edit the settings.\n", port)
-				return editSection("Upload:LocalWeb", keys, env, false)
+				return editSection("Staging:LocalWeb", keys, env, false)
 			}
 			if !isValidURL(urlStr) {
 				fmt.Printf("❌ URL %q is not valid. Please edit the settings.\n", urlStr)
-				return editSection("Upload:LocalWeb", keys, env, false)
+				return editSection("Staging:LocalWeb", keys, env, false)
 			}
 
 			// Ask if user wants to test
@@ -375,7 +375,7 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 					case "retry":
 						continue // re-run the test loop
 					case "edit":
-						return editSection("Upload:LocalWeb", keys, env, false)
+						return editSection("Staging:LocalWeb", keys, env, false)
 					case "continue":
 						break // exit the test loop and continue
 					}
@@ -667,10 +667,10 @@ func main() {
 
 	switch flag.NArg() {
 	case 0:
-		_, err := os.Stat(abs)
 		keys, _ := collectKeys()
-		if errors.Is(err, os.ErrNotExist) {
-			// Initial setup wizard
+		env, _ := loadEnv(abs)
+		if len(env) == 0 {
+			// Initial setup wizard (file missing, empty, or has no keys)
 			if err := initialSetupWizard(abs, keys, opts); err != nil {
 				log.Fatalf("initial setup: %v", err)
 			}

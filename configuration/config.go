@@ -585,6 +585,9 @@ func LoadConfig() error {
 }
 
 func (c *Config) configureLogLevels() error {
+	if c.LogLevel == "" {
+		return nil
+	}
 	levels := strings.Split(c.LogLevel, ",")
 	for _, level := range levels {
 		s := strings.Split(level, "=")
