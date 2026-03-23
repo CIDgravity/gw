@@ -309,11 +309,19 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 
 			// Ask if user wants to test
 			doTest := false
+			testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
+			if isInContainer() {
+				testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
+					"The test server binds inside the container, so it will only\n" +
+					"work if the container has the port mapped (e.g. --network=host\n" +
+					"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
+					"'docker run' without port mapping, skip this test."
+			}
 			if err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title("Do you want to test the endpoint online?").
-						Description("* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity.").
+						Description(testDesc).
 						Value(&doTest),
 				),
 			).Run(); err != nil {
@@ -385,6 +393,15 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 		}
 	}
 	return nil
+}
+
+// isInContainer returns true if we're likely running inside a Docker/OCI container.
+func isInContainer() bool {
+	// /.dockerenv exists in Docker containers
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
 }
 
 func confirm(title string, def bool) (bool, error) {

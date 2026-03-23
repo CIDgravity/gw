@@ -40,16 +40,41 @@ It provides a scalable blockstore, automated Filecoin dealmaking, and familiar S
 
 ### Option 1 — Docker
 ```bash
-apt install -y docker.io docker-compose rclone
+apt install -y docker.io docker-compose
 git clone git@github.com:CIDgravity/filecoin-gateway.git
 cd filecoin-gateway
 
+# Build the container image
 docker build . -t fgw:local
 
-docker run -it --rm --entrypoint ./gwcfg   -v ${DATA_DIR:-./data}/config:/app/config   -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet   fgw:local -f config/settings.env
+# Create data directories
+mkdir -p ${DATA_DIR:-./data}/{config,wallet,fgw,yb,ipfs}
 
-docker-compose up
+# Start YugabyteDB first (gwcfg needs chain access, not YB, but the
+# gateway will need it running before kuri starts)
+docker compose up -d yugabyte
+
+# Run the interactive configuration wizard.
+# This creates a wallet, funds it via faucet, requests DataCap,
+# sets up a CIDGravity account, and writes settings.env.
+docker run -it --rm \
+  --entrypoint ./gwcfg \
+  -v ${DATA_DIR:-./data}/config:/app/config \
+  -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet \
+  fgw:local -f /app/config/settings.env
+
+# Start the gateway
+docker compose up -d
 ```
+
+> **Tip — Custom localweb port:** The built-in CAR server defaults to port 8443.
+> If you need a different port (e.g. behind a reverse proxy), edit
+> `data/config/settings.env` after running `gwcfg` and set:
+> ```
+> EXTERNAL_LOCALWEB_SERVER_PORT="2333"
+> EXTERNAL_LOCALWEB_SERVER_TLS="false"
+> ```
+> Then add `"2333:2333"` to the `ports:` list in `docker-compose.yml`.
 
 #### Data Storage Locations
 
@@ -230,21 +255,21 @@ For detailed configuration options, see `ansible/ansible-spec.md`.
 ## Onboarding Data with Rclone
 
 ### Example `rclone.conf`
-```
-cat > ~/.config/rclone/rclone.conf
+```bash
+mkdir -p ~/.config/rclone
+cat > ~/.config/rclone/rclone.conf <<EOF
 [gw]
 type = s3
 provider = Other
-access_key_id = test-access-key
-secret_access_key = test-secret-key
-region = us-east-1
 endpoint = http://localhost:8078
 acl = private
+no_check_bucket = true
+EOF
 ```
 
 ### Upload Data
-```
-rclone --s3-no-check-bucket --s3-force-path-style --s3-list-version=2   copy /mnt/data32 gw:mybucket/data32 -v
+```bash
+rclone copy /mnt/data gw:mybucket/ -v --transfers=8 --progress
 ```
 
 ---
