@@ -1233,10 +1233,10 @@ function CIDGravityStatusTile() {
         } catch (error) {
             console.error("Error fetching CIDGravity status:", error);
             setStatus({
-                Connected: false,
-                TokenValid: false,
-                TokenConfigured: false,
-                Error: error.message || "Failed to fetch status"
+                connected: false,
+                tokenValid: false,
+                tokenConfigured: false,
+                error: error.message || "Failed to fetch status"
             });
             setLoading(false);
         }
