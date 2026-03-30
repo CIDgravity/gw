@@ -2,6 +2,7 @@ package rbstor
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -290,8 +291,10 @@ func (lb *LoadBalancer) selectWeighted(
 	return nil, nil, ErrNoWritableGroup
 }
 
-// calculateScore computes a selection score for a group.
-// Higher score = better candidate for writes.
+// calculateScore computes a selection weight for a group.
+// The weight is proportional to available space so that groups with more
+// free space receive proportionally more writes.  This naturally creates
+// staggered fill levels and avoids thundering-herd finalization.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
 	available := group.AvailableSpace()
 
@@ -300,36 +303,38 @@ func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float6
 		return 0
 	}
 
-	// Score components:
-	// 1. Available space ratio (0-1)
-	spaceRatio := float64(available) / float64(maxGroupSize)
-
-	// 2. Writer load factor (prefer groups with fewer active writers)
-	// Scale: 0 writers = 1.0, 10 writers = 0.5, etc.
-	activeWriters := float64(group.ActiveWriterCount())
-	loadFactor := 1.0 / (1.0 + activeWriters*0.1)
-
-	// Combined score: weighted average
-	// Space is more important than load balancing
-	score := spaceRatio*0.7 + loadFactor*0.3
-
-	return score
+	// Weight = available space (bytes).  Groups with 2× the free space get
+	// 2× the probability of being selected.  As a group fills up its weight
+	// drops, naturally sending new writes elsewhere.
+	return float64(available)
 }
 
-// pickBest selects the group with the highest score.
+// pickBest selects a group using weighted random sampling.
+// Groups with more available space are proportionally more likely to be
+// chosen, which distributes writes so that groups fill at staggered rates.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 	if len(candidates) == 0 {
 		return nil
 	}
+	if len(candidates) == 1 {
+		return candidates[0].group
+	}
 
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.score > best.score {
-			best = c
+	var total float64
+	for _, c := range candidates {
+		total += c.score
+	}
+
+	r := rand.Float64() * total
+	for _, c := range candidates {
+		r -= c.score
+		if r <= 0 {
+			return c.group
 		}
 	}
 
-	return best.group
+	// Fallback (shouldn't reach here due to float rounding)
+	return candidates[len(candidates)-1].group
 }
 
 // setSessionAffinity records that a session prefers a specific group.

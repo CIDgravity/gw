@@ -359,6 +359,12 @@ func (r *ribBatch) Unlink(ctx context.Context, c []mh.Multihash) error {
 
 func (r *ribBatch) Flush(ctx context.Context) error {
 	cfg := configuration.GetConfig().ParallelWrite
+
+	// Reset write target after flush so the next cycle goes through the load
+	// balancer and picks a (potentially different) group.  This spreads writes
+	// across groups instead of sticking to one until it fills up.
+	defer func() { r.currentWriteTarget = iface.UndefGroupKey }()
+
 	if cfg.Enabled && len(r.toFlush) > 1 {
 		return r.flushParallel(ctx)
 	}

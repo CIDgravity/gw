@@ -95,7 +95,7 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	}
 	lb := NewLoadBalancer(r)
 
-	// Empty group should score higher than half-full group
+	// Empty group should have higher weight than half-full group
 	emptyGroup := &Group{
 		state:           iface.GroupStateWritable,
 		committedSize:   0,
@@ -115,9 +115,12 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	emptyScore := lb.calculateScore(emptyGroup, 1000)
 	halfFullScore := lb.calculateScore(halfFullGroup, 1000)
 
-	require.Greater(t, emptyScore, halfFullScore, "empty group should score higher than half-full")
+	require.Greater(t, emptyScore, halfFullScore, "empty group should have higher weight than half-full")
+	// Weight is proportional to available space
+	require.InDelta(t, emptyScore/halfFullScore, 2.0, 0.01, "empty group weight should be ~2× half-full")
 
-	// Group with no writers should score higher than group with many writers
+	// Same-size groups should have equal weight regardless of writer count
+	// (scoring uses space only; balancing comes from weighted random selection)
 	noWritersGroup := &Group{
 		state:           iface.GroupStateWritable,
 		committedSize:   maxGroupSize / 4,
@@ -138,10 +141,10 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	noWritersScore := lb.calculateScore(noWritersGroup, 1000)
 	manyWritersScore := lb.calculateScore(manyWritersGroup, 1000)
 
-	require.Greater(t, noWritersScore, manyWritersScore, "group with no writers should score higher")
+	require.Equal(t, noWritersScore, manyWritersScore, "same-size groups should have equal weight")
 }
 
-func TestLoadBalancer_PickBest(t *testing.T) {
+func TestLoadBalancer_PickBest_WeightedRandom(t *testing.T) {
 	r := &rbs{
 		writableGroups: make(map[iface.GroupKey]*Group),
 	}
@@ -149,16 +152,24 @@ func TestLoadBalancer_PickBest(t *testing.T) {
 
 	group1 := &Group{id: 1}
 	group2 := &Group{id: 2}
-	group3 := &Group{id: 3}
 
+	// group1 has 10× the weight of group2
 	candidates := []groupScore{
-		{group: group1, score: 0.5},
-		{group: group2, score: 0.9}, // highest
-		{group: group3, score: 0.3},
+		{group: group1, score: 10000},
+		{group: group2, score: 1000},
 	}
 
-	best := lb.pickBest(candidates)
-	require.Equal(t, int64(2), best.id, "should pick group with highest score")
+	// Run many trials; group1 should be picked ~90% of the time
+	hits := map[int64]int{}
+	trials := 1000
+	for i := 0; i < trials; i++ {
+		g := lb.pickBest(candidates)
+		hits[g.id]++
+	}
+
+	g1pct := float64(hits[1]) / float64(trials) * 100
+	require.Greater(t, g1pct, 80.0, "group1 (10× weight) should be picked >80%% of the time, got %.1f%%", g1pct)
+	require.Greater(t, hits[2], 0, "group2 should be picked at least once in %d trials", trials)
 }
 
 func TestLoadBalancer_PickBest_Empty(t *testing.T) {
