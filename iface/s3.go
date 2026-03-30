@@ -33,6 +33,7 @@ type Bucket interface {
 	ContinueMultipartPut(ctx context.Context, name S3Key, uploadId string, partNumber int64, input io.Reader) (Stat, error)
 	CompleteMultipartPut(ctx context.Context, name S3Key, uploadId string, completion *CompleteMultipartUpload) (Stat, error)
 	AbortMultipartPut(ctx context.Context, name S3Key, uploadId string) error
+	ListParts(ctx context.Context, key S3Key, query *ListPartsQuery) (*ListPartsResult, error)
 }
 
 type BucketName string
@@ -104,6 +105,30 @@ type CompleteMultipartUpload struct {
 		PartNumber int    `xml:"PartNumber"`
 		ETag       string `xml:"ETag"`
 	} `xml:"Part"`
+}
+
+type ListPartsQuery struct {
+	UploadID         string
+	MaxParts         int32
+	PartNumberMarker int
+}
+
+type ListPartsResult struct {
+	Bucket               BucketName
+	Key                  S3Key
+	UploadID             string
+	PartNumberMarker     int
+	NextPartNumberMarker int
+	MaxParts             int32
+	IsTruncated          bool
+	Parts                []PartInfo
+}
+
+type PartInfo struct {
+	PartNumber   int
+	ETag         string
+	Size         uint64
+	LastModified time.Time
 }
 
 type ListObjectsQuery struct {

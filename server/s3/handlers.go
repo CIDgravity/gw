@@ -453,6 +453,92 @@ func (srv *S3Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.R
 	return nil
 }
 
+func (srv *S3Server) handleListParts(w http.ResponseWriter, r *http.Request) error {
+	_, err := srv.auth.validateSignatureV4(r)
+	if err != nil {
+		srv.respondUnauthenticated(err, w)
+		return nil
+	}
+
+	params, _ := url.ParseQuery(r.URL.RawQuery)
+	uploadId := params.Get("uploadId")
+	if uploadId == "" {
+		log.Infow("missing uploadId", "URL", r.URL)
+		w.WriteHeader(400)
+		return nil
+	}
+
+	maxParts := int32(1000)
+	if params.Has("max-parts") {
+		mp, err := strconv.ParseInt(params.Get("max-parts"), 10, 32)
+		if err != nil {
+			log.Infow("bad max-parts", "URL", r.URL)
+			w.WriteHeader(400)
+			return nil
+		}
+		maxParts = int32(mp)
+	}
+
+	partNumberMarker := 0
+	if params.Has("part-number-marker") {
+		pnm, err := strconv.Atoi(params.Get("part-number-marker"))
+		if err != nil {
+			log.Infow("bad part-number-marker", "URL", r.URL)
+			w.WriteHeader(400)
+			return nil
+		}
+		partNumberMarker = pnm
+	}
+
+	bucketName, objectName, err := requestToObject(r)
+	if err != nil {
+		log.Infow("error parsing url", "URL", r.URL, "error", err)
+		w.WriteHeader(400)
+		return nil
+	}
+
+	bucket, err := srv.region.GetBucket(r.Context(), bucketName)
+	if err != nil {
+		if errors.Is(err, iface2.ErrNotFound) {
+			log.Infow("bucket not found", "URL", r.URL)
+			w.WriteHeader(404)
+			return nil
+		}
+		return fmt.Errorf("error getting bucket: %w", err)
+	}
+
+	result, err := bucket.ListParts(r.Context(), objectName, &iface2.ListPartsQuery{
+		UploadID:         uploadId,
+		MaxParts:         maxParts,
+		PartNumberMarker: partNumberMarker,
+	})
+	if err != nil {
+		return fmt.Errorf("error listing parts: %w", err)
+	}
+
+	parts := make([]ListPartsPartEntry, len(result.Parts))
+	for i, p := range result.Parts {
+		parts[i] = ListPartsPartEntry{
+			PartNumber:   p.PartNumber,
+			LastModified: p.LastModified.Format("2006-01-02T15:04:05.000Z"),
+			ETag:         p.ETag,
+			Size:         p.Size,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	return xml.NewEncoder(w).Encode(ListPartsResponse{
+		Bucket:               bucketName.String(),
+		Key:                  objectName.String(),
+		UploadId:             uploadId,
+		PartNumberMarker:     result.PartNumberMarker,
+		NextPartNumberMarker: result.NextPartNumberMarker,
+		MaxParts:             result.MaxParts,
+		IsTruncated:          result.IsTruncated,
+		Parts:                parts,
+	})
+}
+
 func (srv *S3Server) handleHeadObject(w http.ResponseWriter, r *http.Request) error {
 	_, err := srv.auth.validateSignatureV4(r)
 	if err != nil {

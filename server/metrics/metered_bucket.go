@@ -105,6 +105,13 @@ func (mb *MeteredBucket) AbortMultipartPut(ctx context.Context, key fgw_iface.S3
 	return err
 }
 
+func (mb *MeteredBucket) ListParts(ctx context.Context, key fgw_iface.S3Key, query *fgw_iface.ListPartsQuery) (*fgw_iface.ListPartsResult, error) {
+	mb.opCounters.WithLabelValues("list_parts").Inc()
+	result, err := mb.bucket.ListParts(ctx, key, query)
+	mb.checkError(err, "list_parts")
+	return result, err
+}
+
 func (mb *MeteredBucket) checkError(e error, operation string) {
 	if e != nil {
 		mb.errCounters.WithLabelValues(operation).Inc()

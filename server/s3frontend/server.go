@@ -94,6 +94,13 @@ func (s *FrontendServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if params.Has("uploadId") {
+		// ListParts - route to coordinator node that owns the upload
+		uploadID := params.Get("uploadId")
+		s.routeToCoordinator(w, r, uploadID)
+		return
+	}
+
 	// Regular GET object - route to correct backend using YCQL lookup
 	bucket, key, err := parseBucketAndKey(r.URL.Path)
 	if err != nil {

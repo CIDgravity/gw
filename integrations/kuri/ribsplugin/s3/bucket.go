@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/iface"
@@ -322,9 +324,90 @@ func (b *Bucket) CompleteMultipartPut(ctx context.Context, key iface.S3Key, uplo
 	}, nil
 }
 
+func (b *Bucket) partKeyPrefix(key iface.S3Key, uploadId string) string {
+	return fmt.Sprintf("%s/%s:%s:", b.name, key, uploadId)
+}
+
+func (b *Bucket) listPartObjects(ctx context.Context, key iface.S3Key, uploadId string) ([]iface.S3Object, error) {
+	prefix := b.partKeyPrefix(key, uploadId)
+	result, err := b.region.index.List(ctx, b.name, prefix, "", 10000)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list multipart parts: %w", err)
+	}
+	return result.Objects, nil
+}
+
+func (b *Bucket) ListParts(ctx context.Context, key iface.S3Key, query *iface.ListPartsQuery) (*iface.ListPartsResult, error) {
+	objs, err := b.listPartObjects(ctx, key, query.UploadID)
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := b.partKeyPrefix(key, query.UploadID)
+
+	var parts []iface.PartInfo
+	for _, obj := range objs {
+		suffix := obj.Key.String()[len(prefix):]
+		partNum, err := strconv.Atoi(suffix)
+		if err != nil {
+			log.Warnf("skipping malformed multipart part key %s", obj.Key)
+			continue
+		}
+		if partNum <= query.PartNumberMarker {
+			continue
+		}
+		parts = append(parts, iface.PartInfo{
+			PartNumber:   partNum,
+			ETag:         obj.Cid.String(),
+			Size:         obj.Size,
+			LastModified: obj.Updated,
+		})
+	}
+
+	sort.Slice(parts, func(i, j int) bool {
+		return parts[i].PartNumber < parts[j].PartNumber
+	})
+
+	maxParts := query.MaxParts
+	if maxParts <= 0 {
+		maxParts = 1000
+	}
+
+	truncated := int32(len(parts)) > maxParts
+	if truncated {
+		parts = parts[:maxParts]
+	}
+
+	var nextMarker int
+	if truncated && len(parts) > 0 {
+		nextMarker = parts[len(parts)-1].PartNumber
+	}
+
+	return &iface.ListPartsResult{
+		Bucket:               b.name,
+		Key:                  key,
+		UploadID:             query.UploadID,
+		PartNumberMarker:     query.PartNumberMarker,
+		NextPartNumberMarker: nextMarker,
+		MaxParts:             maxParts,
+		IsTruncated:          truncated,
+		Parts:                parts,
+	}, nil
+}
+
 func (b *Bucket) AbortMultipartPut(ctx context.Context, key iface.S3Key, uploadId string) error {
-	// TODO related to the note in ContinueMultipartPut
-	//      we should keep track of those orphas and gc; ok for mvp though.
+	objs, err := b.listPartObjects(ctx, key, uploadId)
+	if err != nil {
+		return err
+	}
+
+	for _, obj := range objs {
+		if err := b.region.index.Delete(ctx, b.name, obj.Key); err != nil {
+			log.Warnf("failed to clean up multipart part %s during abort: %s", obj.Key, err)
+		}
+	}
+
+	log.Debugf("aborted multipart upload %s/%s -> %s, cleaned up %d parts", b.name, key, uploadId, len(objs))
 	return nil
 }
 

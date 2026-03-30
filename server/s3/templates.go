@@ -77,3 +77,22 @@ type completeMultipartUploadResponseParams struct {
 	Key    string
 	ETag   string
 }
+
+type ListPartsResponse struct {
+	XMLName              xml.Name             `xml:"ListPartsResult"`
+	Bucket               string               `xml:"Bucket"`
+	Key                  string               `xml:"Key"`
+	UploadId             string               `xml:"UploadId"`
+	PartNumberMarker     int                  `xml:"PartNumberMarker"`
+	NextPartNumberMarker int                  `xml:"NextPartNumberMarker"`
+	MaxParts             int32                `xml:"MaxParts"`
+	IsTruncated          bool                 `xml:"IsTruncated"`
+	Parts                []ListPartsPartEntry `xml:"Part"`
+}
+
+type ListPartsPartEntry struct {
+	PartNumber   int    `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         uint64 `xml:"Size"`
+}
