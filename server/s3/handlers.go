@@ -628,8 +628,9 @@ func getBodyReader(r *http.Request) (io.Reader, error) {
 		log.Debugf("streaming request body detected")
 		return NewChunkReader(r.Body), nil
 	}
-	if contentSha256 == "UNSIGNED-PAYLOAD" {
-		log.Debugf("unsigned request body detected")
+	if contentSha256 == "" || contentSha256 == "UNSIGNED-PAYLOAD" {
+		// Empty header is treated as unsigned — common when auth is disabled
+		// or when clients use --no-sign-request
 		return r.Body, nil
 	}
 	if len(contentSha256) != 64 {
