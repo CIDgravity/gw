@@ -119,16 +119,16 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	require.Zero(t, lb.calculateScore(fullGroup, 1000))
 }
 
-func TestLoadBalancer_PickBest_ModularClock(t *testing.T) {
+func TestLoadBalancer_PickBest_ClockBias(t *testing.T) {
 	r := &rbs{
 		writableGroups: make(map[iface.GroupKey]*Group),
 	}
 	lb := NewLoadBalancer(r)
 
 	// Three groups at fill ratios 0.1, 0.2, 0.3
-	// Sorted, they get targets 0.167, 0.5, 0.833
-	// Gaps: 0.167-0.1=0.067, 0.5-0.2=0.3, 0.833-0.3=0.533
-	// Group at 0.3 fill has the biggest gap → gets the write
+	// Sorted targets: 0.167, 0.5, 0.833
+	// Group 3 (fill 0.3) has the biggest gap (0.833-0.3=0.533) → gets the bias.
+	// But all groups should receive some writes.
 	g1 := &Group{id: 1}
 	g2 := &Group{id: 2}
 	g3 := &Group{id: 3}
@@ -139,33 +139,27 @@ func TestLoadBalancer_PickBest_ModularClock(t *testing.T) {
 		{group: g3, score: 0.3},
 	}
 
-	best := lb.pickBest(candidates)
-	require.Equal(t, int64(3), best.id, "group furthest behind its clock target should be picked")
-
-	// Two groups: one empty (0.0), one at 0.9
-	// Targets: 0.25, 0.75.  Gaps: 0.25-0=0.25, 0.75-0.9=-0.15
-	// The empty group is behind → gets the write
-	gA := &Group{id: 10}
-	gB := &Group{id: 20}
-	candidates2 := []groupScore{
-		{group: gA, score: 0.0},
-		{group: gB, score: 0.9},
+	hits := map[int64]int{}
+	trials := 3000
+	for i := 0; i < trials; i++ {
+		g := lb.pickBest(candidates)
+		hits[g.id]++
 	}
-	best2 := lb.pickBest(candidates2)
-	require.Equal(t, int64(10), best2.id, "empty group behind its target should be picked")
 
-	// Two groups at identical fill → lower-slot (first sorted) wins
-	gX := &Group{id: 100}
-	gY := &Group{id: 200}
-	candidates3 := []groupScore{
-		{group: gX, score: 0.5},
-		{group: gY, score: 0.5},
+	// All groups must receive writes
+	require.Greater(t, hits[1], 0, "group 1 should receive some writes")
+	require.Greater(t, hits[2], 0, "group 2 should receive some writes")
+	require.Greater(t, hits[3], 0, "group 3 should receive some writes")
+
+	// Group 3 (most behind target) should get a larger share than group 1
+	require.Greater(t, hits[3], hits[1],
+		"group furthest behind clock target should get more writes (g3=%d, g1=%d)", hits[3], hits[1])
+
+	// No group should get more than 50% of writes (bias is capped at 30%)
+	for id, count := range hits {
+		pct := float64(count) / float64(trials) * 100
+		require.Less(t, pct, 50.0, "group %d got %.1f%% — should not dominate", id, pct)
 	}
-	// Both have same fill 0.5.  Targets: 0.25, 0.75.
-	// Gaps: 0.25-0.5=-0.25, 0.75-0.5=0.25. Second slot wins.
-	best3 := lb.pickBest(candidates3)
-	// One of them should be picked (the one assigned the higher target)
-	require.NotNil(t, best3)
 }
 
 func TestLoadBalancer_PickBest_Empty(t *testing.T) {

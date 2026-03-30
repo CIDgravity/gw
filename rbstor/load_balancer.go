@@ -2,6 +2,7 @@ package rbstor
 
 import (
 	"context"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -291,6 +292,12 @@ func (lb *LoadBalancer) selectWeighted(
 	return nil, nil, ErrNoWritableGroup
 }
 
+// maxClockBias is the maximum fraction of extra selection weight given to
+// the group that is furthest behind its modular-clock fill target.
+// 0.30 means the most-behind group gets up to 30% more weight than a
+// perfectly-on-target group; all groups still receive writes.
+const maxClockBias = 0.30
+
 // calculateScore returns 0 if the group cannot accept the write, or its
 // fill ratio (0–1) otherwise.  The actual selection logic is in pickBest.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
@@ -298,17 +305,21 @@ func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float6
 	if available < estimatedSize {
 		return 0
 	}
-	// Return fill ratio (used by pickBest for modular-clock selection)
+	// Return fill ratio (used by pickBest for modular-clock biased selection)
 	return float64(maxGroupSize-available) / float64(maxGroupSize)
 }
 
-// pickBest selects the group that is furthest behind its modular-clock
-// fill target, creating maximally staggered fill levels across groups.
+// pickBest selects a group using weighted-random with a modular-clock bias.
 //
-// With N candidates sorted by fill ratio, candidate i is assigned target
-// fill (i+0.5)/N.  The candidate with the largest gap (target − actual)
-// receives the next write.  This guarantees that groups fill at evenly
-// spaced rates and avoids thundering-herd finalization.
+// Every eligible group gets a base weight of 1.0 (so all groups receive
+// writes).  On top of that, each group gets a bonus of up to maxClockBias
+// proportional to how far behind its modular-clock fill target it is.
+//
+// With N candidates sorted by fill ratio, candidate i targets fill
+// (i+0.5)/N.  The candidate furthest behind its target gets the full
+// bonus; others get a proportional fraction.  This gently nudges groups
+// toward maximally staggered fill levels while keeping writes distributed
+// across all groups.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 	if len(candidates) == 0 {
 		return nil
@@ -323,19 +334,44 @@ func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 	})
 
 	n := float64(len(candidates))
-	var best *Group
-	bestGap := -1.0
 
+	// Compute clock gap for each candidate.
+	gaps := make([]float64, len(candidates))
+	maxGap := 0.0
 	for i, c := range candidates {
-		target := (float64(i) + 0.5) / n // slot centre
-		gap := target - c.score          // how far behind target
-		if gap > bestGap {
-			bestGap = gap
-			best = c.group
+		target := (float64(i) + 0.5) / n
+		gap := target - c.score
+		if gap < 0 {
+			gap = 0 // ahead of target → no bonus
+		}
+		gaps[i] = gap
+		if gap > maxGap {
+			maxGap = gap
 		}
 	}
 
-	return best
+	// Build selection weights: base 1.0 + up to maxClockBias bonus.
+	weights := make([]float64, len(candidates))
+	var total float64
+	for i := range candidates {
+		w := 1.0
+		if maxGap > 0 {
+			w += maxClockBias * (gaps[i] / maxGap)
+		}
+		weights[i] = w
+		total += w
+	}
+
+	// Weighted random selection.
+	r := rand.Float64() * total
+	for i, w := range weights {
+		r -= w
+		if r <= 0 {
+			return candidates[i].group
+		}
+	}
+
+	return candidates[len(candidates)-1].group
 }
 
 // setSessionAffinity records that a session prefers a specific group.
