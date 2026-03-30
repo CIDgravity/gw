@@ -5,10 +5,8 @@ import (
 	"text/template"
 )
 
-const locationXml = `
-<?xml version="1.0" encoding="UTF-8"?>
-<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{{.Region}}</LocationConstraint>
-`
+const locationXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{{.Region}}</LocationConstraint>`
 
 var locationTemplate = template.Must(template.New("location").Parse(locationXml))
 
@@ -44,14 +42,12 @@ type ListObjectsResponse struct {
 	StartAfter            string `xml:"StartAfter"`
 }
 
-const createMultipartUploadXml = `
-<?xml version="1.0" encoding="UTF-8"?>
+const createMultipartUploadXml = `<?xml version="1.0" encoding="UTF-8"?>
 <InitiateMultipartUploadResult>
    <Bucket>{{.Bucket}}</Bucket>
    <Key>{{.Key}}</Key>
    <UploadId>{{.UploadId}}</UploadId>
-</InitiateMultipartUploadResult>
-`
+</InitiateMultipartUploadResult>`
 
 var createMultipartUploadTemplate = template.Must(template.New("createMultipartUpload").Parse(createMultipartUploadXml))
 

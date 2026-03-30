@@ -278,6 +278,7 @@ func (srv *S3Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.
 		return fmt.Errorf("error getting object writer: %w", err)
 	}
 
+	w.Header().Set("Content-Type", "application/xml")
 	return createMultipartUploadTemplate.Execute(w, createMultipartUploadResponseParams{
 		UploadId: uploadId,
 		Key:      objectName.String(),
@@ -398,6 +399,7 @@ func (srv *S3Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *htt
 	}
 
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
+	w.Header().Set("Content-Type", "application/xml")
 	return completeMultipartUploadTemplate.Execute(w, completeMultipartUploadResponseParams{
 		Bucket: bucketName.String(),
 		Key:    objectName.String(),
