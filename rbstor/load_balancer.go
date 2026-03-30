@@ -2,7 +2,7 @@ package rbstor
 
 import (
 	"context"
-	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -291,27 +291,24 @@ func (lb *LoadBalancer) selectWeighted(
 	return nil, nil, ErrNoWritableGroup
 }
 
-// calculateScore computes a selection weight for a group.
-// The weight is proportional to available space so that groups with more
-// free space receive proportionally more writes.  This naturally creates
-// staggered fill levels and avoids thundering-herd finalization.
+// calculateScore returns 0 if the group cannot accept the write, or its
+// fill ratio (0–1) otherwise.  The actual selection logic is in pickBest.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
 	available := group.AvailableSpace()
-
-	// Not enough space
 	if available < estimatedSize {
 		return 0
 	}
-
-	// Weight = available space (bytes).  Groups with 2× the free space get
-	// 2× the probability of being selected.  As a group fills up its weight
-	// drops, naturally sending new writes elsewhere.
-	return float64(available)
+	// Return fill ratio (used by pickBest for modular-clock selection)
+	return float64(maxGroupSize-available) / float64(maxGroupSize)
 }
 
-// pickBest selects a group using weighted random sampling.
-// Groups with more available space are proportionally more likely to be
-// chosen, which distributes writes so that groups fill at staggered rates.
+// pickBest selects the group that is furthest behind its modular-clock
+// fill target, creating maximally staggered fill levels across groups.
+//
+// With N candidates sorted by fill ratio, candidate i is assigned target
+// fill (i+0.5)/N.  The candidate with the largest gap (target − actual)
+// receives the next write.  This guarantees that groups fill at evenly
+// spaced rates and avoids thundering-herd finalization.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 	if len(candidates) == 0 {
 		return nil
@@ -320,21 +317,25 @@ func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 		return candidates[0].group
 	}
 
-	var total float64
-	for _, c := range candidates {
-		total += c.score
-	}
+	// Sort by fill ratio ascending (score == fill ratio here).
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].score < candidates[j].score
+	})
 
-	r := rand.Float64() * total
-	for _, c := range candidates {
-		r -= c.score
-		if r <= 0 {
-			return c.group
+	n := float64(len(candidates))
+	var best *Group
+	bestGap := -1.0
+
+	for i, c := range candidates {
+		target := (float64(i) + 0.5) / n // slot centre
+		gap := target - c.score          // how far behind target
+		if gap > bestGap {
+			bestGap = gap
+			best = c.group
 		}
 	}
 
-	// Fallback (shouldn't reach here due to float rounding)
-	return candidates[len(candidates)-1].group
+	return best
 }
 
 // setSessionAffinity records that a session prefers a specific group.

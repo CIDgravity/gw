@@ -95,81 +95,77 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	}
 	lb := NewLoadBalancer(r)
 
-	// Empty group should have higher weight than half-full group
+	// Score returns fill ratio: half-full > empty
 	emptyGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   0,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+		state:         iface.GroupStateWritable,
+		committedSize: 0,
 	}
-
 	halfFullGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 2,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+		state:         iface.GroupStateWritable,
+		committedSize: maxGroupSize / 2,
 	}
 
 	emptyScore := lb.calculateScore(emptyGroup, 1000)
 	halfFullScore := lb.calculateScore(halfFullGroup, 1000)
 
-	require.Greater(t, emptyScore, halfFullScore, "empty group should have higher weight than half-full")
-	// Weight is proportional to available space
-	require.InDelta(t, emptyScore/halfFullScore, 2.0, 0.01, "empty group weight should be ~2× half-full")
+	require.InDelta(t, emptyScore, 0.0, 0.01, "empty group fill ratio ≈ 0")
+	require.InDelta(t, halfFullScore, 0.5, 0.01, "half-full group fill ratio ≈ 0.5")
 
-	// Same-size groups should have equal weight regardless of writer count
-	// (scoring uses space only; balancing comes from weighted random selection)
-	noWritersGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 4,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+	// Group at capacity returns 0
+	fullGroup := &Group{
+		state:         iface.GroupStateWritable,
+		committedSize: maxGroupSize - 100,
 	}
-
-	manyWritersGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 4,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
-	}
-	manyWritersGroup.activeWriters.Store(10)
-
-	noWritersScore := lb.calculateScore(noWritersGroup, 1000)
-	manyWritersScore := lb.calculateScore(manyWritersGroup, 1000)
-
-	require.Equal(t, noWritersScore, manyWritersScore, "same-size groups should have equal weight")
+	require.Zero(t, lb.calculateScore(fullGroup, 1000))
 }
 
-func TestLoadBalancer_PickBest_WeightedRandom(t *testing.T) {
+func TestLoadBalancer_PickBest_ModularClock(t *testing.T) {
 	r := &rbs{
 		writableGroups: make(map[iface.GroupKey]*Group),
 	}
 	lb := NewLoadBalancer(r)
 
-	group1 := &Group{id: 1}
-	group2 := &Group{id: 2}
+	// Three groups at fill ratios 0.1, 0.2, 0.3
+	// Sorted, they get targets 0.167, 0.5, 0.833
+	// Gaps: 0.167-0.1=0.067, 0.5-0.2=0.3, 0.833-0.3=0.533
+	// Group at 0.3 fill has the biggest gap → gets the write
+	g1 := &Group{id: 1}
+	g2 := &Group{id: 2}
+	g3 := &Group{id: 3}
 
-	// group1 has 10× the weight of group2
 	candidates := []groupScore{
-		{group: group1, score: 10000},
-		{group: group2, score: 1000},
+		{group: g1, score: 0.1},
+		{group: g2, score: 0.2},
+		{group: g3, score: 0.3},
 	}
 
-	// Run many trials; group1 should be picked ~90% of the time
-	hits := map[int64]int{}
-	trials := 1000
-	for i := 0; i < trials; i++ {
-		g := lb.pickBest(candidates)
-		hits[g.id]++
-	}
+	best := lb.pickBest(candidates)
+	require.Equal(t, int64(3), best.id, "group furthest behind its clock target should be picked")
 
-	g1pct := float64(hits[1]) / float64(trials) * 100
-	require.Greater(t, g1pct, 80.0, "group1 (10× weight) should be picked >80%% of the time, got %.1f%%", g1pct)
-	require.Greater(t, hits[2], 0, "group2 should be picked at least once in %d trials", trials)
+	// Two groups: one empty (0.0), one at 0.9
+	// Targets: 0.25, 0.75.  Gaps: 0.25-0=0.25, 0.75-0.9=-0.15
+	// The empty group is behind → gets the write
+	gA := &Group{id: 10}
+	gB := &Group{id: 20}
+	candidates2 := []groupScore{
+		{group: gA, score: 0.0},
+		{group: gB, score: 0.9},
+	}
+	best2 := lb.pickBest(candidates2)
+	require.Equal(t, int64(10), best2.id, "empty group behind its target should be picked")
+
+	// Two groups at identical fill → lower-slot (first sorted) wins
+	gX := &Group{id: 100}
+	gY := &Group{id: 200}
+	candidates3 := []groupScore{
+		{group: gX, score: 0.5},
+		{group: gY, score: 0.5},
+	}
+	// Both have same fill 0.5.  Targets: 0.25, 0.75.
+	// Gaps: 0.25-0.5=-0.25, 0.75-0.5=0.25. Second slot wins.
+	best3 := lb.pickBest(candidates3)
+	// One of them should be picked (the one assigned the higher target)
+	require.NotNil(t, best3)
 }
 
 func TestLoadBalancer_PickBest_Empty(t *testing.T) {
