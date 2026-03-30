@@ -367,63 +367,77 @@ fi
 ###############################################################################
 header "5. Throughput Benchmarks"
 
-bench_write() {
-    local label="$1" count="$2" size_bytes="$3" prefix="$4"
+# bench_put  <label> <count> <size_bytes> <parallelism> <prefix>
+#
+# Uploads <count> random files of <size_bytes> each at the given concurrency
+# level, prints a one-line summary, and cleans up.  Returns nothing on stdout
+# (all output goes to stderr / the info helper).
+bench_put() {
+    local label="$1" count="$2" size_bytes="$3" par="$4" prefix="$5"
     local dir="$WORK/bench-${label}"
     mkdir -p "$dir"
 
     # Generate files
     for i in $(seq 1 "$count"); do
-        dd if=/dev/urandom of="$dir/file-$(printf '%04d' $i).bin" bs="$size_bytes" count=1 2>/dev/null
+        dd if=/dev/urandom of="$dir/file-$(printf '%05d' $i).bin" \
+            bs="$size_bytes" count=1 2>/dev/null
     done
 
     local total_bytes=$((count * size_bytes))
-    local start elapsed rate
+    local inflight=0
 
+    local start elapsed
     start=$(date +%s%N)
-    # Upload files via curl (parallel batch)
+
     for f in "$dir"/*.bin; do
         curl -sf -X PUT --data-binary "@${f}" \
             -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
-            "${ENDPOINT}/${BUCKET}/${prefix}/$(basename "$f")" &
+            "${ENDPOINT}/${BUCKET}/${prefix}/$(basename "$f")" >/dev/null &
+        inflight=$((inflight + 1))
+        if (( inflight >= par )); then
+            wait -n 2>/dev/null || true
+            inflight=$((inflight - 1))
+        fi
     done
     wait
-    elapsed=$(( ($(date +%s%N) - start) ))
+    elapsed=$(( $(date +%s%N) - start ))
 
-    # Calculate rate
-    local elapsed_s
+    local elapsed_s rate obj_rate
     elapsed_s=$(echo "scale=3; $elapsed / 1000000000" | bc)
     if (( $(echo "$elapsed_s > 0" | bc -l) )); then
         rate=$(echo "scale=2; $total_bytes / $elapsed_s / 1048576" | bc)
-    else
-        rate="∞"
-    fi
-
-    local obj_rate="N/A"
-    if (( $(echo "$elapsed_s > 0" | bc -l) )); then
         obj_rate=$(echo "scale=1; $count / $elapsed_s" | bc)
+    else
+        rate="∞"; obj_rate="∞"
     fi
 
-    info "$label: ${count} files × $(numfmt --to=iec-i "$size_bytes")B in ${elapsed_s}s → ${rate} MiB/s (${obj_rate} obj/s)"
-    echo "$rate"
+    local human_size
+    human_size=$(numfmt --to=iec-i "$size_bytes")B
 
-    # Cleanup
+    info "$label: ${count} × ${human_size}  par=${par}  ${elapsed_s}s  ${rate} MiB/s  ${obj_rate} obj/s"
+
+    # Cleanup (parallel, fast)
     for f in "$dir"/*.bin; do
-        s3api delete-object --bucket "$BUCKET" --key "${prefix}/$(basename "$f")" >/dev/null 2>&1 || true
+        s3api delete-object --bucket "$BUCKET" \
+            --key "${prefix}/$(basename "$f")" >/dev/null 2>&1 &
     done
+    wait
+    rm -rf "$dir"
 }
 
-# -- 5a. Small files (F16: sub-MiB, report found ~2.8 KiB/s) --
-info "Small files (F16) — 100 × 4 KiB …"
-SMALL_RATE=$(bench_write "small-4k" 100 4096 "bench/small")
+# -- 5a. Small 1 KiB PUTs at varying parallelism (F16) --
+info "Small-PUT sweep: 1 KiB × 256 objects at parallelism 1, 32, 1024"
+bench_put "1k-par1"    256 1024    1 "bench/1k-p1"
+bench_put "1k-par32"   256 1024   32 "bench/1k-p32"
+bench_put "1k-par1024" 256 1024 1024 "bench/1k-p1024"
 
 # -- 5b. Medium files --
 info "Medium files — 10 × 1 MiB …"
-MED_RATE=$(bench_write "medium-1m" 10 1048576 "bench/medium")
+bench_put "medium-1m" 10 1048576 10 "bench/medium"
 
 # -- 5c. Large files --
 info "Large files — 3 × 10 MiB …"
-LARGE_RATE=$(bench_write "large-10m" 3 10485760 "bench/large")
+bench_put "large-10m" 3 10485760 3 "bench/large"
 
 # -- 5d. Single large file throughput via rclone --
 if $HAVE_RCLONE; then
@@ -437,7 +451,7 @@ if $HAVE_RCLONE; then
         RC_RATE=$(echo "scale=2; 67108864 / $RC_SEC / 1048576" | bc)
         info "rclone 64 MiB upload: ${RC_SEC}s → ${RC_RATE} MiB/s"
     fi
-    s3 rm "s3://${BUCKET}/bench/rclone/" --recursive --no-progress >/dev/null 2>&1 || true
+    s3api delete-object --bucket "$BUCKET" --key "bench/rclone/rclone-64m.bin" >/dev/null 2>&1 || true
 else
     skip "rclone not available — skipping rclone benchmark"
 fi
