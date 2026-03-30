@@ -292,77 +292,56 @@ func (lb *LoadBalancer) selectWeighted(
 	return nil, nil, ErrNoWritableGroup
 }
 
-// maxClockBias is the maximum fraction of extra selection weight given to
-// the group that is furthest behind its modular-clock fill target.
-// 0.30 means the most-behind group gets up to 30% more weight than a
-// perfectly-on-target group; all groups still receive writes.
+// maxClockBias is the maximum relative bonus (30%) given to lagging groups.
 const maxClockBias = 0.30
 
-// calculateScore returns 0 if the group cannot accept the write, or its
-// fill ratio (0–1) otherwise.  The actual selection logic is in pickBest.
+// calculateScore returns 0 if the group can't accept the write, or its
+// fill ratio (0–1) for use by pickBest.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
 	available := group.AvailableSpace()
 	if available < estimatedSize {
 		return 0
 	}
-	// Return fill ratio (used by pickBest for modular-clock biased selection)
 	return float64(maxGroupSize-available) / float64(maxGroupSize)
 }
 
-// pickBest selects a group using weighted-random with a modular-clock bias.
+// pickBest is a probabilistic router with a modular-clock stagger bias.
 //
-// Every eligible group gets a base weight of 1.0 (so all groups receive
-// writes).  On top of that, each group gets a bonus of up to maxClockBias
-// proportional to how far behind its modular-clock fill target it is.
-//
-// With N candidates sorted by fill ratio, candidate i targets fill
-// (i+0.5)/N.  The candidate furthest behind its target gets the full
-// bonus; others get a proportional fraction.  This gently nudges groups
-// toward maximally staggered fill levels while keeping writes distributed
-// across all groups.
+// Every candidate gets base weight 1.0.  Each group has a fill target on
+// a modular clock: with N groups sorted by fill, group i targets
+// (i+0.5)/N.  Groups that are behind their target (0–180° behind on the
+// clock) get a bonus of up to maxClockBias (30%) proportional to how far
+// behind they are.  Groups at or ahead of target get no bonus.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
-	if len(candidates) == 0 {
+	n := len(candidates)
+	if n == 0 {
 		return nil
 	}
-	if len(candidates) == 1 {
+	if n == 1 {
 		return candidates[0].group
 	}
 
-	// Sort by fill ratio ascending (score == fill ratio here).
+	// Sort by fill ratio so we can assign clock targets.
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].score < candidates[j].score
 	})
 
-	n := float64(len(candidates))
-
-	// Compute clock gap for each candidate.
-	gaps := make([]float64, len(candidates))
-	maxGap := 0.0
-	for i, c := range candidates {
-		target := (float64(i) + 0.5) / n
-		gap := target - c.score
-		if gap < 0 {
-			gap = 0 // ahead of target → no bonus
-		}
-		gaps[i] = gap
-		if gap > maxGap {
-			maxGap = gap
-		}
-	}
-
-	// Build selection weights: base 1.0 + up to maxClockBias bonus.
-	weights := make([]float64, len(candidates))
+	// Weighted random: base 1.0, bonus up to maxClockBias for lagging groups.
+	nf := float64(n)
 	var total float64
-	for i := range candidates {
+	weights := make([]float64, n)
+	for i, c := range candidates {
+		target := (float64(i) + 0.5) / nf
+		lag := target - c.score // positive = behind target
 		w := 1.0
-		if maxGap > 0 {
-			w += maxClockBias * (gaps[i] / maxGap)
+		if lag > 0 {
+			// lag is at most ~1.0; scale bonus linearly
+			w += maxClockBias * lag
 		}
 		weights[i] = w
 		total += w
 	}
 
-	// Weighted random selection.
 	r := rand.Float64() * total
 	for i, w := range weights {
 		r -= w
@@ -370,8 +349,7 @@ func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 			return candidates[i].group
 		}
 	}
-
-	return candidates[len(candidates)-1].group
+	return candidates[n-1].group
 }
 
 // setSessionAffinity records that a session prefers a specific group.
