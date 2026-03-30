@@ -185,17 +185,40 @@ func (lb *LoadBalancer) selectWeighted(
 			}
 		}
 
-		// No existing groups to open, try to create a new group
+		// No existing groups to open, try to create a new group.
+		// createGroup may block (ensureSpaceForGroup waits for offloading).
+		// Release selectionLk first so other writers can still use existing
+		// groups while we wait for space.
+		lb.r.lk.Unlock()
+		lb.selectionLk.Unlock()
+
+		lb.r.lk.Lock()
 		_, group, err := lb.r.createGroup(ctx)
+		lb.r.lk.Unlock()
+
+		lb.selectionLk.Lock()
+
 		if err == nil {
 			if session != nil {
 				lb.setSessionAffinity(session, group.id)
 			}
-			lb.r.lk.Unlock()
 			parallelMetrics.RecordGroupSelection("parallel_created", time.Since(start))
 			return group, func() {}, nil
 		}
-		// Failed to create, fall through to use existing candidates
+
+		// Failed to create — re-acquire r.lk for the fallback paths below.
+		lb.r.lk.Lock()
+		// Refresh candidates; map may have changed while locks were released.
+		candidates = candidates[:0]
+		for _, g := range lb.r.writableGroups {
+			if g.state != iface.GroupStateWritable {
+				continue
+			}
+			if s := lb.calculateScore(g, estimatedSize); s > 0 {
+				candidates = append(candidates, groupScore{group: g, score: s})
+			}
+		}
+		numWritable = len(lb.r.writableGroups)
 	}
 
 	// Use existing candidates if available
@@ -214,14 +237,14 @@ func (lb *LoadBalancer) selectWeighted(
 	// No candidates available, need to open or create a group
 	if !cfg.Enabled || numWritable < cfg.MaxParallelGroups {
 		// Try to open existing writable group from DB
-		selectedGroup, blocks, bytes, jbhead, state, err := lb.r.db.GetWritableGroup()
+		selectedGroup, blk, byt, jbhead, state, err := lb.r.db.GetWritableGroup()
 		if err != nil {
 			lb.r.lk.Unlock()
 			return nil, nil, err
 		}
 
 		if selectedGroup != iface.UndefGroupKey {
-			group, err := lb.r.openGroup(ctx, selectedGroup, blocks, bytes, jbhead, state, false)
+			group, err := lb.r.openGroup(ctx, selectedGroup, blk, byt, jbhead, state, false)
 			if err != nil {
 				lb.r.lk.Unlock()
 				return nil, nil, err
@@ -237,21 +260,27 @@ func (lb *LoadBalancer) selectWeighted(
 		}
 	}
 
-	// Check if we can create a new group
+	// Check if we can create a new group (same unlock dance for selectionLk)
 	if !cfg.Enabled || numWritable < cfg.MaxParallelGroups {
-		_, group, err := lb.r.createGroup(ctx)
-		if err != nil {
-			lb.r.lk.Unlock()
-			return nil, nil, err
-		}
-
-		if session != nil && cfg.Enabled {
-			lb.setSessionAffinity(session, group.id)
-		}
-
 		lb.r.lk.Unlock()
-		parallelMetrics.RecordGroupSelection("created", time.Since(start))
-		return group, func() {}, nil
+		lb.selectionLk.Unlock()
+
+		lb.r.lk.Lock()
+		_, group, err := lb.r.createGroup(ctx)
+		lb.r.lk.Unlock()
+
+		lb.selectionLk.Lock()
+
+		if err == nil {
+			if session != nil && cfg.Enabled {
+				lb.setSessionAffinity(session, group.id)
+			}
+			parallelMetrics.RecordGroupSelection("created", time.Since(start))
+			return group, func() {}, nil
+		}
+
+		// Re-lock for the final return
+		return nil, nil, err
 	}
 
 	lb.r.lk.Unlock()

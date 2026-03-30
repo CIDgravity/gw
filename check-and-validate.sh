@@ -385,14 +385,17 @@ bench_put() {
 
     local total_bytes=$((count * size_bytes))
     local inflight=0
+    local okfile="$WORK/.ok-${label}"
+    : > "$okfile"
 
     local start elapsed
     start=$(date +%s%N)
 
     for f in "$dir"/*.bin; do
-        curl -sf -X PUT --data-binary "@${f}" \
+        ( curl -sf --max-time 30 -X PUT --data-binary "@${f}" \
             -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
-            "${ENDPOINT}/${BUCKET}/${prefix}/$(basename "$f")" >/dev/null &
+            "${ENDPOINT}/${BUCKET}/${prefix}/$(basename "$f")" >/dev/null \
+          && echo 1 >> "$okfile" ) &
         inflight=$((inflight + 1))
         if (( inflight >= par )); then
             wait -n 2>/dev/null || true
@@ -402,19 +405,26 @@ bench_put() {
     wait
     elapsed=$(( $(date +%s%N) - start ))
 
+    local ok_count
+    ok_count=$(wc -l < "$okfile")
+    rm -f "$okfile"
+
     local elapsed_s rate obj_rate
     elapsed_s=$(echo "scale=3; $elapsed / 1000000000" | bc)
     if (( $(echo "$elapsed_s > 0" | bc -l) )); then
-        rate=$(echo "scale=2; $total_bytes / $elapsed_s / 1048576" | bc)
-        obj_rate=$(echo "scale=1; $count / $elapsed_s" | bc)
+        rate=$(echo "scale=2; $ok_count * $size_bytes / $elapsed_s / 1048576" | bc)
+        obj_rate=$(echo "scale=1; $ok_count / $elapsed_s" | bc)
     else
         rate="∞"; obj_rate="∞"
     fi
 
-    local human_size
+    local human_size errs
     human_size=$(numfmt --to=iec-i "$size_bytes")B
+    errs=$((count - ok_count))
+    local err_note=""
+    if (( errs > 0 )); then err_note="  ${errs} errors"; fi
 
-    info "$label: ${count} × ${human_size}  par=${par}  ${elapsed_s}s  ${rate} MiB/s  ${obj_rate} obj/s"
+    info "$label: ${ok_count}/${count} × ${human_size}  par=${par}  ${elapsed_s}s  ${rate} MiB/s  ${obj_rate} obj/s${err_note}"
 
     # Cleanup (parallel, fast)
     for f in "$dir"/*.bin; do
@@ -468,7 +478,7 @@ dd if=/dev/urandom of="$WORK/wa-test.bin" bs=1M count=32 2>/dev/null
 WA_SHA=$(openssl dgst -sha256 -r "$WORK/wa-test.bin" | awk '{print $1}')
 
 # Upload as a single PUT via curl (tests that large single PUTs work cleanly)
-curl -sf -X PUT --data-binary "@$WORK/wa-test.bin" \
+curl -sf --max-time 60 -X PUT --data-binary "@$WORK/wa-test.bin" \
     -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
     "${ENDPOINT}/${BUCKET}/${WA_KEY}" >/dev/null
 
@@ -506,7 +516,7 @@ done
 CONC_START=$(date +%s%N)
 # Upload all in parallel via curl
 for f in "$CONC_DIR"/*.bin; do
-    curl -sf -X PUT --data-binary "@${f}" \
+    curl -sf --max-time 30 -X PUT --data-binary "@${f}" \
         -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
         "${ENDPOINT}/${BUCKET}/concurrent/$(basename "$f")" &
 done
