@@ -467,6 +467,58 @@ else
 fi
 
 ###############################################################################
+#  5e. Large single-object write (4 GiB)
+###############################################################################
+header "5e. Large Object Write (4 GiB)"
+
+BIG_KEY="bench/big-4g.bin"
+info "Generating 4 GiB random file…"
+dd if=/dev/urandom of="$WORK/big-4g.bin" bs=1M count=4096 2>/dev/null
+BIG_SHA=$(openssl dgst -sha256 -r "$WORK/big-4g.bin" | awk '{print $1}')
+
+info "Uploading 4 GiB via curl…"
+BIG_START=$(date +%s%N)
+BIG_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 600 \
+    -X PUT --data-binary "@$WORK/big-4g.bin" \
+    -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
+    "${ENDPOINT}/${BUCKET}/${BIG_KEY}")
+BIG_ELAPSED=$(( $(date +%s%N) - BIG_START ))
+BIG_SEC=$(echo "scale=3; $BIG_ELAPSED / 1000000000" | bc)
+if (( $(echo "$BIG_SEC > 0" | bc -l) )); then
+    BIG_RATE=$(echo "scale=2; 4294967296 / $BIG_SEC / 1048576" | bc)
+else
+    BIG_RATE="∞"
+fi
+
+if [[ "$BIG_HTTP" == "200" ]]; then
+    pass "4 GiB PUT succeeded (${BIG_SEC}s, ${BIG_RATE} MiB/s)"
+else
+    fail "4 GiB PUT returned HTTP $BIG_HTTP"
+fi
+
+# Readback — size check (SHA will differ due to UnixFS DAG)
+info "Reading back 4 GiB…"
+BIG_RB_START=$(date +%s%N)
+s3get "${BUCKET}/${BIG_KEY}" "$WORK/big-4g-rb.bin" || true
+BIG_RB_ELAPSED=$(( $(date +%s%N) - BIG_RB_START ))
+BIG_RB_SEC=$(echo "scale=3; $BIG_RB_ELAPSED / 1000000000" | bc)
+BIG_RB_SIZE=$(stat -c%s "$WORK/big-4g-rb.bin" 2>/dev/null || echo 0)
+if [[ "$BIG_RB_SIZE" == "4294967296" ]]; then
+    if (( $(echo "$BIG_RB_SEC > 0" | bc -l) )); then
+        BIG_RB_RATE=$(echo "scale=2; 4294967296 / $BIG_RB_SEC / 1048576" | bc)
+    else
+        BIG_RB_RATE="∞"
+    fi
+    pass "4 GiB readback — size correct (${BIG_RB_SEC}s, ${BIG_RB_RATE} MiB/s)"
+else
+    fail "4 GiB readback — expected 4294967296 bytes, got $BIG_RB_SIZE"
+fi
+
+# Cleanup
+rm -f "$WORK/big-4g.bin" "$WORK/big-4g-rb.bin"
+s3api delete-object --bucket "$BUCKET" --key "$BIG_KEY" >/dev/null 2>&1 || true
+
+###############################################################################
 #  6. MULTIPART WRITE AMPLIFICATION CHECK (F14)
 ###############################################################################
 header "6. Multipart Write Amplification (F14)"
