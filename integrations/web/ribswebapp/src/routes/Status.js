@@ -344,11 +344,11 @@ function TopIndexTile() {
                 </tr>
                 <tr>
                     <td>Read rate:</td>
-                    <td>{indexStats.ReadRate}/s</td>
+                    <td>{formatNum(Math.round(readRate))}/s</td>
                 </tr>
                 <tr>
                     <td>Write rate:</td>
-                    <td>{indexStats.WriteRate}/s</td>
+                    <td>{formatNum(Math.round(writeRate))}/s</td>
                 </tr>
                 </tbody>
             </table>
