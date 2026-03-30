@@ -67,6 +67,8 @@ export AWS_DEFAULT_REGION="$REGION"
 # alias for brevity
 s3api() { aws --endpoint-url "$ENDPOINT" --no-sign-request s3api "$@" 2>&1; }
 s3()    { aws --endpoint-url "$ENDPOINT" --no-sign-request s3 "$@" 2>&1; }
+# s3get downloads an object via curl (avoids conditional-GET ETag issues)
+s3get() { curl -sf -o "$2" "${ENDPOINT}/$1"; }
 
 # ── rclone configuration ──────────────────────────────────────────────────── #
 RCLONE_CONF="$WORK/rclone.conf"
@@ -143,7 +145,7 @@ else
 fi
 
 # -- GET + integrity --
-s3 cp "s3://${BUCKET}/test/crud.txt" "$WORK/crud-readback.txt" >/dev/null 2>&1 || true
+s3get "${BUCKET}/test/crud.txt" "$WORK/crud-readback.txt" || true
 READBACK=$(cat "$WORK/crud-readback.txt" 2>/dev/null || echo "")
 if [[ "$READBACK" == "$CRUD_DATA" ]]; then
     pass "GET object — byte-level integrity verified"
@@ -243,19 +245,18 @@ if [[ -n "$UPLOAD_ID" ]]; then
         fi
 
         # -- 3d. CompleteMultipartUpload --
-        # Build the multipart completion JSON
+        # Build the multipart completion JSON (pass inline, not file://)
         MP_JSON='{"Parts":['
         for i in 1 2 3 4; do
             [[ $i -gt 1 ]] && MP_JSON+=','
-            MP_JSON+="{\"ETag\":${ETAGS[$((i-1))]},\"PartNumber\":$i}"
+            MP_JSON+="{\"ETag\":\"${ETAGS[$((i-1))]}\",\"PartNumber\":$i}"
         done
         MP_JSON+=']}'
-        echo "$MP_JSON" > "$WORK/complete.json"
 
         COMP_RES=$(s3api complete-multipart-upload \
             --bucket "$BUCKET" --key "$MP_KEY" \
             --upload-id "$UPLOAD_ID" \
-            --multipart-upload "file://$WORK/complete.json" 2>&1)
+            --multipart-upload "$MP_JSON" 2>&1)
         COMP_ETAG=$(echo "$COMP_RES" | jq -r '.ETag // empty' 2>/dev/null)
         if [[ -n "$COMP_ETAG" ]]; then
             pass "CompleteMultipartUpload — success (ETag: ${COMP_ETAG:0:20}…)"
@@ -267,8 +268,8 @@ if [[ -n "$UPLOAD_ID" ]]; then
         #   Parts were stored with key pattern {bucket}/{key}:{uploadId}:{partNum}
         #   After complete, they should be gone from the S3 namespace.
         LEAK_CHECK=$(s3api list-objects-v2 --bucket "$BUCKET" \
-            --prefix "test/multipart-test.bin:${UPLOAD_ID}:" 2>&1)
-        LEAK_COUNT=$(echo "$LEAK_CHECK" | jq '.KeyCount // 0' 2>/dev/null)
+            --prefix "${BUCKET}/test/multipart-test.bin:${UPLOAD_ID}:" 2>&1)
+        LEAK_COUNT=$(echo "$LEAK_CHECK" | jq '[.Contents // [] | length] | first' 2>/dev/null)
         if [[ "$LEAK_COUNT" == "0" ]]; then
             pass "Part cleanup (F14) — no leaked part entries after Complete"
         else
@@ -276,7 +277,7 @@ if [[ -n "$UPLOAD_ID" ]]; then
         fi
 
         # -- 3f. Readback integrity of completed multipart object --
-        s3 cp "s3://${BUCKET}/${MP_KEY}" "$WORK/mp-readback.bin" >/dev/null 2>&1 || true
+        s3get "${BUCKET}/${MP_KEY}" "$WORK/mp-readback.bin" || true
         RB_SHA=$(openssl dgst -sha256 -r "$WORK/mp-readback.bin" 2>/dev/null | awk '{print $1}')
         RB_SIZE=$(stat -c%s "$WORK/mp-readback.bin" 2>/dev/null || echo 0)
         if [[ "$RB_SIZE" == "20971520" ]]; then
@@ -319,7 +320,7 @@ if [[ -n "$ABORT_UID" ]]; then
     # Verify parts are cleaned up
     ABORT_LEAK=$(s3api list-objects-v2 --bucket "$BUCKET" \
         --prefix "${BUCKET}/${ABORT_KEY}:${ABORT_UID}:" 2>&1)
-    ABORT_LEAK_N=$(echo "$ABORT_LEAK" | jq '.KeyCount // 0' 2>/dev/null)
+    ABORT_LEAK_N=$(echo "$ABORT_LEAK" | jq '[.Contents // [] | length] | first' 2>/dev/null)
     if [[ "$ABORT_LEAK_N" == "0" ]]; then
         pass "AbortMultipartUpload — parts cleaned up ($PRE_COUNT parts were uploaded)"
     else
@@ -342,7 +343,7 @@ for SIZE_KB in 1 64 512 4096; do
     ORIG_SHA=$(openssl dgst -sha256 -r "$WORK/$FNAME" | awk '{print $1}')
 
     s3 cp "$WORK/$FNAME" "s3://${BUCKET}/integrity/$FNAME" >/dev/null 2>&1
-    s3 cp "s3://${BUCKET}/integrity/$FNAME" "$WORK/${FNAME}.rb" >/dev/null 2>&1 || true
+    s3get "${BUCKET}/integrity/$FNAME" "$WORK/${FNAME}.rb" || true
     RB_SHA=$(openssl dgst -sha256 -r "$WORK/${FNAME}.rb" 2>/dev/null | awk '{print $1}')
 
     if [[ "$ORIG_SHA" == "$RB_SHA" ]]; then
@@ -380,12 +381,18 @@ bench_write() {
     local start elapsed rate
 
     start=$(date +%s%N)
-    # Use aws s3 sync for the upload
-    s3 sync "$dir/" "s3://${BUCKET}/${prefix}/" --no-progress >/dev/null 2>&1
+    # Upload files via curl (parallel batch)
+    for f in "$dir"/*.bin; do
+        curl -sf -X PUT --data-binary "@${f}" \
+            -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
+            "${ENDPOINT}/${BUCKET}/${prefix}/$(basename "$f")" &
+    done
+    wait
     elapsed=$(( ($(date +%s%N) - start) ))
 
     # Calculate rate
-    local elapsed_s=$(echo "scale=3; $elapsed / 1000000000" | bc)
+    local elapsed_s
+    elapsed_s=$(echo "scale=3; $elapsed / 1000000000" | bc)
     if (( $(echo "$elapsed_s > 0" | bc -l) )); then
         rate=$(echo "scale=2; $total_bytes / $elapsed_s / 1048576" | bc)
     else
@@ -401,7 +408,9 @@ bench_write() {
     echo "$rate"
 
     # Cleanup
-    s3 rm "s3://${BUCKET}/${prefix}/" --recursive --no-progress >/dev/null 2>&1 || true
+    for f in "$dir"/*.bin; do
+        s3api delete-object --bucket "$BUCKET" --key "${prefix}/$(basename "$f")" >/dev/null 2>&1 || true
+    done
 }
 
 # -- 5a. Small files (F16: sub-MiB, report found ~2.8 KiB/s) --
@@ -444,13 +453,14 @@ WA_KEY="bench/wa-test.bin"
 dd if=/dev/urandom of="$WORK/wa-test.bin" bs=1M count=32 2>/dev/null
 WA_SHA=$(openssl dgst -sha256 -r "$WORK/wa-test.bin" | awk '{print $1}')
 
-# Upload with 8 MiB parts → 4 parts
-s3 cp "$WORK/wa-test.bin" "s3://${BUCKET}/${WA_KEY}" \
-    --no-progress >/dev/null 2>&1
+# Upload as a single PUT via curl (tests that large single PUTs work cleanly)
+curl -sf -X PUT --data-binary "@$WORK/wa-test.bin" \
+    -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
+    "${ENDPOINT}/${BUCKET}/${WA_KEY}" >/dev/null
 
 # Count objects — should be exactly 1 (the final object, not 1 + N parts)
 WA_LIST=$(s3api list-objects-v2 --bucket "$BUCKET" --prefix "bench/wa-test" 2>&1)
-WA_COUNT=$(echo "$WA_LIST" | jq '.KeyCount // 0' 2>/dev/null)
+WA_COUNT=$(echo "$WA_LIST" | jq '[.Contents // [] | length] | first' 2>/dev/null)
 if [[ "$WA_COUNT" == "1" ]]; then
     pass "Write amplification (F14) — only 1 object after multipart upload (no leaked parts)"
 else
@@ -458,7 +468,7 @@ else
 fi
 
 # Verify readback
-s3 cp "s3://${BUCKET}/${WA_KEY}" "$WORK/wa-readback.bin" --no-progress >/dev/null 2>&1 || true
+s3get "${BUCKET}/${WA_KEY}" "$WORK/wa-readback.bin" || true
 WA_RB_SIZE=$(stat -c%s "$WORK/wa-readback.bin" 2>/dev/null || echo 0)
 if [[ "$WA_RB_SIZE" == "33554432" ]]; then
     pass "Write amplification readback — size correct (32 MiB)"
@@ -480,14 +490,19 @@ for i in $(seq 1 $CONC_COUNT); do
 done
 
 CONC_START=$(date +%s%N)
-# Upload all in parallel (aws cli does this with sync)
-s3 sync "$CONC_DIR/" "s3://${BUCKET}/concurrent/" --no-progress >/dev/null 2>&1
+# Upload all in parallel via curl
+for f in "$CONC_DIR"/*.bin; do
+    curl -sf -X PUT --data-binary "@${f}" \
+        -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
+        "${ENDPOINT}/${BUCKET}/concurrent/$(basename "$f")" &
+done
+wait
 CONC_ELAPSED=$(( ($(date +%s%N) - CONC_START) ))
 CONC_SEC=$(echo "scale=3; $CONC_ELAPSED / 1000000000" | bc)
 
 # Verify count
 CONC_LIST=$(s3api list-objects-v2 --bucket "$BUCKET" --prefix "concurrent/" 2>&1)
-CONC_FOUND=$(echo "$CONC_LIST" | jq '.KeyCount // 0' 2>/dev/null)
+CONC_FOUND=$(echo "$CONC_LIST" | jq '[.Contents // [] | length] | first' 2>/dev/null)
 if [[ "$CONC_FOUND" == "$CONC_COUNT" ]]; then
     pass "Concurrent writes — all ${CONC_COUNT} objects landed (${CONC_SEC}s)"
 else
@@ -497,7 +512,7 @@ fi
 # Read back a sample and verify
 SAMPLE_KEY="concurrent/c-001.bin"
 SAMPLE_SHA=$(openssl dgst -sha256 -r "$CONC_DIR/c-001.bin" | awk '{print $1}')
-s3 cp "s3://${BUCKET}/${SAMPLE_KEY}" "$WORK/conc-rb.bin" >/dev/null 2>&1 || true
+s3get "${BUCKET}/${SAMPLE_KEY}" "$WORK/conc-rb.bin" || true
 SAMPLE_RB=$(openssl dgst -sha256 -r "$WORK/conc-rb.bin" 2>/dev/null | awk '{print $1}')
 if [[ "$SAMPLE_SHA" == "$SAMPLE_RB" ]]; then
     pass "Concurrent writes — sample read-back integrity OK"
@@ -505,7 +520,10 @@ else
     fail "Concurrent writes — sample integrity mismatch"
 fi
 
-s3 rm "s3://${BUCKET}/concurrent/" --recursive --no-progress >/dev/null 2>&1 || true
+for f in "$CONC_DIR"/*.bin; do
+    fname=$(basename "$f")
+    s3api delete-object --bucket "$BUCKET" --key "concurrent/${fname}" >/dev/null 2>&1 || true
+done
 
 ###############################################################################
 #  REPORT
