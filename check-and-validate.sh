@@ -449,6 +449,10 @@ bench_put "medium-1m" 10 1048576 10 "bench/medium"
 info "Large files — 3 × 10 MiB …"
 bench_put "large-10m" 3 10485760 3 "bench/large"
 
+# -- 5c2. Sustained 16 MiB writes (2.5 GiB total) --
+info "Sustained 16 MiB — 160 × 16 MiB at par=10 …"
+bench_put "16m-par10" 160 16777216 10 "bench/16m-p10"
+
 # -- 5d. Single large file throughput via rclone --
 if $HAVE_RCLONE; then
     info "Single file via rclone — 1 × 64 MiB …"
