@@ -8,6 +8,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/iface"
@@ -246,7 +247,8 @@ func (b *Bucket) CompleteMultipartPut(ctx context.Context, key iface.S3Key, uplo
 	pbfile.Type = &typ
 
 	for _, part := range completion.Parts {
-		c, err := cid.Parse(part.ETag)
+		etag := strings.Trim(part.ETag, "\"")
+		c, err := cid.Parse(etag)
 		if err != nil {
 			return iface.Stat{}, fmt.Errorf("failed to parse etag %s: %w", part.ETag, err)
 		}
