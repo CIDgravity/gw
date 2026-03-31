@@ -13,6 +13,14 @@ import (
 	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 )
 
+// quoteETag ensures an ETag value is wrapped in double quotes per HTTP spec.
+func quoteETag(etag string) string {
+	if strings.HasPrefix(etag, "\"") {
+		return etag
+	}
+	return "\"" + etag + "\""
+}
+
 func (srv *S3Server) handleGetLocation(w http.ResponseWriter, r *http.Request) error {
 	_, err := srv.auth.validateSignatureV4(r)
 	if err != nil {
@@ -63,7 +71,7 @@ func (srv *S3Server) handleListObjects(w http.ResponseWriter, r *http.Request) e
 	objs := make([]ListObjectsEntry, len(list.Contents))
 	for i, obj := range list.Contents {
 		objs[i] = ListObjectsEntry{
-			Etag:         obj.ETag,
+			Etag:         quoteETag(obj.ETag),
 			Key:          obj.Key.String(),
 			LastModified: obj.Timestamp.Format("2006-01-02T15:04:05.000Z"),
 			Size:         obj.Size,
@@ -162,7 +170,7 @@ func (srv *S3Server) handleGetObject(w http.ResponseWriter, r *http.Request) err
 	defer rd.Close() //nolint
 
 	stat := rd.Stat()
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	http.ServeContent(w, r, objectName.String(), stat.Timestamp, rd)
 	return nil
@@ -203,7 +211,7 @@ func (srv *S3Server) handlePutObject(w http.ResponseWriter, r *http.Request) err
 		return fmt.Errorf("error putting object: %w", err)
 	}
 
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
@@ -342,7 +350,7 @@ func (srv *S3Server) handleUploadPart(w http.ResponseWriter, r *http.Request) er
 		return fmt.Errorf("error continuing multipart upload: %w", err)
 	}
 
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
@@ -403,7 +411,7 @@ func (srv *S3Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *htt
 	return completeMultipartUploadTemplate.Execute(w, completeMultipartUploadResponseParams{
 		Bucket: bucketName.String(),
 		Key:    objectName.String(),
-		ETag:   stat.ETag,
+		ETag:   quoteETag(stat.ETag),
 	})
 }
 
@@ -523,7 +531,7 @@ func (srv *S3Server) handleListParts(w http.ResponseWriter, r *http.Request) err
 		parts[i] = ListPartsPartEntry{
 			PartNumber:   p.PartNumber,
 			LastModified: p.LastModified.Format("2006-01-02T15:04:05.000Z"),
-			ETag:         p.ETag,
+			ETag:         quoteETag(p.ETag),
 			Size:         p.Size,
 		}
 	}
@@ -574,7 +582,7 @@ func (srv *S3Server) handleHeadObject(w http.ResponseWriter, r *http.Request) er
 		}
 		return fmt.Errorf("error getting object stat: %w", err)
 	}
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("Last-Modified", stat.Timestamp.Format(http.TimeFormat))
 	w.Header().Set("Content-Length", strconv.Itoa(int(stat.Size)))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())

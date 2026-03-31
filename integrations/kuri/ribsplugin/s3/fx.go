@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"context"
 	"os"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
@@ -38,7 +39,7 @@ type ServerIn struct {
 	Cfg               *configuration.S3APIConfig
 }
 
-func MakeS3Server(in ServerIn) (*s3.S3Server, error) {
+func MakeS3Server(lc fx.Lifecycle, in ServerIn) (*s3.S3Server, error) {
 	log.Info("Starting S3 plugin")
 
 	bsv := blockservice.New(in.Rbs, offline.Exchange(in.Rbs))
@@ -64,6 +65,10 @@ func MakeS3Server(in ServerIn) (*s3.S3Server, error) {
 
 		buckets: map[string]iface.Bucket{},
 	}
+
+	lc.Append(fx.StartHook(func(ctx context.Context) {
+		region.StartCleanup(ctx)
+	}))
 
 	return s3.NewS3Server(region, in.Auth), nil
 }
