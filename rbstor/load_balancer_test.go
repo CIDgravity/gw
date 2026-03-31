@@ -81,9 +81,9 @@ func TestLoadBalancer_CalculateScore(t *testing.T) {
 			score := lb.calculateScore(g, tt.estimatedSize)
 
 			if tt.expectZero {
-				require.Zero(t, score, tt.description)
+				require.Less(t, score, float64(0), tt.description)
 			} else {
-				require.Greater(t, score, float64(0), tt.description)
+				require.GreaterOrEqual(t, score, float64(0), tt.description)
 			}
 		})
 	}
@@ -111,12 +111,12 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	require.InDelta(t, emptyScore, 0.0, 0.01, "empty group fill ratio ≈ 0")
 	require.InDelta(t, halfFullScore, 0.5, 0.01, "half-full group fill ratio ≈ 0.5")
 
-	// Group at capacity returns 0
+	// Group at capacity returns -1
 	fullGroup := &Group{
 		state:         iface.GroupStateWritable,
 		committedSize: maxGroupSize - 100,
 	}
-	require.Zero(t, lb.calculateScore(fullGroup, 1000))
+	require.Less(t, lb.calculateScore(fullGroup, 1000), float64(0), "full group should return negative")
 }
 
 func TestLoadBalancer_PickBest_ClockBias(t *testing.T) {

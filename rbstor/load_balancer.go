@@ -155,7 +155,7 @@ func (lb *LoadBalancer) selectWeighted(
 			continue
 		}
 		score := lb.calculateScore(group, estimatedSize)
-		if score > 0 {
+		if score >= 0 {
 			candidates = append(candidates, groupScore{group: group, score: score})
 		}
 	}
@@ -216,7 +216,7 @@ func (lb *LoadBalancer) selectWeighted(
 			if g.state != iface.GroupStateWritable {
 				continue
 			}
-			if s := lb.calculateScore(g, estimatedSize); s > 0 {
+			if s := lb.calculateScore(g, estimatedSize); s >= 0 {
 				candidates = append(candidates, groupScore{group: g, score: s})
 			}
 		}
@@ -295,12 +295,12 @@ func (lb *LoadBalancer) selectWeighted(
 // maxClockBias is the maximum relative bonus (30%) given to lagging groups.
 const maxClockBias = 0.30
 
-// calculateScore returns 0 if the group can't accept the write, or its
+// calculateScore returns -1 if the group can't accept the write, or its
 // fill ratio (0–1) for use by pickBest.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
 	available := group.AvailableSpace()
 	if available < estimatedSize {
-		return 0
+		return -1
 	}
 	return float64(maxGroupSize-available) / float64(maxGroupSize)
 }
