@@ -160,7 +160,7 @@ func BenchmarkWalIndex_List(b *testing.B) {
 		})
 	}
 	b.StopTimer()
-	idx.Close()
+	_ = idx.Close()
 }
 
 // -------- LevelDB Index Benchmarks (comparison) --------
@@ -188,7 +188,7 @@ func BenchmarkLevelDB_Put(b *testing.B) {
 				}
 
 				b.StopTimer()
-				idx.Close()
+				_ = idx.Close()
 			}
 		})
 	}
@@ -217,7 +217,7 @@ func BenchmarkLevelDB_Has(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	idx.Close()
+	_ = idx.Close()
 }
 
 func BenchmarkLevelDB_Get(b *testing.B) {

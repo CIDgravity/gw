@@ -31,7 +31,7 @@ func TestAccessEventsRecordedDuringRetrieval(t *testing.T) {
 
 	// Verify access was recorded
 	popularity := tracker.GetObjectPopularity(testKey)
-	assert.Equal(t, 5, popularity, "Expected 5 accesses to be recorded")
+	assert.Equal(t, float64(5), popularity, "Expected 5 accesses to be recorded")
 }
 
 // TestGroupAccessTracking verifies group-level access tracking
@@ -62,7 +62,7 @@ func TestGroupAccessTracking(t *testing.T) {
 
 	// Verify group popularity
 	groupPop := tracker.GetGroupPopularity(groupKey)
-	assert.Equal(t, 9, groupPop, "Expected 9 total accesses for the group (3 objects x 3 accesses)")
+	assert.Equal(t, float64(9), groupPop, "Expected 9 total accesses for the group (3 objects x 3 accesses)")
 }
 
 // TestSequentialAccessDetection verifies sequential access pattern detection
@@ -325,14 +325,14 @@ func TestAccessTrackerDecay(t *testing.T) {
 
 	// Verify initial count
 	initialPop := tracker.GetObjectPopularity(testKey)
-	assert.Equal(t, 2, initialPop, "Should have 2 accesses initially")
+	assert.Equal(t, float64(2), initialPop, "Should have 2 accesses initially")
 
 	// Trigger decay
 	tracker.Decay()
 
 	// After 50% decay, should be 1
 	decayedPop := tracker.GetObjectPopularity(testKey)
-	assert.Equal(t, 1, decayedPop, "Should have 1 access after 50% decay")
+	assert.Equal(t, float64(1), decayedPop, "Should have 1 access after 50% decay")
 }
 
 // TestConcurrentAccessRecording verifies thread-safe concurrent access recording
