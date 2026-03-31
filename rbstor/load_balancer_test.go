@@ -125,40 +125,44 @@ func TestLoadBalancer_PickBest_ClockBias(t *testing.T) {
 	}
 	lb := NewLoadBalancer(r)
 
-	// Three groups at fill ratios 0.1, 0.2, 0.3
-	// Sorted targets: 0.167, 0.5, 0.833
-	// Group 3 (fill 0.3) has the biggest gap (0.833-0.3=0.533) → gets the bias.
-	// But all groups should receive some writes.
+	// 4 groups sorted by ID → targets 0, 0.25, 0.5, 0.75.
+	// All at fill 0.1:
+	//   g1 (target 0):    behind = (0-0.1+1) mod 1 = 0.9 > 0.5 → ahead, no bonus
+	//   g2 (target 0.25): behind = (0.25-0.1) = 0.15 → lagging, small bonus
+	//   g3 (target 0.5):  behind = 0.4 → lagging, larger bonus
+	//   g4 (target 0.75): behind = 0.65 > 0.5 → ahead, no bonus
 	g1 := &Group{id: 1}
 	g2 := &Group{id: 2}
 	g3 := &Group{id: 3}
+	g4 := &Group{id: 4}
 
 	candidates := []groupScore{
 		{group: g1, score: 0.1},
-		{group: g2, score: 0.2},
-		{group: g3, score: 0.3},
+		{group: g2, score: 0.1},
+		{group: g3, score: 0.1},
+		{group: g4, score: 0.1},
 	}
 
 	hits := map[int64]int{}
-	trials := 3000
+	trials := 10000
 	for i := 0; i < trials; i++ {
 		g := lb.pickBest(candidates)
 		hits[g.id]++
 	}
 
 	// All groups must receive writes
-	require.Greater(t, hits[1], 0, "group 1 should receive some writes")
-	require.Greater(t, hits[2], 0, "group 2 should receive some writes")
-	require.Greater(t, hits[3], 0, "group 3 should receive some writes")
+	for _, id := range []int64{1, 2, 3, 4} {
+		require.Greater(t, hits[id], 0, "group %d should receive writes", id)
+	}
 
-	// Group 3 (most behind target) should get a larger share than group 1
+	// Group 3 (largest lag 0.4) should get more than group 1 (ahead, no bonus)
 	require.Greater(t, hits[3], hits[1],
-		"group furthest behind clock target should get more writes (g3=%d, g1=%d)", hits[3], hits[1])
+		"lagging group should get more writes (g3=%d > g1=%d)", hits[3], hits[1])
 
-	// No group should get more than 50% of writes (bias is capped at 30%)
+	// No group should dominate — bias is at most 30%
 	for id, count := range hits {
 		pct := float64(count) / float64(trials) * 100
-		require.Less(t, pct, 50.0, "group %d got %.1f%% — should not dominate", id, pct)
+		require.Less(t, pct, 40.0, "group %d got %.1f%% — should not dominate", id, pct)
 	}
 }
 

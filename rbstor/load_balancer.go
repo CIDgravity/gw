@@ -307,11 +307,10 @@ func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float6
 
 // pickBest is a probabilistic router with a modular-clock stagger bias.
 //
-// Every candidate gets base weight 1.0.  Each group has a fill target on
-// a modular clock: with N groups sorted by fill, group i targets
-// (i+0.5)/N.  Groups that are behind their target (0–180° behind on the
-// clock) get a bonus of up to maxClockBias (30%) proportional to how far
-// behind they are.  Groups at or ahead of target get no bonus.
+// Every candidate gets base weight 1.0.  Groups are sorted by ID for
+// stable target assignment: group i targets fill level i/N on a modular
+// clock.  Groups that are 0–180° behind their target get a bonus of up
+// to maxClockBias (30%).  Groups at or ahead of target get no bonus.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 	n := len(candidates)
 	if n == 0 {
@@ -321,22 +320,23 @@ func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
 		return candidates[0].group
 	}
 
-	// Sort by fill ratio so we can assign clock targets.
+	// Stable target assignment: sort by group ID, not fill.
 	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].score < candidates[j].score
+		return candidates[i].group.id < candidates[j].group.id
 	})
 
-	// Weighted random: base 1.0, bonus up to maxClockBias for lagging groups.
 	nf := float64(n)
-	var total float64
 	weights := make([]float64, n)
+	var total float64
 	for i, c := range candidates {
-		target := (float64(i) + 0.5) / nf
-		lag := target - c.score // positive = behind target
+		target := float64(i) / nf
+		behind := target - c.score // clockwise distance on modular clock
+		if behind < 0 {
+			behind += 1.0
+		}
 		w := 1.0
-		if lag > 0 {
-			// lag is at most ~1.0; scale bonus linearly
-			w += maxClockBias * lag
+		if behind > 0 && behind <= 0.5 {
+			w += maxClockBias * (behind / 0.5) // linear: 0 at target, maxClockBias at 180°
 		}
 		weights[i] = w
 		total += w
