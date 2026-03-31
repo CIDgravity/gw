@@ -117,6 +117,10 @@ func setupTestRBS(t *testing.T, td string) (iface.RBS, func()) {
 	// Create the RbsDB
 	rbsDb := NewRibsDB(sqlDb)
 
+	require.NoError(t, cqlDb.Session().Query("TRUNCATE TABLE MultihashToGroup").Exec())
+	_, err = sqlDb.Exec("DELETE FROM groups")
+	require.NoError(t, err)
+
 	// Open the RBS
 	ri, err := Open(&configuration.RibsConfig{DataDir: td}, rbsDb, idx)
 	require.NoError(t, err)
@@ -131,6 +135,9 @@ func setupTestRBS(t *testing.T, td string) (iface.RBS, func()) {
 		}
 		if err := idx.Close(); err != nil {
 			t.Logf("warning: failed to close index: %v", err)
+		}
+		if err := cqlDb.Session().Query("TRUNCATE TABLE MultihashToGroup").Exec(); err != nil {
+			t.Logf("warning: failed to truncate cql index: %v", err)
 		}
 		// Clean up database state for test isolation
 		// Delete all groups so next test starts fresh
