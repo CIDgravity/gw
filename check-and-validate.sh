@@ -249,7 +249,7 @@ if [[ -n "$UPLOAD_ID" ]]; then
         MP_JSON='{"Parts":['
         for i in 1 2 3 4; do
             [[ $i -gt 1 ]] && MP_JSON+=','
-            MP_JSON+="{\"ETag\":\"${ETAGS[$((i-1))]}\",\"PartNumber\":$i}"
+            MP_JSON+="{\"ETag\":${ETAGS[$((i-1))]},\"PartNumber\":$i}"
         done
         MP_JSON+=']}'
 
