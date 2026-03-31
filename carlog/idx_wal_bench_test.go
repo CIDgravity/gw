@@ -243,7 +243,7 @@ func BenchmarkLevelDB_Get(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	idx.Close()
+	_ = idx.Close()
 }
 
 func BenchmarkLevelDB_Replay(b *testing.B) {
@@ -269,7 +269,7 @@ func BenchmarkLevelDB_Replay(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				idx.Close()
+				_ = idx.Close()
 			}
 		})
 	}
