@@ -27,6 +27,7 @@ func TestUnlinkBasic(t *testing.T) {
 	// Setup test RBS with YugabyteDB
 	rbs, cleanup := setupTestRBS(t, td)
 	defer cleanup()
+	require.NoError(t, rbs.Start())
 
 	// Create a session and batch
 	session := rbs.Session(ctx)
@@ -100,6 +101,7 @@ func TestUnlinkNonExistent(t *testing.T) {
 	// Setup test RBS with YugabyteDB
 	rbs, cleanup := setupTestRBS(t, td)
 	defer cleanup()
+	require.NoError(t, rbs.Start())
 
 	// Create a session and batch
 	session := rbs.Session(ctx)
@@ -122,6 +124,7 @@ func TestUnlinkAfterPutInSameBatch(t *testing.T) {
 	// Setup test RBS with YugabyteDB
 	rbs, cleanup := setupTestRBS(t, td)
 	defer cleanup()
+	require.NoError(t, rbs.Start())
 
 	// Create a session and batch
 	session := rbs.Session(ctx)

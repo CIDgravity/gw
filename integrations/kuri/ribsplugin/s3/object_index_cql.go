@@ -246,3 +246,45 @@ func scanS3Object(bucket iface2.BucketName, scanner Scannable) (iface2.S3Object,
 	obj.NodeID = nodeID
 	return obj, nil
 }
+
+func (or *ObjectIndexCql) DeleteExpired(ctx context.Context) (int, error) {
+	now := time.Now()
+	deleted := 0
+
+	// Scan for objects with non-null expires_at that are in the past.
+	// ALLOW FILTERING is required because expires_at is not in the primary key.
+	// This is acceptable as a low-frequency background GC operation.
+	scanner := or.db.Query(
+		"SELECT bucket, key, expires_at FROM S3Objects WHERE expires_at < ? ALLOW FILTERING", now,
+	).WithContext(ctx).Iter().Scanner()
+
+	type expiredEntry struct {
+		bucket string
+		key    string
+	}
+	var toDelete []expiredEntry
+
+	for scanner.Next() {
+		var bucket, key string
+		var expiresAt time.Time
+		if err := scanner.Scan(&bucket, &key, &expiresAt); err != nil {
+			continue
+		}
+		toDelete = append(toDelete, expiredEntry{bucket: bucket, key: key})
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scanning expired objects: %w", err)
+	}
+
+	for _, e := range toDelete {
+		err := or.db.Query("DELETE FROM S3Objects WHERE bucket = ? AND key = ?",
+			e.bucket, e.key).WithContext(ctx).Exec()
+		if err != nil {
+			log.Warnf("failed to delete expired object %s/%s: %v", e.bucket, e.key, err)
+			continue
+		}
+		deleted++
+	}
+
+	return deleted, nil
+}

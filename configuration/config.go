@@ -286,28 +286,51 @@ type BalancesConfig struct {
 
 // YugabyteCqlConfig configures the Yugabyte CQL (Cassandra-compatible) connection.
 type YugabyteCqlConfig struct {
-	Hosts    string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"yugabyte"`
-	Port     int    `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
+	// Hosts is a comma-separated list of Yugabyte CQL contact point hostnames.
+	Hosts string `envconfig:"RIBS_YUGABYTE_CQL_HOSTS" default:"yugabyte"`
+
+	// Port is the CQL native transport port for connecting to Yugabyte.
+	Port int `envconfig:"RIBS_YUGABYTE_CQL_PORT" default:"9042"`
+
+	// Keyspace is the CQL keyspace used for RIBS group, deal, and blockstore data.
 	Keyspace string `envconfig:"RIBS_YUGABYTE_CQL_KEYSPACE" default:"filecoingw"`
-	User     string `envconfig:"RIBS_YUGABYTE_CQL_USER"`
-	Pass     string `envconfig:"RIBS_YUGABYTE_CQL_PASS"`
+
+	// User is the username for CQL authentication (leave empty for no auth).
+	User string `envconfig:"RIBS_YUGABYTE_CQL_USER"`
+
+	// Pass is the password for CQL authentication.
+	Pass string `envconfig:"RIBS_YUGABYTE_CQL_PASS"`
 
 	// ForceHosts prevents Yugabyte from advertising its docker container IP.
 	// Set to true for local development on MacOS or Windows WSL.
 	ForceHosts bool `envconfig:"RIBS_YUGABYTE_CQL_FORCE_HOSTS" default:"false"`
 
-	Timeout         int `envconfig:"RIBS_YUGABYTE_CQL_TIMEOUT" default:"11"`
-	ConnectTimeout  int `envconfig:"RIBS_YUGABYTE_CQL_CONNECT_TIMEOUT" default:"11"`
+	// Timeout is the CQL query timeout in seconds.
+	Timeout int `envconfig:"RIBS_YUGABYTE_CQL_TIMEOUT" default:"11"`
+
+	// ConnectTimeout is the CQL initial connection timeout in seconds.
+	ConnectTimeout int `envconfig:"RIBS_YUGABYTE_CQL_CONNECT_TIMEOUT" default:"11"`
+
+	// SocketKeepalive is the CQL socket keepalive interval in seconds (0 = disabled).
 	SocketKeepalive int `envconfig:"RIBS_YUGABYTE_CQL_SOCKET_KEEPALIVE" default:"0"`
 }
 
 // YugabyteSqlConfig configures the Yugabyte SQL (PostgreSQL-compatible) connection.
 type YugabyteSqlConfig struct {
+	// Host is the Yugabyte SQL (PostgreSQL-compatible) server hostname.
 	Host string `envconfig:"RIBS_YUGABYTE_SQL_HOST" default:"yugabyte"`
-	Port int    `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
+
+	// Port is the Yugabyte SQL server port (default 5433, not the standard PG 5432).
+	Port int `envconfig:"RIBS_YUGABYTE_SQL_PORT" default:"5433"`
+
+	// User is the username for SQL authentication.
 	User string `envconfig:"RIBS_YUGABYTE_SQL_USER" default:"postgres"`
+
+	// Pass is the password for SQL authentication.
 	Pass string `envconfig:"RIBS_YUGABYTE_SQL_PASS" default:"postgres"`
-	Db   string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"filecoingw"`
+
+	// Db is the database name for RIBS group and deal SQL data.
+	Db string `envconfig:"RIBS_YUGABYTE_SQL_DB" default:"filecoingw"`
 
 	// Connection pool settings
 	// MaxOpenConns is the maximum number of open connections to the database.
@@ -331,11 +354,20 @@ type YugabyteSqlConfig struct {
 
 // S3APIConfig configures the S3-compatible API server.
 type S3APIConfig struct {
-	Region          string `envconfig:"RIBS_S3API_REGION" default:"EU"`
-	BindAddr        string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
-	AuthEnabled     bool   `envconfig:"RIBS_S3API_AUTH_ENABLED" default:"false"`
+	// Region is the AWS region string returned in S3 API responses and used for signature validation.
+	Region string `envconfig:"RIBS_S3API_REGION" default:"EU"`
+
+	// BindAddr is the address:port the S3-compatible API server listens on.
+	BindAddr string `envconfig:"RIBS_S3API_BINDADDR" default:":8078"`
+
+	// AuthEnabled enables AWS Signature V4 authentication for S3 API requests.
+	AuthEnabled bool `envconfig:"RIBS_S3API_AUTH_ENABLED" default:"false"`
+
+	// RootAccessKeyId is the access key ID for S3 API authentication (required when AuthEnabled is true).
 	RootAccessKeyId string `envconfig:"RIBS_S3API_ROOT_ACCESS_KEY_ID"`
-	RootSecretKey   string `envconfig:"RIBS_S3API_ROOT_SECRET_KEY"`
+
+	// RootSecretKey is the secret key for S3 API authentication (required when AuthEnabled is true).
+	RootSecretKey string `envconfig:"RIBS_S3API_ROOT_SECRET_KEY"`
 }
 
 // S3CqlConfig configures the CQL connection for S3 object metadata.
@@ -345,12 +377,17 @@ type S3CqlConfig struct {
 	Hosts    string `envconfig:"RIBS_S3_CQL_HOSTS" default:""`    // Falls back to YugabyteCql.Hosts if empty
 	Port     int    `envconfig:"RIBS_S3_CQL_PORT" default:"0"`    // Falls back to YugabyteCql.Port if 0
 	Keyspace string `envconfig:"RIBS_S3_CQL_KEYSPACE" default:""` // Falls back to YugabyteCql.Keyspace if empty
-	User     string `envconfig:"RIBS_S3_CQL_USER"`
-	Pass     string `envconfig:"RIBS_S3_CQL_PASS"`
+
+	// User is the CQL username for S3 metadata keyspace (falls back to YugabyteCql.User if empty).
+	User string `envconfig:"RIBS_S3_CQL_USER"`
+
+	// Pass is the CQL password for S3 metadata keyspace (falls back to YugabyteCql.Pass if empty).
+	Pass string `envconfig:"RIBS_S3_CQL_PASS"`
 }
 
 // PrometheusConfig configures the Prometheus metrics endpoint.
 type PrometheusConfig struct {
+	// Port is the HTTP port for the Prometheus /metrics endpoint.
 	Port int `envconfig:"RIBS_PROMETHEUS_PORT" default:"2112"`
 }
 
@@ -585,6 +622,9 @@ func LoadConfig() error {
 }
 
 func (c *Config) configureLogLevels() error {
+	if c.LogLevel == "" {
+		return nil
+	}
 	levels := strings.Split(c.LogLevel, ",")
 	for _, level := range levels {
 		s := strings.Split(level, "=")

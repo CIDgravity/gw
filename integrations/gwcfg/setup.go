@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -13,6 +15,8 @@ import (
 	"github.com/filecoin-project/lotus/api/client"
 	"github.com/filecoin-project/lotus/chain/types"
 )
+
+var emailRe = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 
 const (
 	datacapRequestAmountTiB = 10
@@ -160,22 +164,64 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 	return nil
 }
 
+func collectCIDGravityAccountInfo() (friendly, contactEmail, entityName string, err error) {
+	group := huh.NewGroup(
+		huh.NewInput().
+			Title("Account Friendly Name").
+			Value(&friendly).
+			Placeholder("my-gateway").
+			Validate(func(val string) error {
+				v := strings.TrimSpace(val)
+				if v == "" {
+					return fmt.Errorf("friendly name is required")
+				}
+				if len(v) > 100 {
+					return fmt.Errorf("friendly name must be 100 characters or fewer")
+				}
+				return nil
+			}),
+		huh.NewInput().
+			Title("Contact Email").
+			Value(&contactEmail).
+			Placeholder("you@example.com").
+			Validate(func(val string) error {
+				v := strings.TrimSpace(val)
+				if v == "" {
+					return fmt.Errorf("email is required")
+				}
+				if !emailRe.MatchString(v) {
+					return fmt.Errorf("enter a valid email address")
+				}
+				return nil
+			}),
+		huh.NewInput().
+			Title("Entity Name").
+			Value(&entityName).
+			Placeholder("Your Org / Project").
+			Validate(func(val string) error {
+				v := strings.TrimSpace(val)
+				if v == "" {
+					return fmt.Errorf("entity name is required")
+				}
+				if len(v) > 200 {
+					return fmt.Errorf("entity name must be 200 characters or fewer")
+				}
+				return nil
+			}),
+	)
+	if err = huh.NewForm(group).Run(); err != nil {
+		return
+	}
+	friendly = strings.TrimSpace(friendly)
+	contactEmail = strings.TrimSpace(contactEmail)
+	entityName = strings.TrimSpace(entityName)
+	return
+}
+
 func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]string, opts Opts) error {
 	k, ok := findKey("CIDGRAVITY_API_TOKEN", keys)
 	if !ok {
 		return fmt.Errorf("unable to configure the CIDGravity token")
-	}
-	friendly := ""
-	contactEmail := ""
-	entityName := ""
-
-	group := huh.NewGroup(
-		huh.NewInput().Title("Account Friendly Name").Value(&friendly).Placeholder("my-gateway"),
-		huh.NewInput().Title("Contact Email").Value(&contactEmail).Placeholder("you@example.com"),
-		huh.NewInput().Title("Entity Name").Value(&entityName).Placeholder("Your Org / Project"),
-	)
-	if err := huh.NewForm(group).Run(); err != nil {
-		return err
 	}
 
 	_, addr, err := EnsureWalletExists(walletPath)
@@ -196,59 +242,79 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 
 	cgClient := NewCidGravity(opts.cidgravityUrl)
 
-	{
+	for attempts := 0; attempts < 3; attempts++ {
+		friendly, contactEmail, entityName, err := collectCIDGravityAccountInfo()
+		if err != nil {
+			return err
+		}
+
 		stop := startSpinner("Contacting CIDGravity to get challenge...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		gc, gcErr := cgClient.GetChallenge(ctx, idAddrStr)
 		cancel()
 		stop()
-		if gcErr == nil {
-			// Sign challenge
-			sigHex, sigErr := signChallengeWithWallet(walletPath, gc.Challenge)
-			if sigErr == nil {
-				// Create account
-				stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
-				ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-				res, caErr := cgClient.CreateAccount(ctx2, CreateAccountRequest{
-					Challenge:     gc.Challenge,
-					AddressID:     idAddrStr,
-					FriendlyName:  friendly,
-					SignedMessage: sigHex,
-					AddressInformation: CreateAccountAddressEntity{
-						EntityName:   entityName,
-						EntityType:   "company",
-						ContactEmail: contactEmail,
-					},
-				})
-				cancel2()
-				stop2()
-				if caErr == nil && res.Token != "" {
-					fmt.Println("\n✅ Obtained CIDGravity API token via API.")
-					env[k.Var] = res.Token
-					claimed := false
-					message := fmt.Sprintf("Click this link to claim your account and manage CIDGravity settings:\n%s", res.URL)
-					confirm := huh.NewConfirm().
-						Title("Claim CIDGravity account").
-						Description(message).
-						Affirmative("I've claimed the account").
-						Negative("Skip").
-						Value(&claimed)
-					if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
-						return err
-					}
-					return nil
-				}
-				if caErr != nil {
-					fmt.Printf("\n❌ CIDGravity create-account failed: %v\n", caErr)
-				} else {
-					fmt.Println("\n❌ CIDGravity returned empty token")
-				}
-			} else {
-				fmt.Printf("\n❌ Failed to sign challenge: %v\n", sigErr)
-			}
-		} else {
+		if gcErr != nil {
 			fmt.Printf("\n❌ CIDGravity get-challenge failed: %v\n", gcErr)
+			if !promptRetryOrManual() {
+				break
+			}
+			continue
 		}
+
+		sigHex, sigErr := signChallengeWithWallet(walletPath, gc.Challenge)
+		if sigErr != nil {
+			fmt.Printf("\n❌ Failed to sign challenge: %v\n", sigErr)
+			if !promptRetryOrManual() {
+				break
+			}
+			continue
+		}
+
+		stop2 := startSpinner("Creating CIDGravity account and obtaining API token...")
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+		res, caErr := cgClient.CreateAccount(ctx2, CreateAccountRequest{
+			Challenge:     gc.Challenge,
+			AddressID:     idAddrStr,
+			FriendlyName:  friendly,
+			SignedMessage: sigHex,
+			AddressInformation: CreateAccountAddressEntity{
+				EntityName:   entityName,
+				EntityType:   "company",
+				ContactEmail: contactEmail,
+			},
+		})
+		cancel2()
+		stop2()
+
+		if caErr != nil {
+			fmt.Printf("\n❌ CIDGravity create-account failed: %v\n", caErr)
+			if !promptRetryOrManual() {
+				break
+			}
+			continue
+		}
+		if res.Token == "" {
+			fmt.Println("\n❌ CIDGravity returned empty token")
+			if !promptRetryOrManual() {
+				break
+			}
+			continue
+		}
+
+		fmt.Println("\n✅ Obtained CIDGravity API token via API.")
+		env[k.Var] = res.Token
+		claimed := false
+		message := fmt.Sprintf("Click this link to claim your account and manage CIDGravity settings:\n%s", res.URL)
+		confirm := huh.NewConfirm().
+			Title("Claim CIDGravity account").
+			Description(message).
+			Affirmative("I've claimed the account").
+			Negative("Skip").
+			Value(&claimed)
+		if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	// Manual fallback
@@ -259,6 +325,23 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 	}
 	env[k.Var] = val
 	return nil
+}
+
+// promptRetryOrManual asks the user whether to retry with corrected input
+// or fall through to the manual token entry flow. Returns true for retry.
+func promptRetryOrManual() bool {
+	var choice string
+	sel := huh.NewSelect[string]().
+		Title("What would you like to do?").
+		Options(
+			huh.NewOption("Retry with different details", "retry"),
+			huh.NewOption("Enter API token manually", "manual"),
+		).
+		Value(&choice)
+	if err := huh.NewForm(huh.NewGroup(sel)).Run(); err != nil {
+		return false
+	}
+	return choice == "retry"
 }
 
 func setRibsData(keys []groupedEnvKey, env map[string]string) error {
@@ -330,15 +413,36 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 		return fmt.Errorf("unable to configure staging storage")
 	}
 
+	pathKey, ok := findKey("EXTERNAL_LOCALWEB_PATH", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure staging storage path")
+	}
+
 	var urlVal string
+	var pathVal string
+	pathDefault := pathKey.DefaultValue
+	if pathDefault == "" {
+		pathDefault = "/tmp/ribs-carfiles"
+	}
+
 	err := huh.NewForm(huh.NewGroup(
 		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description(envComment(urlKey.Var)),
+		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files"),
 	)).Run()
 	if err != nil {
 		return err
 	}
 
 	env[urlKey.Var] = urlVal
+	if pathVal == "" {
+		pathVal = pathDefault
+	}
+	env[pathKey.Var] = pathVal
+
+	// Set sensible defaults for the built-in server
+	env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"] = "true"
+	env["EXTERNAL_LOCALWEB_SERVER_PORT"] = "8443"
+
 	return nil
 }
 

@@ -307,7 +307,7 @@ func TestLoadBalancer_ConcurrentSelections(t *testing.T) {
 				lb.selectionLk.Lock()
 				for _, g := range r.writableGroups {
 					score := lb.calculateScore(g, 1000)
-					if score > 0 {
+					if score >= 0 {
 						groupSelections[g.id].Add(1)
 						break
 					}
@@ -376,7 +376,7 @@ func TestParallelWritesDistribution(t *testing.T) {
 				continue
 			}
 			score := lb.calculateScore(group, 1000)
-			if score > 0 {
+			if score >= 0 {
 				candidates = append(candidates, groupScore{group: group, score: score})
 			}
 		}
@@ -453,7 +453,7 @@ func TestParallelWritesWithCurrentWriteTarget(t *testing.T) {
 		var candidates []groupScore
 		for _, group := range r.writableGroups {
 			score := lb.calculateScore(group, 1000)
-			if score > 0 {
+			if score >= 0 {
 				candidates = append(candidates, groupScore{group: group, score: score})
 			}
 		}

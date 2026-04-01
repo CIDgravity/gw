@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/CIDgravity/filecoin-gateway/integrations/blockstore"
@@ -118,4 +119,27 @@ func (r *Region) flush(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// StartCleanup runs a background goroutine that periodically removes expired
+// multipart upload parts from the S3Objects table.
+func (r *Region) StartCleanup(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := r.index.DeleteExpired(ctx)
+				if err != nil {
+					log.Errorw("failed to clean up expired multipart parts", "error", err)
+				} else if deleted > 0 {
+					log.Infow("cleaned up expired multipart parts", "deleted", deleted)
+				}
+			}
+		}
+	}()
 }

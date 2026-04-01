@@ -190,6 +190,7 @@ type ribBatch struct {
 
 	currentWriteTarget iface.GroupKey
 	toFlush            map[iface.GroupKey]struct{}
+	puts               map[string]struct{}
 
 	// todo: use lru
 }
@@ -267,6 +268,7 @@ func (r *ribSession) Batch(ctx context.Context) iface.Batch {
 		session:            r,
 		currentWriteTarget: iface.UndefGroupKey,
 		toFlush:            map[iface.GroupKey]struct{}{},
+		puts:               map[string]struct{}{},
 	}
 }
 
@@ -303,6 +305,10 @@ func (r *ribBatch) Put(ctx context.Context, b []blocks.Block) error {
 			return xerrors.Errorf("write to group: %w", err)
 		}
 
+		for i := done - blocksWritten; i < done; i++ {
+			r.puts[string(b[i].Cid().Hash())] = struct{}{}
+		}
+
 		r.toFlush[gk] = struct{}{}
 		r.currentWriteTarget = gk
 	}
@@ -311,15 +317,27 @@ func (r *ribBatch) Put(ctx context.Context, b []blocks.Block) error {
 }
 
 func (r *ribBatch) Unlink(ctx context.Context, c []mh.Multihash) error {
+	filtered := make([]mh.Multihash, 0, len(c))
+	for _, hash := range c {
+		if _, ok := r.puts[string(hash)]; ok {
+			continue
+		}
+		filtered = append(filtered, hash)
+	}
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
 	// Group multihashes by their current group location
 	byGroup := make(map[iface.GroupKey][]mh.Multihash)
 
-	err := r.r.index.GetGroups(ctx, c, func(cidx int, gk iface.GroupKey) (bool, error) {
+	err := r.r.index.GetGroups(ctx, filtered, func(cidx int, gk iface.GroupKey) (bool, error) {
 		if gk == iface.UndefGroupKey {
 			// Block doesn't exist, nothing to unlink
 			return true, nil
 		}
-		byGroup[gk] = append(byGroup[gk], c[cidx])
+		byGroup[gk] = append(byGroup[gk], filtered[cidx])
 		return true, nil
 	})
 	if err != nil {
@@ -359,6 +377,12 @@ func (r *ribBatch) Unlink(ctx context.Context, c []mh.Multihash) error {
 
 func (r *ribBatch) Flush(ctx context.Context) error {
 	cfg := configuration.GetConfig().ParallelWrite
+
+	// Reset write target after flush so the next cycle goes through the load
+	// balancer and picks a (potentially different) group.  This spreads writes
+	// across groups instead of sticking to one until it fills up.
+	defer func() { r.currentWriteTarget = iface.UndefGroupKey }()
+
 	if cfg.Enabled && len(r.toFlush) > 1 {
 		return r.flushParallel(ctx)
 	}

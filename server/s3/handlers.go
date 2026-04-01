@@ -13,6 +13,14 @@ import (
 	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 )
 
+// quoteETag ensures an ETag value is wrapped in double quotes per HTTP spec.
+func quoteETag(etag string) string {
+	if strings.HasPrefix(etag, "\"") {
+		return etag
+	}
+	return "\"" + etag + "\""
+}
+
 func (srv *S3Server) handleGetLocation(w http.ResponseWriter, r *http.Request) error {
 	_, err := srv.auth.validateSignatureV4(r)
 	if err != nil {
@@ -63,7 +71,7 @@ func (srv *S3Server) handleListObjects(w http.ResponseWriter, r *http.Request) e
 	objs := make([]ListObjectsEntry, len(list.Contents))
 	for i, obj := range list.Contents {
 		objs[i] = ListObjectsEntry{
-			Etag:         obj.ETag,
+			Etag:         quoteETag(obj.ETag),
 			Key:          obj.Key.String(),
 			LastModified: obj.Timestamp.Format("2006-01-02T15:04:05.000Z"),
 			Size:         obj.Size,
@@ -162,7 +170,7 @@ func (srv *S3Server) handleGetObject(w http.ResponseWriter, r *http.Request) err
 	defer rd.Close() //nolint
 
 	stat := rd.Stat()
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	http.ServeContent(w, r, objectName.String(), stat.Timestamp, rd)
 	return nil
@@ -203,7 +211,7 @@ func (srv *S3Server) handlePutObject(w http.ResponseWriter, r *http.Request) err
 		return fmt.Errorf("error putting object: %w", err)
 	}
 
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
@@ -278,6 +286,7 @@ func (srv *S3Server) handleCreateMultipartUpload(w http.ResponseWriter, r *http.
 		return fmt.Errorf("error getting object writer: %w", err)
 	}
 
+	w.Header().Set("Content-Type", "application/xml")
 	return createMultipartUploadTemplate.Execute(w, createMultipartUploadResponseParams{
 		UploadId: uploadId,
 		Key:      objectName.String(),
@@ -341,7 +350,7 @@ func (srv *S3Server) handleUploadPart(w http.ResponseWriter, r *http.Request) er
 		return fmt.Errorf("error continuing multipart upload: %w", err)
 	}
 
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
 	return nil
 }
@@ -398,10 +407,11 @@ func (srv *S3Server) handleCompleteMultipartUpload(w http.ResponseWriter, r *htt
 	}
 
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
+	w.Header().Set("Content-Type", "application/xml")
 	return completeMultipartUploadTemplate.Execute(w, completeMultipartUploadResponseParams{
 		Bucket: bucketName.String(),
 		Key:    objectName.String(),
-		ETag:   stat.ETag,
+		ETag:   quoteETag(stat.ETag),
 	})
 }
 
@@ -453,6 +463,92 @@ func (srv *S3Server) handleAbortMultipartUpload(w http.ResponseWriter, r *http.R
 	return nil
 }
 
+func (srv *S3Server) handleListParts(w http.ResponseWriter, r *http.Request) error {
+	_, err := srv.auth.validateSignatureV4(r)
+	if err != nil {
+		srv.respondUnauthenticated(err, w)
+		return nil
+	}
+
+	params, _ := url.ParseQuery(r.URL.RawQuery)
+	uploadId := params.Get("uploadId")
+	if uploadId == "" {
+		log.Infow("missing uploadId", "URL", r.URL)
+		w.WriteHeader(400)
+		return nil
+	}
+
+	maxParts := int32(1000)
+	if params.Has("max-parts") {
+		mp, err := strconv.ParseInt(params.Get("max-parts"), 10, 32)
+		if err != nil {
+			log.Infow("bad max-parts", "URL", r.URL)
+			w.WriteHeader(400)
+			return nil
+		}
+		maxParts = int32(mp)
+	}
+
+	partNumberMarker := 0
+	if params.Has("part-number-marker") {
+		pnm, err := strconv.Atoi(params.Get("part-number-marker"))
+		if err != nil {
+			log.Infow("bad part-number-marker", "URL", r.URL)
+			w.WriteHeader(400)
+			return nil
+		}
+		partNumberMarker = pnm
+	}
+
+	bucketName, objectName, err := requestToObject(r)
+	if err != nil {
+		log.Infow("error parsing url", "URL", r.URL, "error", err)
+		w.WriteHeader(400)
+		return nil
+	}
+
+	bucket, err := srv.region.GetBucket(r.Context(), bucketName)
+	if err != nil {
+		if errors.Is(err, iface2.ErrNotFound) {
+			log.Infow("bucket not found", "URL", r.URL)
+			w.WriteHeader(404)
+			return nil
+		}
+		return fmt.Errorf("error getting bucket: %w", err)
+	}
+
+	result, err := bucket.ListParts(r.Context(), objectName, &iface2.ListPartsQuery{
+		UploadID:         uploadId,
+		MaxParts:         maxParts,
+		PartNumberMarker: partNumberMarker,
+	})
+	if err != nil {
+		return fmt.Errorf("error listing parts: %w", err)
+	}
+
+	parts := make([]ListPartsPartEntry, len(result.Parts))
+	for i, p := range result.Parts {
+		parts[i] = ListPartsPartEntry{
+			PartNumber:   p.PartNumber,
+			LastModified: p.LastModified.Format("2006-01-02T15:04:05.000Z"),
+			ETag:         quoteETag(p.ETag),
+			Size:         p.Size,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/xml")
+	return xml.NewEncoder(w).Encode(ListPartsResponse{
+		Bucket:               bucketName.String(),
+		Key:                  objectName.String(),
+		UploadId:             uploadId,
+		PartNumberMarker:     result.PartNumberMarker,
+		NextPartNumberMarker: result.NextPartNumberMarker,
+		MaxParts:             result.MaxParts,
+		IsTruncated:          result.IsTruncated,
+		Parts:                parts,
+	})
+}
+
 func (srv *S3Server) handleHeadObject(w http.ResponseWriter, r *http.Request) error {
 	_, err := srv.auth.validateSignatureV4(r)
 	if err != nil {
@@ -486,7 +582,7 @@ func (srv *S3Server) handleHeadObject(w http.ResponseWriter, r *http.Request) er
 		}
 		return fmt.Errorf("error getting object stat: %w", err)
 	}
-	w.Header().Set("ETag", stat.ETag)
+	w.Header().Set("ETag", quoteETag(stat.ETag))
 	w.Header().Set("Last-Modified", stat.Timestamp.Format(http.TimeFormat))
 	w.Header().Set("Content-Length", strconv.Itoa(int(stat.Size)))
 	w.Header().Set("X-Node-ID", srv.region.NodeID())
@@ -542,8 +638,9 @@ func getBodyReader(r *http.Request) (io.Reader, error) {
 		log.Debugf("streaming request body detected")
 		return NewChunkReader(r.Body), nil
 	}
-	if contentSha256 == "UNSIGNED-PAYLOAD" {
-		log.Debugf("unsigned request body detected")
+	if contentSha256 == "" || contentSha256 == "UNSIGNED-PAYLOAD" {
+		// Empty header is treated as unsigned — common when auth is disabled
+		// or when clients use --no-sign-request
 		return r.Body, nil
 	}
 	if len(contentSha256) != 64 {

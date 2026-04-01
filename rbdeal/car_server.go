@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,9 +54,13 @@ func (r *ribs) setupCarServer(ctx context.Context) error {
 		}
 
 		// tls uses letsencrypt autocert and gets the domain from Url
+		parsedURL, err := url.Parse(cfg.External.Localweb.Url)
+		if err != nil {
+			return xerrors.Errorf("failed to parse EXTERNAL_LOCALWEB_URL: %w", err)
+		}
 		certManager := autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
-			HostPolicy: autocert.HostWhitelist(cfg.External.Localweb.Url),
+			HostPolicy: autocert.HostWhitelist(parsedURL.Hostname()),
 			Cache:      autocert.DirCache(filepath.Join(repoDir, "acme")),
 		}
 

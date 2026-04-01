@@ -2,6 +2,8 @@ package rbstor
 
 import (
 	"context"
+	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,7 +155,7 @@ func (lb *LoadBalancer) selectWeighted(
 			continue
 		}
 		score := lb.calculateScore(group, estimatedSize)
-		if score > 0 {
+		if score >= 0 {
 			candidates = append(candidates, groupScore{group: group, score: score})
 		}
 	}
@@ -185,17 +187,40 @@ func (lb *LoadBalancer) selectWeighted(
 			}
 		}
 
-		// No existing groups to open, try to create a new group
+		// No existing groups to open, try to create a new group.
+		// createGroup may block (ensureSpaceForGroup waits for offloading).
+		// Release selectionLk first so other writers can still use existing
+		// groups while we wait for space.
+		lb.r.lk.Unlock()
+		lb.selectionLk.Unlock()
+
+		lb.r.lk.Lock()
 		_, group, err := lb.r.createGroup(ctx)
+		lb.r.lk.Unlock()
+
+		lb.selectionLk.Lock()
+
 		if err == nil {
 			if session != nil {
 				lb.setSessionAffinity(session, group.id)
 			}
-			lb.r.lk.Unlock()
 			parallelMetrics.RecordGroupSelection("parallel_created", time.Since(start))
 			return group, func() {}, nil
 		}
-		// Failed to create, fall through to use existing candidates
+
+		// Failed to create — re-acquire r.lk for the fallback paths below.
+		lb.r.lk.Lock()
+		// Refresh candidates; map may have changed while locks were released.
+		candidates = candidates[:0]
+		for _, g := range lb.r.writableGroups {
+			if g.state != iface.GroupStateWritable {
+				continue
+			}
+			if s := lb.calculateScore(g, estimatedSize); s >= 0 {
+				candidates = append(candidates, groupScore{group: g, score: s})
+			}
+		}
+		numWritable = len(lb.r.writableGroups)
 	}
 
 	// Use existing candidates if available
@@ -214,14 +239,14 @@ func (lb *LoadBalancer) selectWeighted(
 	// No candidates available, need to open or create a group
 	if !cfg.Enabled || numWritable < cfg.MaxParallelGroups {
 		// Try to open existing writable group from DB
-		selectedGroup, blocks, bytes, jbhead, state, err := lb.r.db.GetWritableGroup()
+		selectedGroup, blk, byt, jbhead, state, err := lb.r.db.GetWritableGroup()
 		if err != nil {
 			lb.r.lk.Unlock()
 			return nil, nil, err
 		}
 
 		if selectedGroup != iface.UndefGroupKey {
-			group, err := lb.r.openGroup(ctx, selectedGroup, blocks, bytes, jbhead, state, false)
+			group, err := lb.r.openGroup(ctx, selectedGroup, blk, byt, jbhead, state, false)
 			if err != nil {
 				lb.r.lk.Unlock()
 				return nil, nil, err
@@ -237,21 +262,27 @@ func (lb *LoadBalancer) selectWeighted(
 		}
 	}
 
-	// Check if we can create a new group
+	// Check if we can create a new group (same unlock dance for selectionLk)
 	if !cfg.Enabled || numWritable < cfg.MaxParallelGroups {
-		_, group, err := lb.r.createGroup(ctx)
-		if err != nil {
-			lb.r.lk.Unlock()
-			return nil, nil, err
-		}
-
-		if session != nil && cfg.Enabled {
-			lb.setSessionAffinity(session, group.id)
-		}
-
 		lb.r.lk.Unlock()
-		parallelMetrics.RecordGroupSelection("created", time.Since(start))
-		return group, func() {}, nil
+		lb.selectionLk.Unlock()
+
+		lb.r.lk.Lock()
+		_, group, err := lb.r.createGroup(ctx)
+		lb.r.lk.Unlock()
+
+		lb.selectionLk.Lock()
+
+		if err == nil {
+			if session != nil && cfg.Enabled {
+				lb.setSessionAffinity(session, group.id)
+			}
+			parallelMetrics.RecordGroupSelection("created", time.Since(start))
+			return group, func() {}, nil
+		}
+
+		// Re-lock for the final return
+		return nil, nil, err
 	}
 
 	lb.r.lk.Unlock()
@@ -261,46 +292,64 @@ func (lb *LoadBalancer) selectWeighted(
 	return nil, nil, ErrNoWritableGroup
 }
 
-// calculateScore computes a selection score for a group.
-// Higher score = better candidate for writes.
+// maxClockBias is the maximum relative bonus (30%) given to lagging groups.
+const maxClockBias = 0.30
+
+// calculateScore returns -1 if the group can't accept the write, or its
+// fill ratio (0–1) for use by pickBest.
 func (lb *LoadBalancer) calculateScore(group *Group, estimatedSize int64) float64 {
 	available := group.AvailableSpace()
-
-	// Not enough space
 	if available < estimatedSize {
-		return 0
+		return -1
 	}
-
-	// Score components:
-	// 1. Available space ratio (0-1)
-	spaceRatio := float64(available) / float64(maxGroupSize)
-
-	// 2. Writer load factor (prefer groups with fewer active writers)
-	// Scale: 0 writers = 1.0, 10 writers = 0.5, etc.
-	activeWriters := float64(group.ActiveWriterCount())
-	loadFactor := 1.0 / (1.0 + activeWriters*0.1)
-
-	// Combined score: weighted average
-	// Space is more important than load balancing
-	score := spaceRatio*0.7 + loadFactor*0.3
-
-	return score
+	return float64(maxGroupSize-available) / float64(maxGroupSize)
 }
 
-// pickBest selects the group with the highest score.
+// pickBest is a probabilistic router with a modular-clock stagger bias.
+//
+// Every candidate gets base weight 1.0.  Groups are sorted by ID for
+// stable target assignment: group i targets fill level i/N on a modular
+// clock.  Groups that are 0–180° behind their target get a bonus of up
+// to maxClockBias (30%).  Groups at or ahead of target get no bonus.
 func (lb *LoadBalancer) pickBest(candidates []groupScore) *Group {
-	if len(candidates) == 0 {
+	n := len(candidates)
+	if n == 0 {
 		return nil
 	}
-
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.score > best.score {
-			best = c
-		}
+	if n == 1 {
+		return candidates[0].group
 	}
 
-	return best.group
+	// Stable target assignment: sort by group ID, not fill.
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].group.id < candidates[j].group.id
+	})
+
+	nf := float64(n)
+	weights := make([]float64, n)
+	var total float64
+	for i, c := range candidates {
+		target := float64(i) / nf
+		behind := target - c.score // clockwise distance on modular clock
+		if behind < 0 {
+			behind += 1.0
+		}
+		w := 1.0
+		if behind > 0 && behind <= 0.5 {
+			w += maxClockBias * (behind / 0.5) // linear: 0 at target, maxClockBias at 180°
+		}
+		weights[i] = w
+		total += w
+	}
+
+	r := rand.Float64() * total
+	for i, w := range weights {
+		r -= w
+		if r <= 0 {
+			return candidates[i].group
+		}
+	}
+	return candidates[n-1].group
 }
 
 // setSessionAffinity records that a session prefers a specific group.

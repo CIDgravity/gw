@@ -156,7 +156,10 @@ func (l *LevelDBIndex) Del(c []multihash.Multihash) error {
 	return l.DB.Write(batch, &opt.WriteOptions{Sync: true})
 }
 
-// todo sync
+// Sync is a no-op for LevelDB (its internal WAL provides equivalent durability).
+func (l *LevelDBIndex) Sync() error {
+	return nil
+}
 
 func (l *LevelDBIndex) Close() error {
 	return l.DB.Close()

@@ -54,6 +54,8 @@ func (srv *S3Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		err = srv.handleGetLocation(rr, r)
 	} else if params.Get("list-type") == "2" {
 		err = srv.handleListObjects(rr, r)
+	} else if params.Has("uploadId") {
+		err = srv.handleListParts(rr, r)
 	} else {
 		err = srv.handleGetObject(rr, r)
 	}

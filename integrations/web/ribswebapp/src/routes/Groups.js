@@ -15,8 +15,6 @@ export function Deal({ deal, headHeight, pieceCid, dataCid }) {
         Failed,
         StartEpoch,
         EndEpoch,
-        BytesRecv,
-        TxSize,
         Status,
         SealStatus,
         Error,
@@ -55,15 +53,6 @@ export function Deal({ deal, headHeight, pieceCid, dataCid }) {
             )}
             {(!Sealed && !PubCid) && (
                 <>
-                    {BytesRecv > 0 && <>
-                        <span>{formatBytesBinary(BytesRecv)} / {formatBytesBinary(TxSize)}</span>
-                        <div className="progress-bar">
-                            <div
-                                className="progress-bar__fill"
-                                style={{ width: `${BytesRecv/TxSize*100}%` }}
-                            ></div>
-                        </div>
-                    </>}
                     {Error === "" ?
                         (<span>{Status} {isSealingStatus(Status) && SealStatus && ` (${SealStatus})`}</span>) :
                         (<span>Error ({Status}) <abbr title={Error} className="deal-err">{errorMessage}</abbr></span>)}

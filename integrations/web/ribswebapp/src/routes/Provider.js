@@ -141,7 +141,6 @@ function Provider() {
                             <th>Timing</th>
                             <th>Error</th>
                             <th>Deal ID</th>
-                            <th>Transferred</th>
                             <th>Publish CID</th>
                         </tr>
                         </thead>
@@ -160,21 +159,6 @@ function Provider() {
                                 </td>
                                 <td className="provider-deals-error-col">{deal.Error && <pre>{deal.Error}</pre>}</td>
                                 <td>{deal.DealID && <a href={`https://filfox.info/en/deal/${deal.DealID}`} target="_blank" rel="noopener noreferrer">{deal.DealID}</a> || <></>}</td>
-                                <td>
-                                    {!(!deal.BytesRecv || deal.Status == 'Transferred' || deal.PubCid) && (
-                                        <div className="prov-progress-container">
-                                            <div className="prov-text-with-progress">
-                                                {formatBytesBinary(deal.BytesRecv)}/{formatBytesBinary(deal.TxSize)}
-                                            </div>
-                                            <div className="progress-bar thin-bar">
-                                                <div
-                                                    className="progress-bar__fill"
-                                                    style={{width: `${(deal.BytesRecv / deal.TxSize) * 100}%`}}
-                                                ></div>
-                                            </div>
-                                        </div>
-                                    ) || <></>}
-                                </td>
                                 <td>{deal.PubCid && <a href={`https://filfox.info/en/message/${deal.PubCid}`} target="_blank" rel="noopener noreferrer">bafy..{deal.PubCid.substr(-16)}</a>}</td>
                             </tr>
                         ))}

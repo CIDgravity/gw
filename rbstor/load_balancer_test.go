@@ -81,9 +81,9 @@ func TestLoadBalancer_CalculateScore(t *testing.T) {
 			score := lb.calculateScore(g, tt.estimatedSize)
 
 			if tt.expectZero {
-				require.Zero(t, score, tt.description)
+				require.Less(t, score, float64(0), tt.description)
 			} else {
-				require.Greater(t, score, float64(0), tt.description)
+				require.GreaterOrEqual(t, score, float64(0), tt.description)
 			}
 		})
 	}
@@ -95,70 +95,75 @@ func TestLoadBalancer_CalculateScore_Comparison(t *testing.T) {
 	}
 	lb := NewLoadBalancer(r)
 
-	// Empty group should score higher than half-full group
+	// Score returns fill ratio: half-full > empty
 	emptyGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   0,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+		state:         iface.GroupStateWritable,
+		committedSize: 0,
 	}
-
 	halfFullGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 2,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+		state:         iface.GroupStateWritable,
+		committedSize: maxGroupSize / 2,
 	}
 
 	emptyScore := lb.calculateScore(emptyGroup, 1000)
 	halfFullScore := lb.calculateScore(halfFullGroup, 1000)
 
-	require.Greater(t, emptyScore, halfFullScore, "empty group should score higher than half-full")
+	require.InDelta(t, emptyScore, 0.0, 0.01, "empty group fill ratio ≈ 0")
+	require.InDelta(t, halfFullScore, 0.5, 0.01, "half-full group fill ratio ≈ 0.5")
 
-	// Group with no writers should score higher than group with many writers
-	noWritersGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 4,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
+	// Group at capacity returns -1
+	fullGroup := &Group{
+		state:         iface.GroupStateWritable,
+		committedSize: maxGroupSize - 100,
 	}
-
-	manyWritersGroup := &Group{
-		state:           iface.GroupStateWritable,
-		committedSize:   maxGroupSize / 4,
-		inflightSize:    0,
-		reservedSpace:   0,
-		committedBlocks: 0,
-	}
-	manyWritersGroup.activeWriters.Store(10)
-
-	noWritersScore := lb.calculateScore(noWritersGroup, 1000)
-	manyWritersScore := lb.calculateScore(manyWritersGroup, 1000)
-
-	require.Greater(t, noWritersScore, manyWritersScore, "group with no writers should score higher")
+	require.Less(t, lb.calculateScore(fullGroup, 1000), float64(0), "full group should return negative")
 }
 
-func TestLoadBalancer_PickBest(t *testing.T) {
+func TestLoadBalancer_PickBest_ClockBias(t *testing.T) {
 	r := &rbs{
 		writableGroups: make(map[iface.GroupKey]*Group),
 	}
 	lb := NewLoadBalancer(r)
 
-	group1 := &Group{id: 1}
-	group2 := &Group{id: 2}
-	group3 := &Group{id: 3}
+	// 4 groups sorted by ID → targets 0, 0.25, 0.5, 0.75.
+	// All at fill 0.1:
+	//   g1 (target 0):    behind = (0-0.1+1) mod 1 = 0.9 > 0.5 → ahead, no bonus
+	//   g2 (target 0.25): behind = (0.25-0.1) = 0.15 → lagging, small bonus
+	//   g3 (target 0.5):  behind = 0.4 → lagging, larger bonus
+	//   g4 (target 0.75): behind = 0.65 > 0.5 → ahead, no bonus
+	g1 := &Group{id: 1}
+	g2 := &Group{id: 2}
+	g3 := &Group{id: 3}
+	g4 := &Group{id: 4}
 
 	candidates := []groupScore{
-		{group: group1, score: 0.5},
-		{group: group2, score: 0.9}, // highest
-		{group: group3, score: 0.3},
+		{group: g1, score: 0.1},
+		{group: g2, score: 0.1},
+		{group: g3, score: 0.1},
+		{group: g4, score: 0.1},
 	}
 
-	best := lb.pickBest(candidates)
-	require.Equal(t, int64(2), best.id, "should pick group with highest score")
+	hits := map[int64]int{}
+	trials := 10000
+	for i := 0; i < trials; i++ {
+		g := lb.pickBest(candidates)
+		hits[g.id]++
+	}
+
+	// All groups must receive writes
+	for _, id := range []int64{1, 2, 3, 4} {
+		require.Greater(t, hits[id], 0, "group %d should receive writes", id)
+	}
+
+	// Group 3 (largest lag 0.4) should get more than group 1 (ahead, no bonus)
+	require.Greater(t, hits[3], hits[1],
+		"lagging group should get more writes (g3=%d > g1=%d)", hits[3], hits[1])
+
+	// No group should dominate — bias is at most 30%
+	for id, count := range hits {
+		pct := float64(count) / float64(trials) * 100
+		require.Less(t, pct, 40.0, "group %d got %.1f%% — should not dominate", id, pct)
+	}
 }
 
 func TestLoadBalancer_PickBest_Empty(t *testing.T) {

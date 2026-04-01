@@ -51,24 +51,97 @@ func collectKeys() ([]groupedEnvKey, error) {
 
 	sectionFor := func(env string) (section string, advanced bool) {
 		switch {
+		// --- Top-level sections ---
 		case strings.HasPrefix(env, "EXTERNAL_LOCALWEB_"):
-			return "Staging:LocalWeb", false
-		case strings.HasPrefix(env, "CIDGRAVITY_"):
+			return "Staging", false
+
+		case env == "CIDGRAVITY_API_TOKEN":
 			return "CIDGravity", false
-		case strings.HasPrefix(env, "RIBS_WALLET_"):
-			return "Wallet", false
-		case strings.HasPrefix(env, "RIBS_BALANCES_"):
-			return "Balances", true
-		case env == "RIBS_DEAL_CAN_SEND_COMMAND" || env == "RIBS_DEAL_CHECK_INTERVAL":
-			return "Deals Advanced", true
-		case strings.HasPrefix(env, "RIBS_DEAL_"):
-			return "Deals", false
-		case strings.HasPrefix(env, "RIBS_YUGABYTE_"):
-			return "YugabyteDB", false
+
 		case strings.HasPrefix(env, "RIBS_S3API_"):
 			return "S3 API", false
+
+		case strings.HasPrefix(env, "RIBS_WALLET_"):
+			return "Wallet", false
+
+		// Deals: scheduling knobs are advanced, rest is top-level
+		case env == "RIBS_DEAL_CAN_SEND_COMMAND" || env == "RIBS_DEAL_CHECK_INTERVAL":
+			return "Deals", true
+		case strings.HasPrefix(env, "RIBS_DEAL_"):
+			return "Deals", false
+
+		// YugabyteDB: connection pool / timeout knobs are advanced
+		case strings.HasPrefix(env, "RIBS_YUGABYTE_"):
+			switch env {
+			case "RIBS_YUGABYTE_CQL_FORCE_HOSTS",
+				"RIBS_YUGABYTE_CQL_TIMEOUT",
+				"RIBS_YUGABYTE_CQL_CONNECT_TIMEOUT",
+				"RIBS_YUGABYTE_CQL_SOCKET_KEEPALIVE",
+				"RIBS_YUGABYTE_SQL_MAX_OPEN_CONNS",
+				"RIBS_YUGABYTE_SQL_MAX_IDLE_CONNS",
+				"RIBS_YUGABYTE_SQL_CONN_MAX_LIFETIME_MINS",
+				"RIBS_YUGABYTE_SQL_CONN_MAX_IDLE_TIME_MINS":
+				return "Database Tuning", true
+			default:
+				return "YugabyteDB", false
+			}
+
+		// --- Advanced sections (specific prefixes before RIBS_ catch-all) ---
+		case strings.HasPrefix(env, "CIDGRAVITY_"):
+			return "CIDGravity", true
+
+		case strings.HasPrefix(env, "RIBS_BALANCES_"):
+			return "Balances", true
+
+		case strings.HasPrefix(env, "RIBS_S3_CQL_"):
+			return "Database Tuning", true
+
+		case strings.HasPrefix(env, "RIBS_GC_"):
+			return "Garbage Collection", true
+
+		case strings.HasPrefix(env, "RIBS_REPAIR_"):
+			return "Replication & Repair", true
+
+		// Parallelism
+		case env == "RIBS_ENABLE_PARALLEL_WRITES" || env == "RIBS_MAX_PARALLEL_GROUPS" ||
+			env == "RIBS_SPACE_RESERVATION_TIMEOUT" || env == "RIBS_DRAIN_TIMEOUT":
+			return "Parallelism", true
+
+		// Replication
+		case env == "RIBS_MINIMUM_RETRIEVABLE_COUNT" || env == "RIBS_MINIMUM_REPLICA_COUNT" ||
+			env == "RIBS_MAXIMUM_REPLICA_COUNT" || env == "RIBS_RETRIEVABLE_REPAIR_THRESHOLD" ||
+			env == "RIBS_SEND_EXTENDS":
+			return "Replication & Repair", true
+
+		// Storage
+		case env == "RIBS_DATA" || env == "RIBS_MAX_LOCAL_GROUP_COUNT" || env == "RIBS_MAX_STAGING_GROUP_COUNT":
+			return "Storage", true
+
+		// Logging & Monitoring
+		case env == "RIBS_LOGLEVEL" || env == "RIBS_LOG_FORMAT" || env == "RIBS_PROMETHEUS_PORT":
+			return "Logging & Monitoring", true
+
+		// Network & Services
+		case env == "RIBS_FILECOIN_API_ENDPOINT" || env == "RIBS_RUN_SP_CRAWLER" ||
+			env == "RIBS_CID_LOCATION_WORKER_COUNT" || env == "RIBS_MONGODB_URI":
+			return "Network & Services", true
+
+		// Remaining RIBS_* catch-all
 		case strings.HasPrefix(env, "RIBS_"):
-			return "RIBS", true
+			return "Misc", true
+
+		// Caching & Prefetch
+		case strings.HasPrefix(env, "FGW_L1_") || strings.HasPrefix(env, "FGW_L2_") ||
+			strings.HasPrefix(env, "FGW_PREFETCH_"):
+			return "Caching & Prefetch", true
+
+		// Frontend Proxy (remaining FGW_*)
+		case strings.HasPrefix(env, "FGW_"):
+			return "Frontend Proxy", true
+
+		// Backup
+		case strings.HasPrefix(env, "BACKUP_"):
+			return "Backup", true
 
 		default:
 			return "Misc", true
@@ -134,12 +207,22 @@ func saveEnv(path string, m map[string]string, commentFn EnvCommentFunc) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		v := m[k]
+		if v == "" {
+			continue // skip empty values — let envconfig use struct defaults
+		}
 		if comment := commentFn(k); comment != "" {
 			for _, line := range strings.Split(comment, "\n") {
 				fmt.Fprintf(w, "# %s\n", line)
 			}
 		}
-		fmt.Fprintf(w, "export %s=%q\n", k, m[k])
+		// Only quote values that need it (contain spaces, #, or newlines).
+		// Docker Compose env_file handles unquoted values most reliably.
+		if strings.ContainsAny(v, " \t\n#") {
+			_, _ = fmt.Fprintf(w, "%s=%q\n", k, v)
+		} else {
+			_, _ = fmt.Fprintf(w, "%s=%s\n", k, v)
+		}
 	}
 	return w.Flush()
 }
@@ -149,7 +232,7 @@ func saveEnv(path string, m map[string]string, commentFn EnvCommentFunc) error {
 type validator func(env map[string]string) (bool, error)
 
 var validators = map[string]validator{
-	"External": validateExternal,
+	"Staging": validateExternal,
 }
 
 func validateExternal(env map[string]string) (bool, error) {
@@ -234,10 +317,42 @@ func menu(keys []groupedEnvKey) (string, error) {
 	return sel, nil
 }
 
+func advancedMenu(keys []groupedEnvKey) (string, error) {
+	secMap := map[string]struct{}{}
+	for _, k := range keys {
+		if k.Advanced {
+			secMap[k.Section] = struct{}{}
+		}
+	}
+	sections := make([]string, 0, len(secMap)+1)
+	for s := range secMap {
+		sections = append(sections, s)
+	}
+	sort.Strings(sections)
+	sections = append([]string{"← Back"}, sections...)
+
+	opts := make([]huh.Option[string], len(sections))
+	for i, s := range sections {
+		opts[i] = huh.NewOption(s, s)
+	}
+
+	var sel string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().Title("Advanced settings").Options(opts...).Value(&sel),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	return sel, nil
+}
+
 func editSection(section string, keys []groupedEnvKey, env map[string]string, editAdvanced bool) error {
 	type binding struct {
-		key   string
-		value *string
+		key      string
+		value    *string
+		hadValue bool // key had a non-empty value in env before editing
 	}
 	bindings := []binding{}
 	fields := []huh.Field{}
@@ -269,8 +384,9 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 			continue
 		}
 		val := env[k.Var] // local copy bound to input
-		v := k            // copy
-		bindings = append(bindings, binding{key: v.Var, value: &val})
+		hadValue := val != ""
+		v := k // copy
+		bindings = append(bindings, binding{key: v.Var, value: &val, hadValue: hadValue})
 
 		// Add envComment as Description if present
 		comment := envComment(v.Var)
@@ -287,12 +403,19 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 	if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
 		return err
 	}
-	// commit changes
+	// commit changes — skip empty values that were not previously set
 	for _, b := range bindings {
-		env[b.key] = *b.value
+		newVal := *b.value
+		if newVal != "" {
+			env[b.key] = newVal
+		} else if b.hadValue {
+			// user cleared a previously-set value — remove so default applies
+			delete(env, b.key)
+		}
+		// empty and was not previously set → skip (don't pollute env)
 	}
 
-	if section == "Upload:LocalWeb" && !editAdvanced {
+	if section == "Staging" && !editAdvanced {
 		builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
 		port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
 		urlStr := env["EXTERNAL_LOCALWEB_URL"]
@@ -300,20 +423,28 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 			// Validate port and URL
 			if !isValidPort(port) {
 				fmt.Printf("❌ Port %q is not valid. Please edit the settings.\n", port)
-				return editSection("Upload:LocalWeb", keys, env, false)
+				return editSection("Staging", keys, env, false)
 			}
 			if !isValidURL(urlStr) {
 				fmt.Printf("❌ URL %q is not valid. Please edit the settings.\n", urlStr)
-				return editSection("Upload:LocalWeb", keys, env, false)
+				return editSection("Staging", keys, env, false)
 			}
 
 			// Ask if user wants to test
 			doTest := false
+			testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
+			if isInContainer() {
+				testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
+					"The test server binds inside the container, so it will only\n" +
+					"work if the container has the port mapped (e.g. --network=host\n" +
+					"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
+					"'docker run' without port mapping, skip this test."
+			}
 			if err := huh.NewForm(
 				huh.NewGroup(
 					huh.NewConfirm().
 						Title("Do you want to test the endpoint online?").
-						Description("* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity.").
+						Description(testDesc).
 						Value(&doTest),
 				),
 			).Run(); err != nil {
@@ -375,7 +506,7 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 					case "retry":
 						continue // re-run the test loop
 					case "edit":
-						return editSection("Upload:LocalWeb", keys, env, false)
+						return editSection("Staging", keys, env, false)
 					case "continue":
 						break // exit the test loop and continue
 					}
@@ -385,6 +516,15 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 		}
 	}
 	return nil
+}
+
+// isInContainer returns true if we're likely running inside a Docker/OCI container.
+func isInContainer() bool {
+	// /.dockerenv exists in Docker containers
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	return false
 }
 
 func confirm(title string, def bool) (bool, error) {
@@ -446,21 +586,17 @@ func wizard(envPath string) error {
 			fmt.Println("Exiting without saving changes.")
 			return nil
 		case "Advanced ✦":
-			// Edit all advanced keys, grouped by section
-			sections := map[string]struct{}{}
-			for _, k := range keys {
-				if k.Advanced {
-					sections[k.Section] = struct{}{}
-				}
-			}
-			for section := range sections {
-				if err := editSection(section, keys, env, true); err != nil {
+			for {
+				sel, err := advancedMenu(keys)
+				if err != nil {
 					return err
 				}
-			}
-			// Also handle any advanced keys not in a section
-			if err := editSection("Advanced", keys, env, true); err != nil {
-				return err
+				if sel == "← Back" {
+					break
+				}
+				if err := editSection(sel, keys, env, true); err != nil {
+					return err
+				}
 			}
 		default:
 			for {
@@ -667,10 +803,10 @@ func main() {
 
 	switch flag.NArg() {
 	case 0:
-		_, err := os.Stat(abs)
 		keys, _ := collectKeys()
-		if errors.Is(err, os.ErrNotExist) {
-			// Initial setup wizard
+		env, _ := loadEnv(abs)
+		if len(env) == 0 {
+			// Initial setup wizard (file missing, empty, or has no keys)
 			if err := initialSetupWizard(abs, keys, opts); err != nil {
 				log.Fatalf("initial setup: %v", err)
 			}

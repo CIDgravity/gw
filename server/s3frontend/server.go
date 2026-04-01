@@ -1,16 +1,16 @@
 package s3frontend
 
 import (
-	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/server/s3"
-	pool "github.com/libp2p/go-buffer-pool"
 )
 
 // FrontendServer is a stateless S3 proxy that routes requests to Kuri backend nodes
@@ -91,6 +91,13 @@ func (s *FrontendServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	if params.Has("list-type") {
 		// List objects - needs coordination, proxy to any for now
 		s.proxyToAnyBackend(w, r)
+		return
+	}
+
+	if params.Has("uploadId") {
+		// ListParts - route to coordinator node that owns the upload
+		uploadID := params.Get("uploadId")
+		s.routeToCoordinator(w, r, uploadID)
 		return
 	}
 
@@ -278,10 +285,24 @@ func (s *FrontendServer) proxyToAnyBackend(w http.ResponseWriter, r *http.Reques
 	s.proxyRequest(backend, w, r)
 }
 
-// Buffer size for io.CopyBuffer operations (256KB)
-const copyBufferSize = 256 * 1024
+// proxyTransport is a shared http.Transport with connection pooling for backend requests.
+var proxyTransport = &http.Transport{
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     90 * time.Second,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+}
 
-// proxyRequest proxies an HTTP request to a backend
+// proxyClient is a shared http.Client using the pooled transport.
+var proxyClient = &http.Client{
+	Transport: proxyTransport,
+}
+
+// proxyRequest proxies an HTTP request to a backend, streaming the body directly
+// without buffering the entire request in memory.
 func (s *FrontendServer) proxyRequest(backend *Backend, w http.ResponseWriter, r *http.Request) {
 	// Create new URL for backend
 	backendURL := backend.URL() + r.URL.Path
@@ -289,34 +310,15 @@ func (s *FrontendServer) proxyRequest(backend *Backend, w http.ResponseWriter, r
 		backendURL += "?" + r.URL.RawQuery
 	}
 
-	// Read request body using buffer pool
-	// Estimate initial buffer size from Content-Length, minimum 4KB, max 4MB
-	contentLength := r.ContentLength
-	if contentLength < 0 {
-		contentLength = 4 * 1024 // default 4KB
-	}
-	if contentLength > 4*1024*1024 {
-		contentLength = 4 * 1024 * 1024 // cap at 4MB, will grow if needed
-	}
-
-	bodyBuf := pool.Get(int(contentLength))
-	defer pool.Put(bodyBuf)
-
-	buf := bytes.NewBuffer(bodyBuf[:0])
-	copyBuf := pool.Get(copyBufferSize)
-	defer pool.Put(copyBuf)
-
-	_, err := io.CopyBuffer(buf, r.Body, copyBuf)
-	if err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, backendURL, bytes.NewReader(buf.Bytes()))
+	// Stream the request body directly to the backend without buffering
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, backendURL, r.Body)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+
+	// Preserve content length for the backend
+	req.ContentLength = r.ContentLength
 
 	// Copy headers
 	for name, values := range r.Header {
@@ -334,9 +336,8 @@ func (s *FrontendServer) proxyRequest(backend *Backend, w http.ResponseWriter, r
 		req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
 	}
 
-	// Execute request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// Execute request using shared client with connection pooling
+	resp, err := proxyClient.Do(req)
 	if err != nil {
 		log.Errorw("Failed to proxy request", "error", err, "backend", backend.ID())
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -354,8 +355,8 @@ func (s *FrontendServer) proxyRequest(backend *Backend, w http.ResponseWriter, r
 	// Copy status code
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy body using buffer pool (reuse copyBuf)
-	io.CopyBuffer(w, resp.Body, copyBuf)
+	// Stream response body to client
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // parseBucketAndKey extracts bucket and key from the URL path

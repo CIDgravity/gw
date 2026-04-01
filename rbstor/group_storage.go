@@ -2,7 +2,6 @@ package rbstor
 
 import (
 	"context"
-	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/iface"
@@ -193,6 +192,10 @@ func (r *rbs) withReadableGroup(ctx context.Context, group iface.GroupKey, cb fu
 	return cb(g)
 }
 
+// ErrNoSpace is returned when local group storage is full and no offload
+// candidate is available.  Callers should back off and retry.
+var ErrNoSpace = xerrors.New("local storage full and no offload candidate available")
+
 func (r *rbs) ensureSpaceForGroup(ctx context.Context) error {
 	localCount, err := r.db.CountNonOffloadedGroups()
 	if err != nil {
@@ -204,30 +207,14 @@ func (r *rbs) ensureSpaceForGroup(ctx context.Context) error {
 		return nil
 	}
 
-	var offloadCandidate iface.GroupKey
-	for {
-		offloadCandidate, err = r.db.GetOffloadCandidate()
-		if err != nil {
-			return xerrors.Errorf("getting offload candidate: %w", err)
-		}
+	offloadCandidate, err := r.db.GetOffloadCandidate()
+	if err != nil {
+		return xerrors.Errorf("getting offload candidate: %w", err)
+	}
 
-		if offloadCandidate != iface.UndefGroupKey {
-			break
-		}
-
-		log.Errorw("no offload candidate, waiting for space", "localCount", localCount)
-
-		// wait 1 min, then try again
-		r.lk.Unlock()
-
-		select {
-		case <-ctx.Done():
-			r.lk.Lock()
-			return ctx.Err()
-		case <-time.After(time.Minute):
-		}
-
-		r.lk.Lock()
+	if offloadCandidate == iface.UndefGroupKey {
+		log.Errorw("no offload candidate, local storage full", "localCount", localCount)
+		return ErrNoSpace
 	}
 
 	log.Errorw("local space full, offloading group", "group", offloadCandidate)

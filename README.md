@@ -40,16 +40,55 @@ It provides a scalable blockstore, automated Filecoin dealmaking, and familiar S
 
 ### Option 1 — Docker
 ```bash
-apt install -y docker.io docker-compose rclone
+apt install -y docker.io docker-compose
 git clone git@github.com:CIDgravity/filecoin-gateway.git
 cd filecoin-gateway
 
+# Build the container image
 docker build . -t fgw:local
 
-docker run -it --rm --entrypoint ./gwcfg   -v ${DATA_DIR:-./data}/config:/app/config   -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet   fgw:local -f config/settings.env
+# Create data directories
+mkdir -p ${DATA_DIR:-./data}/{config,wallet,fgw,yb,ipfs}
 
-docker-compose up
+# Start YugabyteDB first (the gateway depends on it being healthy)
+docker compose up -d yugabyte
+
+# Run the interactive configuration wizard (gwcfg).
+# This will:
+#   - Create a Filecoin wallet and back it up
+#   - Request faucet funds and wait for on-chain confirmation
+#   - Request DataCap
+#   - Create a CIDGravity account for provider discovery
+#   - Configure the staging (localweb) server URL and path
+#   - Write all settings to settings.env
+#
+# When prompted for the staging URL, enter the public URL that storage
+# providers will use to fetch CAR files (e.g. https://your-host.example.com).
+# When asked to test the endpoint, choose No — the test server runs inside
+# the container without port mapping and cannot be reached externally.
+docker run -it --rm \
+  --entrypoint ./gwcfg \
+  -v ${DATA_DIR:-./data}/config:/app/config \
+  -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet \
+  fgw:local -f /app/config/settings.env
+
+# Start the gateway
+docker compose up -d
 ```
+
+> **Tip — Behind a reverse proxy:** If TLS is terminated externally (e.g. Caddy,
+> nginx), edit `data/config/settings.env` after running `gwcfg`:
+> ```
+> EXTERNAL_LOCALWEB_SERVER_PORT=2333
+> EXTERNAL_LOCALWEB_SERVER_TLS=false
+> ```
+> Then add `"2333:2333"` to the `ports:` list in `docker-compose.yml`.
+>
+> **Tip — YugabyteDB tuning:** The default docker-compose ships with conservative
+> memory settings (512 MiB block cache, 25% RAM ratio) suitable for 16-32 GB
+> machines. For larger hosts (128+ GB RAM), increase `db_block_cache_size_bytes`
+> and `default_memory_limit_to_ram_ratio` in the yugabyte `command:` section.
+> A 256 GB host can use 16 GiB block cache and 0.6 ratio for ~10x throughput.
 
 #### Data Storage Locations
 
@@ -101,9 +140,9 @@ This removes YugabyteDB data, block groups, and IPFS data, but preserves your `s
 
 ### Option 2 — Build From Source
 #### Prerequisites
-- YugabyteDB instance  
-- Rclone (optional)  
-- Go toolchain  
+- YugabyteDB instance (YSQL port 5433, YCQL port 9042)
+- Go 1.24+ toolchain
+- Rclone (for data upload)
 
 #### Install
 ```bash
@@ -116,8 +155,13 @@ go build -o gwcfg ./integrations/gwcfg
 
 #### Configure
 ```bash
+# Interactive wizard — creates wallet, configures CIDGravity, staging server, etc.
 ./gwcfg
 ```
+
+`gwcfg` writes a `settings.env` file with all configuration. To re-edit settings
+later, run `./gwcfg` again — it detects the existing file and offers section-by-section
+editing.
 
 #### Start
 ```bash
@@ -229,23 +273,74 @@ For detailed configuration options, see `ansible/ansible-spec.md`.
 
 ## Onboarding Data with Rclone
 
-### Example `rclone.conf`
-```
-cat > ~/.config/rclone/rclone.conf
-[gw]
-type = s3
-provider = Other
-access_key_id = test-access-key
-secret_access_key = test-secret-key
-region = us-east-1
-endpoint = http://localhost:8078
-acl = private
+### Configure Rclone
+```bash
+rclone config create gw s3 \
+  provider=Other \
+  endpoint=http://localhost:8078 \
+  acl=private \
+  no_check_bucket=true \
+  list_version=2 \
+  force_path_style=true
 ```
 
+> **Note:** `list_version=2` is required — the gateway only implements
+> ListObjectsV2. Without it rclone defaults to v1 and receives 400 errors.
+
 ### Upload Data
+
+The gateway achieves best throughput with high parallelism. S3 read-after-write
+semantics require each request to complete before the response is visible, so
+write batching only helps when many requests are in flight simultaneously.
+
+```bash
+# Recommended: high parallelism for single-user uploads
+rclone copy /mnt/data gw:mybucket/ -v \
+  --transfers=100 \
+  --checkers=4 \
+  --progress
+
+# For very large files (multi-GB), default rclone multipart settings work well.
+# For many small files (<1 MiB), high --transfers is critical for throughput.
 ```
-rclone --s3-no-check-bucket --s3-force-path-style --s3-list-version=2   copy /mnt/data32 gw:mybucket/data32 -v
+
+| File size | Recommended --transfers | Notes |
+|-----------|------------------------|-------|
+| < 1 MiB | 100+ | Throughput scales linearly with parallelism |
+| 1-100 MiB | 50-100 | Good balance of throughput and memory |
+| 100+ MiB | 20-50 | Multipart upload handles chunking; bandwidth is the bottleneck |
+
+### Verify Upload
+```bash
+# List uploaded objects
+rclone ls gw:mybucket/ | head
+
+# Read back and verify a specific file
+rclone cat gw:mybucket/path/to/file.bin | sha256sum
 ```
+
+---
+
+## Troubleshooting
+
+**YugabyteDB exits immediately (code 137)**
+- Check `data/yb/logs/master.err` — if it mentions SSE4.2, the CPU doesn't support
+  the required instruction set (common in some VMs without CPU passthrough).
+- If it's OOM, reduce `db_block_cache_size_bytes` and
+  `default_memory_limit_to_ram_ratio` in `docker-compose.yml`.
+
+**Rclone returns "400 Bad Request" on list/copy**
+- Ensure `list_version=2` is set in your rclone remote config. The gateway only
+  implements S3 ListObjectsV2.
+
+**CIDGravity shows "Not Configured" in the Web UI**
+- Verify `CIDGRAVITY_API_TOKEN` is set in `settings.env` and not empty.
+- Rebuild the Docker image after code updates (`docker build . -t fgw:local`)
+  so the embedded Web UI picks up fixes.
+
+**Gateway can't start — "no external module configured"**
+- Run `gwcfg` to configure the staging server URL and path, or set
+  `EXTERNAL_LOCALWEB_URL` and `EXTERNAL_LOCALWEB_PATH` in `settings.env`.
 
 ---
 

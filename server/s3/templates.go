@@ -5,10 +5,8 @@ import (
 	"text/template"
 )
 
-const locationXml = `
-<?xml version="1.0" encoding="UTF-8"?>
-<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{{.Region}}</LocationConstraint>
-`
+const locationXml = `<?xml version="1.0" encoding="UTF-8"?>
+<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{{.Region}}</LocationConstraint>`
 
 var locationTemplate = template.Must(template.New("location").Parse(locationXml))
 
@@ -44,14 +42,12 @@ type ListObjectsResponse struct {
 	StartAfter            string `xml:"StartAfter"`
 }
 
-const createMultipartUploadXml = `
-<?xml version="1.0" encoding="UTF-8"?>
+const createMultipartUploadXml = `<?xml version="1.0" encoding="UTF-8"?>
 <InitiateMultipartUploadResult>
    <Bucket>{{.Bucket}}</Bucket>
    <Key>{{.Key}}</Key>
    <UploadId>{{.UploadId}}</UploadId>
-</InitiateMultipartUploadResult>
-`
+</InitiateMultipartUploadResult>`
 
 var createMultipartUploadTemplate = template.Must(template.New("createMultipartUpload").Parse(createMultipartUploadXml))
 
@@ -76,4 +72,23 @@ type completeMultipartUploadResponseParams struct {
 	Bucket string
 	Key    string
 	ETag   string
+}
+
+type ListPartsResponse struct {
+	XMLName              xml.Name             `xml:"ListPartsResult"`
+	Bucket               string               `xml:"Bucket"`
+	Key                  string               `xml:"Key"`
+	UploadId             string               `xml:"UploadId"`
+	PartNumberMarker     int                  `xml:"PartNumberMarker"`
+	NextPartNumberMarker int                  `xml:"NextPartNumberMarker"`
+	MaxParts             int32                `xml:"MaxParts"`
+	IsTruncated          bool                 `xml:"IsTruncated"`
+	Parts                []ListPartsPartEntry `xml:"Part"`
+}
+
+type ListPartsPartEntry struct {
+	PartNumber   int    `xml:"PartNumber"`
+	LastModified string `xml:"LastModified"`
+	ETag         string `xml:"ETag"`
+	Size         uint64 `xml:"Size"`
 }

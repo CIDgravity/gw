@@ -227,6 +227,15 @@ func (b *mockBucket) AbortMultipartPut(ctx context.Context, name iface.S3Key, up
 	return nil
 }
 
+func (b *mockBucket) ListParts(ctx context.Context, key iface.S3Key, query *iface.ListPartsQuery) (*iface.ListPartsResult, error) {
+	return &iface.ListPartsResult{
+		Bucket:   b.name,
+		Key:      key,
+		UploadID: query.UploadID,
+		MaxParts: query.MaxParts,
+	}, nil
+}
+
 func (b *mockBucket) addObject(key iface.S3Key, data []byte, etag string, timestamp time.Time) {
 	b.objects[key] = mockObject{
 		data: data,
