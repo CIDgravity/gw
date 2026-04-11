@@ -186,6 +186,10 @@ func (s *FrontendServer) routeToCoordinator(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+	if upload.Status != "active" || (!upload.ExpiresAt.IsZero() && time.Now().After(upload.ExpiresAt)) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
 
 	// Get the backend for the coordinator node
 	backend := s.backendPool.Get(upload.NodeID)

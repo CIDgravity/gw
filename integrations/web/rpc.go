@@ -80,6 +80,10 @@ func (rc *RIBSRpc) DealSummary(ctx context.Context) (iface2.DealSummary, error) 
 	return rc.ribs.DealDiag().DealSummary()
 }
 
+func (rc *RIBSRpc) DealLoopStats(ctx context.Context) (iface2.DealLoopStats, error) {
+	return rc.ribs.DealDiag().DealLoopStats(), nil
+}
+
 func (rc *RIBSRpc) RetrStats(ctx context.Context) (iface2.RetrStats, error) {
 	return rc.ribs.DealDiag().RetrStats()
 }

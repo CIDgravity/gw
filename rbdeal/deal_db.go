@@ -1502,6 +1502,20 @@ func (r *ribsDB) GetExternalPath(group iface2.GroupKey) (*string, *string, error
 
 	return &module, &path, nil
 }
+
+func (r *ribsDB) GetGroupByExternalPath(module string, path string) (*iface2.GroupKey, error) {
+	var group iface2.GroupKey
+	err := r.db.QueryRow(`select group_id from external_path where module = $1 and path = $2`, module, path).Scan(&group)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, xerrors.Errorf("XYZ: query: %w", err)
+	}
+
+	return &group, nil
+}
+
 func (r *ribsDB) AddExternalPath(group iface2.GroupKey, module string, path string) error {
 	_, err := r.db.Exec(`insert into external_path (group_id, module, path) values ($1, $2, $3)`, group, module, path)
 	if err != nil {

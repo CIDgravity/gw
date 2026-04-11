@@ -111,7 +111,7 @@ export default function Group() {
                     {dealCounts.started > 0 && <span><span className="deal-counts-start">{dealCounts.started} Started</span> | </span>}
                     {dealCounts.errors > 0 && <span><span className="deal-counts-err">{dealCounts.errors} Errored</span></span>}
                 </div>
-                <div>PieceCID: {group.PieceCID} <a target="_blank" href={`https://filecoin.tools/${group.PieceCID}`}>[filecoin.tools]</a></div>
+                <div>PieceCID: {group.PieceCID} <a target="_blank" rel="noreferrer" href={`https://filecoin.tools/search?q=${group.PieceCID}`}>[filecoin.tools]</a></div>
                 <div>RootCID: {group.RootCID}</div>
             </div>
             <div className="group" >

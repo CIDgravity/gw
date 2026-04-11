@@ -316,6 +316,11 @@ func (srv *S3Server) handleUploadPart(w http.ResponseWriter, r *http.Request) er
 		w.WriteHeader(400)
 		return nil
 	}
+	if partNumber < 1 || partNumber > 10000 {
+		log.Infow("partNumber out of range", "URL", r.URL, "partNumber", partNumber)
+		w.WriteHeader(400)
+		return nil
+	}
 
 	bucketName, objectName, err := requestToObject(r)
 	if err != nil {
@@ -486,6 +491,11 @@ func (srv *S3Server) handleListParts(w http.ResponseWriter, r *http.Request) err
 			w.WriteHeader(400)
 			return nil
 		}
+		if mp < 1 || mp > 1000 {
+			log.Infow("max-parts out of range", "URL", r.URL, "maxParts", mp)
+			w.WriteHeader(400)
+			return nil
+		}
 		maxParts = int32(mp)
 	}
 
@@ -494,6 +504,11 @@ func (srv *S3Server) handleListParts(w http.ResponseWriter, r *http.Request) err
 		pnm, err := strconv.Atoi(params.Get("part-number-marker"))
 		if err != nil {
 			log.Infow("bad part-number-marker", "URL", r.URL)
+			w.WriteHeader(400)
+			return nil
+		}
+		if pnm < 0 || pnm > 10000 {
+			log.Infow("part-number-marker out of range", "URL", r.URL, "partNumberMarker", pnm)
 			w.WriteHeader(400)
 			return nil
 		}

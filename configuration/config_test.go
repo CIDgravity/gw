@@ -188,6 +188,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		{"Cache.PrefetchDepth", cfg.Cache.PrefetchDepth, 2},
 
 		// LocalwebConfig defaults
+		{"External.Localweb.Path", cfg.External.Localweb.Path, "~/.ribsdata/cardata"},
 		{"External.Localweb.BuiltinServer", cfg.External.Localweb.BuiltinServer, true},
 		{"External.Localweb.ServerPort", cfg.External.Localweb.ServerPort, "8443"},
 		{"External.Localweb.ServerTLS", cfg.External.Localweb.ServerTLS, true},

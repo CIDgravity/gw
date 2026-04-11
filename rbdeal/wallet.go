@@ -2,6 +2,7 @@ package rbdeal
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
@@ -16,6 +17,14 @@ import (
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 )
+
+func isTransientChainVisibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "actor not found") || strings.Contains(errStr, "execution reverted")
+}
 
 func (r *ribs) MarketWithdraw(ctx context.Context, amount abi.TokenAmount) (cid.Cid, error) {
 	//TODO implement me
@@ -61,17 +70,27 @@ func (r *ribs) WalletInfo() (iface.WalletInfo, error) {
 
 	dc, err := gw.StateVerifiedClientStatus(ctx, addr, types.EmptyTSK)
 	if err != nil {
-		return iface.WalletInfo{}, xerrors.Errorf("get verified client status: %w", err)
+		if !isTransientChainVisibilityError(err) {
+			return iface.WalletInfo{}, xerrors.Errorf("get verified client status: %w", err)
+		}
+		log.Warnw("wallet datacap not yet visible on chain", "addr", addr, "error", err)
+		dc = nil
 	}
 
 	id, err := gw.StateLookupID(ctx, addr, types.EmptyTSK)
+	idAddr := addr.String()
 	if err != nil {
-		return iface.WalletInfo{}, xerrors.Errorf("get address id: %w", err)
+		if !isTransientChainVisibilityError(err) {
+			return iface.WalletInfo{}, xerrors.Errorf("get address id: %w", err)
+		}
+		log.Warnw("wallet id address not yet visible on chain", "addr", addr, "error", err)
+	} else {
+		idAddr = id.String()
 	}
 
 	wi := iface.WalletInfo{
 		Addr:                  addr.String(),
-		IDAddr:                id.String(),
+		IDAddr:                idAddr,
 		Balance:               types.FIL(b).Short(),
 		MarketBalance:         types.FIL(mb.Escrow).Short(),
 		MarketLocked:          types.FIL(mb.Locked).Short(),

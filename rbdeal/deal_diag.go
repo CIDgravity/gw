@@ -31,6 +31,12 @@ func (r *ribs) ReachableProviders() []iface2.ProviderMeta {
 	return r.db.ReachableProviders()
 }
 
+func (r *ribs) DealLoopStats() iface2.DealLoopStats {
+	r.dealLoopStatsLk.Lock()
+	defer r.dealLoopStatsLk.Unlock()
+	return r.dealLoopStats
+}
+
 func (r *ribs) ProviderInfo(id int64) (iface2.ProviderInfo, error) {
 	return r.db.ProviderInfo(id)
 }

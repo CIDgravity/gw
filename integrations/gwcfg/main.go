@@ -687,7 +687,7 @@ func envComment(key string) string {
 	case "EXTERNAL_LOCALWEB_SERVER_TLS":
 		return "Whether to run the local web server with TLS (true/false)"
 	case "EXTERNAL_LOCALWEB_PATH":
-		return "The path to the local web server's data directory (required for external web server, allowed for builtin server)"
+		return "The path to the local web server's data directory. Defaults to <RIBS_DATA>/cardata"
 	}
 	return ""
 }

@@ -1,6 +1,7 @@
 package sqldb
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -19,6 +20,32 @@ var migrationsfs embed.FS
 
 type YugabyteDB struct {
 	*sql.DB
+}
+
+const dbStartupMaxAttempts = 30
+
+func retryDBStartup(name string, fn func() error) error {
+	backoff := 2 * time.Second
+	var err error
+
+	for attempt := 1; attempt <= dbStartupMaxAttempts; attempt++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if attempt == dbStartupMaxAttempts {
+			break
+		}
+		time.Sleep(backoff)
+		if backoff < 15*time.Second {
+			backoff *= 2
+			if backoff > 15*time.Second {
+				backoff = 15 * time.Second
+			}
+		}
+	}
+
+	return fmt.Errorf("%s after %d attempts: %w", name, dbStartupMaxAttempts, err)
 }
 
 func NewYugabyteDB(config configuration.YugabyteSqlConfig) (*YugabyteDB, error) {
@@ -53,7 +80,14 @@ func NewYugabyteDB(config configuration.YugabyteSqlConfig) (*YugabyteDB, error) 
 	yugabyte := &YugabyteDB{
 		db,
 	}
-	err = yugabyte.runMigrations()
+	err = retryDBStartup("initialize yugabyte sql", func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			return fmt.Errorf("ping yugabyte sql: %w", err)
+		}
+		return yugabyte.runMigrations()
+	})
 	if err != nil {
 		return nil, err
 	}

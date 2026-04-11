@@ -3,6 +3,7 @@ package configuration
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ var log = logging.Logger("ribs:config")
 // This is an alternative to S3 for staging storage, useful for local/on-premise deployments.
 type LocalwebConfig struct {
 	// Path is the local filesystem path where CAR files are stored.
-	// Example: "/data/ribs/carfiles"
+	// Defaults to <RIBS_DATA>/cardata.
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
 
 	// Url is the public URL where storage providers can fetch CAR files.
@@ -571,6 +572,10 @@ func LoadConfig() error {
 	// Configure log format first (before any logging)
 	if err := configureLogFormat(config.LogFormat); err != nil {
 		return xerrors.Errorf("configuring log format: %w", err)
+	}
+
+	if config.External.Localweb.Path == "" {
+		config.External.Localweb.Path = filepath.Join(config.Ribs.DataDir, "cardata")
 	}
 
 	rcfg := config.Ribs

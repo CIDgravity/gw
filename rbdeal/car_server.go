@@ -9,15 +9,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/mitchellh/go-homedir"
 
 	types "github.com/CIDgravity/filecoin-gateway/ributil/boosttypes"
-	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
@@ -133,49 +134,8 @@ func (r *ribs) CarUploadStats() iface.UploadStats {
 	}
 } */
 
-var jwtKey = func() *jwt.HMACSHA { // todo generate / store
-	return jwt.NewHS256([]byte("this is super safe"))
-}()
-
-type carRequestToken struct {
-	Group   int64
-	Timeout int64
-	CarSize int64
-
-	DealUUID uuid.UUID
-}
-
-func (r *ribs) verify(ctx context.Context, token string) (carRequestToken, error) {
-	var payload carRequestToken
-	if _, err := jwt.Verify([]byte(token), jwtKey, &payload); err != nil {
-		return carRequestToken{}, xerrors.Errorf("JWT Verification failed: %w", err)
-	}
-
-	if payload.Timeout < time.Now().Add(-dealDownloadTimeout).Unix() {
-		return carRequestToken{}, xerrors.Errorf("token expired")
-	}
-
-	return payload, nil
-}
-
-func (r *ribs) makeCarRequestToken(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) ([]byte, error) {
-	p := carRequestToken{
-		Group:    group,
-		Timeout:  time.Now().Add(timeout).Unix(),
-		CarSize:  carSize,
-		DealUUID: deal,
-	}
-
-	return jwt.Sign(&p, jwtKey)
-}
-
 func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) (types.Transfer, error) {
 	cfg := configuration.GetConfig()
-
-	reqToken, err := r.makeCarRequestToken(group, timeout, carSize, deal)
-	if err != nil {
-		return types.Transfer{}, xerrors.Errorf("make car request token: %w", err)
-	}
 
 	if cfg.External.S3.Endpoint != "" {
 		return types.Transfer{}, xerrors.Errorf("s3 endpoint is set, direct to s3 TODO")
@@ -191,9 +151,6 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 	}
 
 	transferParams := &types.HttpRequest{URL: *extu}
-	transferParams.Headers = map[string]string{
-		"Authorization": string(reqToken),
-	}
 
 	paramsBytes, err := json.Marshal(transferParams)
 	if err != nil {
@@ -210,20 +167,26 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 }
 
 func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
-	if req.Header.Get("Authorization") == "" {
-		log.Warnw("car request auth: no auth header", "url", req.URL)
-		w.WriteHeader(http.StatusUnauthorized)
+	requestPath := strings.TrimPrefix(pathpkg.Clean("/"+req.URL.Path), "/")
+	if requestPath == "" || requestPath == "." || strings.Contains(requestPath, "/") {
+		log.Warnw("car request: invalid path", "url", req.URL)
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
-	reqToken, err := r.verify(req.Context(), req.Header.Get("Authorization"))
+	group, err := r.db.GetGroupByExternalPath(EXTERNAL_LOCALWEB, requestPath)
 	if err != nil {
-		log.Warnw("car request auth: failed to verify token", "error", err, "url", req.URL)
-		http.Error(w, xerrors.Errorf("car request auth: %w", err).Error(), http.StatusUnauthorized)
+		log.Errorw("car request: lookup external path", "error", err, "path", requestPath, "url", req.URL)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if group == nil {
+		log.Warnw("car request: unknown path", "path", requestPath, "url", req.URL)
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	log := log.With("deal", reqToken.DealUUID)
+	log := log.With("group", *group, "path", requestPath)
 
 	// this is a local transfer, track stats
 
@@ -279,9 +242,9 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	*/
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
-	cf, err := r.externalOffloader.ReadCarFile(req.Context(), reqToken.Group)
+	cf, err := r.externalOffloader.ReadCarFile(req.Context(), *group)
 	if err != nil {
-		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
+		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -300,7 +263,7 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	   	}()
 	*/
 	if err != nil {
-		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
+		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

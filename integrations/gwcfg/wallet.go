@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/rbdeal"
@@ -23,6 +24,14 @@ import (
 const (
 	WaitWalletPoll = 10 * time.Second
 )
+
+func isPendingWalletVisibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "actor not found") || strings.Contains(errStr, "execution reverted") || errors.Is(err, os.ErrNotExist)
+}
 
 func EnsureWalletExists(walletPath string) (*ributil.LocalWallet, address.Address, error) {
 	wallet, addr, err := rbdeal.OpenOrCreateWallet(walletPath)
@@ -44,7 +53,7 @@ func WalletExistsOnChain(ctx context.Context, lotusAPIAddr, addrStr string) (boo
 	defer closer()
 	_, err = gapi.StateLookupID(ctx, addr, types.EmptyTSK)
 	if err != nil {
-		if err.Error() == "actor not found" || errors.Is(err, os.ErrNotExist) {
+		if isPendingWalletVisibilityError(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("lookupid: %w", err)

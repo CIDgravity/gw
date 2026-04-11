@@ -8,6 +8,22 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, Responsive
 
 const oneFil = 1000000000000000000
 
+function formatUnixTime(unixSeconds) {
+    if (!unixSeconds) return '-';
+    return new Date(unixSeconds * 1000).toLocaleTimeString();
+}
+
+function formatCountdown(unixSeconds) {
+    if (!unixSeconds) return '-';
+    const diffMs = unixSeconds * 1000 - Date.now();
+    if (diffMs <= 0) return 'now';
+    const totalSeconds = Math.ceil(diffMs / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${seconds}s`;
+}
+
 function WalletInfoTile({ walletInfo }) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [amount, setAmount] = useState(oneFil);
@@ -22,8 +38,13 @@ function WalletInfoTile({ walletInfo }) {
     };
 
     const handleAddWithdrawClick = (type) => {
+        if (operationType === type && dropdownOpen) {
+            setDropdownOpen(false);
+            setOperationType('');
+            return;
+        }
         setOperationType(type);
-        setDropdownOpen(!dropdownOpen);
+        setDropdownOpen(true);
     };
 
     const handleAmountChange = (event) => {
@@ -125,9 +146,9 @@ function WalletInfoTile({ walletInfo }) {
                     </tr>
                     <tr>
                         <td colSpan={2} style={{textAlign: 'center'}}>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://filfox.info/en/address/${walletInfo.Addr}`}>FilFox</a>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://datacapstats.io/clients/${walletInfo.IDAddr}`}>DcapStats</a>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://dag.parts/client/${walletInfo.IDAddr}`}>DagParts</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://filfox.info/en/address/${walletInfo.Addr}`}>FilFox</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://datacapstats.io/clients/${walletInfo.IDAddr}`}>DcapStats</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://dag.parts/client/${walletInfo.IDAddr}`}>DagParts</a>
                         </td>
                     </tr>
                     <tr>
@@ -164,9 +185,21 @@ function WalletInfoTile({ walletInfo }) {
                                 {walletInfo.MarketBalance}
                             </span>
                             {' '}
-                            <button className="button-sm" onClick={() => handleAddWithdrawClick('add')}>Add</button>
+                            <span className="segmented-control">
+                                <button
+                                    className={`button-sm segmented-button ${operationType === 'add' && dropdownOpen ? 'active' : ''}`}
+                                    onClick={() => handleAddWithdrawClick('add')}
+                                >
+                                    {operationType === 'add' && dropdownOpen ? 'Add Selected' : 'Add'}
+                                </button>
                             {' '}
-                            <button className="button-sm" onClick={() => handleAddWithdrawClick('withdraw')}>Withdraw</button>
+                                <button
+                                    className={`button-sm segmented-button ${operationType === 'withdraw' && dropdownOpen ? 'active' : ''}`}
+                                    onClick={() => handleAddWithdrawClick('withdraw')}
+                                >
+                                    {operationType === 'withdraw' && dropdownOpen ? 'Withdraw Selected' : 'Withdraw'}
+                                </button>
+                            </span>
                             {' '}
                             <button 
                                 className="button-sm" 
@@ -453,7 +486,7 @@ function ParallelWritesTile() {
     );
 }
 
-function DealsTile({ dealSummary }) {
+function DealsTile({ dealSummary, dealLoopStats }) {
     return (
         <div style={{background: '#FFF4DD'}}>
             <h2>Deals: {dealSummary.InProgress + dealSummary.Done}</h2>
@@ -487,6 +520,32 @@ function DealsTile({ dealSummary }) {
                     <td>Deals failed:</td>
                     <td>{dealSummary.Failed}</td>
                 </tr>
+                <tr>
+                    <td>Loop state:</td>
+                    <td>{dealLoopStats?.Running ? 'Running' : 'Sleeping'}</td>
+                </tr>
+                <tr>
+                    <td>Next deal check:</td>
+                    <td>{formatCountdown(dealLoopStats?.NextCheckUnix)}</td>
+                </tr>
+                <tr>
+                    <td>Last check:</td>
+                    <td>{formatUnixTime(dealLoopStats?.LastEndUnix)}</td>
+                </tr>
+                <tr>
+                    <td>Last duration:</td>
+                    <td>{dealLoopStats?.LastDurationMs || 0}ms</td>
+                </tr>
+                <tr>
+                    <td>Loop backoff:</td>
+                    <td>{dealLoopStats?.CurrentBackoffMs || 0}ms</td>
+                </tr>
+                {!!dealLoopStats?.LastError && (
+                    <tr>
+                        <td>Last loop error:</td>
+                        <td style={{color: '#f44336', fontSize: '0.85em'}}>{dealLoopStats.LastError}</td>
+                    </tr>
+                )}
                 </tbody>
             </table>
         </div>
@@ -1300,7 +1359,7 @@ function CIDGravityStatusTile() {
                     )}
                     <tr>
                         <td colSpan={2} style={{fontSize: '0.8em', color: '#666', paddingTop: '8px'}}>
-                            <a href="https://cidgravity.com" target="_blank" rel="noopener noreferrer" className="button-ish button-sm">
+                            <a href="https://app.cidgravity.com" target="_blank" rel="noopener noreferrer" className="button-ish button-sm">
                                 CIDGravity Dashboard
                             </a>
                         </td>
@@ -1451,6 +1510,7 @@ function Status() {
     const [carUploadStats, setCarUploadStats] = useState({});
     const [reachableProviders, setReachableProviders] = useState([]);
     const [dealSummary, setDealSummary] = useState({});
+    const [dealLoopStats, setDealLoopStats] = useState({});
     const [retrStats, setRetrStats] = useState({});
     const [retrChecker, setRetrChecker] = useState({})
     const [workerStats, setWorkerStats] = useState({})
@@ -1464,6 +1524,7 @@ function Status() {
             const carUploadStats = await RibsRPC.call("CarUploadStats");
             const reachableProviders = await RibsRPC.call("ReachableProviders");
             const dealSummary = await RibsRPC.call("DealSummary");
+            const dealLoopStats = await RibsRPC.call("DealLoopStats");
             const retrStats = await RibsRPC.call("RetrStats");
             const retrCheckerStats = await RibsRPC.call("RetrChecker")
             const workerStats = await RibsRPC.call("WorkerStats")
@@ -1473,6 +1534,7 @@ function Status() {
             setCarUploadStats(carUploadStats);
             setReachableProviders(reachableProviders);
             setDealSummary(dealSummary);
+            setDealLoopStats(dealLoopStats);
             setRetrStats(retrStats);
             setRetrChecker(retrCheckerStats);
             setWorkerStats(workerStats);
@@ -1503,7 +1565,7 @@ function Status() {
 
                 <h1><abbr title="Decentralized Storage Network">DSN</abbr></h1>
                 <div className="status-grid">
-                    <DealsTile dealSummary={dealSummary} />
+                    <DealsTile dealSummary={dealSummary} dealLoopStats={dealLoopStats} />
                     <DealCountsChart />
                     <ProvidersTile reachableProviders={reachableProviders} />
                     <CarUploadStatsTile carUploadStats={carUploadStats} />

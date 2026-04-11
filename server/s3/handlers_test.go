@@ -882,6 +882,55 @@ func TestHandleDeleteObject_BucketNotFound(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+func TestHandleUploadPart_InvalidPartNumberRange(t *testing.T) {
+	region := newMockRegion("us-east-1", "node-123")
+	bucket := newMockBucket("test-bucket")
+	region.addBucket("test-bucket", bucket)
+
+	auth := newMockAuthenticator()
+	srv := NewS3Server(region, auth)
+
+	req := httptest.NewRequest("PUT", "/test-bucket/object.txt?uploadId=u1&partNumber=0", bytes.NewReader([]byte("part")))
+	req.Header.Set("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+	w := httptest.NewRecorder()
+
+	err := srv.handleUploadPart(w, req)
+	require.NoError(t, err)
+	assert.Equal(t, 400, w.Result().StatusCode)
+}
+
+func TestHandleListParts_InvalidMaxPartsRange(t *testing.T) {
+	region := newMockRegion("us-east-1", "node-123")
+	bucket := newMockBucket("test-bucket")
+	region.addBucket("test-bucket", bucket)
+
+	auth := newMockAuthenticator()
+	srv := NewS3Server(region, auth)
+
+	req := httptest.NewRequest("GET", "/test-bucket/object.txt?uploadId=u1&max-parts=1001", nil)
+	w := httptest.NewRecorder()
+
+	err := srv.handleListParts(w, req)
+	require.NoError(t, err)
+	assert.Equal(t, 400, w.Result().StatusCode)
+}
+
+func TestHandleListParts_InvalidPartNumberMarkerRange(t *testing.T) {
+	region := newMockRegion("us-east-1", "node-123")
+	bucket := newMockBucket("test-bucket")
+	region.addBucket("test-bucket", bucket)
+
+	auth := newMockAuthenticator()
+	srv := NewS3Server(region, auth)
+
+	req := httptest.NewRequest("GET", "/test-bucket/object.txt?uploadId=u1&part-number-marker=10001", nil)
+	w := httptest.NewRecorder()
+
+	err := srv.handleListParts(w, req)
+	require.NoError(t, err)
+	assert.Equal(t, 400, w.Result().StatusCode)
+}
+
 // ========================================
 // Edge Cases and Error Handling
 // ========================================

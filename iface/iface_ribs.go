@@ -30,6 +30,7 @@ type RIBSDiag interface {
 	ProviderInfo(id int64) (ProviderInfo, error)
 	CrawlState() CrawlState
 	ReachableProviders() []ProviderMeta
+	DealLoopStats() DealLoopStats
 
 	RetrStats() (RetrStats, error)
 
@@ -210,6 +211,18 @@ type DealSummary struct {
 
 	TotalDataSize, TotalDealSize   int64
 	StoredDataSize, StoredDealSize int64
+}
+
+type DealLoopStats struct {
+	Running             bool
+	BaseIntervalMs      int64
+	CurrentBackoffMs    int64
+	ConsecutiveFailures int64
+	LastStartUnix       int64
+	LastEndUnix         int64
+	NextCheckUnix       int64
+	LastDurationMs      int64
+	LastError           string
 }
 
 type ProviderInfo struct {
