@@ -62,8 +62,9 @@ docker compose up -d yugabyte
 #   - Configure the staging (localweb) server URL and path
 #   - Write all settings to settings.env
 #
-# When prompted for the staging URL, enter the public URL that storage
+# When prompted for the staging URL, enter the public root URL that storage
 # providers will use to fetch CAR files (e.g. https://your-host.example.com).
+# Do not include a path component; RIBS appends the randomized CAR filename.
 # When asked to test the endpoint, choose No — the test server runs inside
 # the container without port mapping and cannot be reached externally.
 docker run -it --rm \
@@ -76,19 +77,39 @@ docker run -it --rm \
 docker compose up -d
 ```
 
-> **Tip — Behind a reverse proxy:** If TLS is terminated externally (e.g. Caddy,
-> nginx), edit `data/config/settings.env` after running `gwcfg`:
-> ```
-> EXTERNAL_LOCALWEB_SERVER_PORT=2333
-> EXTERNAL_LOCALWEB_SERVER_TLS=false
-> ```
-> Then add `"2333:2333"` to the `ports:` list in `docker-compose.yml`.
->
+#### LocalWeb Modes
+
+Choose one staging mode explicitly:
+
+- **Built-in autocert mode**
+  - Keep `EXTERNAL_LOCALWEB_SERVER_TLS=true`
+  - Set `EXTERNAL_LOCALWEB_URL=https://your-host.example.com`
+  - Point public DNS at the gateway node
+  - Leave `443:8443` published so the built-in server can answer ACME and serve CARs
+
+- **Reverse-proxy mode**
+  - Set `EXTERNAL_LOCALWEB_SERVER_TLS=false`
+  - Keep `EXTERNAL_LOCALWEB_URL=https://your-host.example.com`
+  - Terminate TLS in nginx, Caddy, or an ingress and forward to `127.0.0.1:8443`
+  - Keep the gateway's raw `8443` listener private; the default compose file binds it to localhost only
+
+CAR download auth for the built-in LocalWeb server uses randomized staged CAR filenames as capability URLs. There is no shared JWT secret to distribute.
+
+#### Production Checklist
+
+- Wallet secret mounted and backed up from `${DATA_DIR}/wallet`
+- S3 API auth enabled before exposing `8078`
+- LocalWeb mode selected explicitly and `EXTERNAL_LOCALWEB_URL` set to the public root URL
+- Port `443` reachable if using built-in autocert mode
+- Metrics (`2112`), RIBSWeb (`9010`), and raw LocalWeb (`8443`) kept private by default
+
 > **Tip — YugabyteDB tuning:** The default docker-compose ships with conservative
 > memory settings (512 MiB block cache, 25% RAM ratio) suitable for 16-32 GB
 > machines. For larger hosts (128+ GB RAM), increase `db_block_cache_size_bytes`
 > and `default_memory_limit_to_ram_ratio` in the yugabyte `command:` section.
 > A 256 GB host can use 16 GiB block cache and 0.6 ratio for ~10x throughput.
+
+> **Operational note:** `docker-compose.yml` is a hardened single-node deployment helper. For multi-node or public internet-facing deployments, prefer a real orchestrator and make the LocalWeb ingress mode explicit.
 
 #### Data Storage Locations
 

@@ -438,7 +438,7 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 	}
 
 	err := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description(envComment(urlKey.Var)),
+		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description("Public root URL for staged CAR downloads, for example https://example.com (no path component)"),
 		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files"),
 	)).Run()
 	if err != nil {

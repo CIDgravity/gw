@@ -679,13 +679,13 @@ func envComment(key string) string {
 	case "RIBS_DATA":
 		return "The path to the RIBS data directory"
 	case "EXTERNAL_LOCALWEB_BUILTIN_SERVER":
-		return "Whether to run a local web server for deal uploads (true/false)"
+		return "Keep this enabled. Use EXTERNAL_LOCALWEB_SERVER_TLS=false when a reverse proxy or ingress owns 443"
 	case "EXTERNAL_LOCALWEB_SERVER_PORT":
-		return "The port to run the local web server on"
+		return "Internal port for the LocalWeb server. The default 8443 works for both built-in autocert and reverse-proxy mode"
 	case "EXTERNAL_LOCALWEB_URL":
-		return "Public URL that storage providers will use to fetch staged data (e.g. https://example.com). You need to configure this domain to point the Filecoin gateway"
+		return "Public root URL that storage providers will use to fetch staged data (for example https://example.com). Do not include a path; RIBS appends the randomized CAR filename"
 	case "EXTERNAL_LOCALWEB_SERVER_TLS":
-		return "Whether to run the local web server with TLS (true/false)"
+		return "true = built-in autocert mode on 443. false = reverse-proxy mode where nginx/caddy/ingress terminates TLS and forwards to the gateway"
 	case "EXTERNAL_LOCALWEB_PATH":
 		return "The path to the local web server's data directory. Defaults to <RIBS_DATA>/cardata"
 	}
