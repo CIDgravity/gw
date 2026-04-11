@@ -75,6 +75,7 @@ function Providers() {
                         <div>Price</div>
                     </th>
                     <th>Features</th>
+                    <th>Cooldown</th>
                     <th>Started</th>
                     <th>Rejected</th>
                     <th>Failed</th>
@@ -94,6 +95,9 @@ function Providers() {
                         </td>
                         <td>
                             {`${provider.BoosterHttp ? "http " : ""} ${provider.BoosterBitswap ? "bitswap" : ""}`.trim()}
+                        </td>
+                        <td className="providers-ask">
+                            {provider.DealCooldownUntil ? formatTimestamp(provider.DealCooldownUntil) : "-"}
                         </td>
                         <td>{provider.DealStarted}</td>
                         <td>

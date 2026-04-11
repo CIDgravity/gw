@@ -4,7 +4,6 @@ import RibsRPC from "../helpers/rpc";
 import {
     formatBytesBinary,
     formatFil,
-    epochToMonth,
     epochToDate,
     epochToDuration,
     formatTimestamp
@@ -106,6 +105,18 @@ function Provider() {
                             <td>{provider.Meta.DealRejected}</td>
                         </tr>
                         <tr>
+                            <td>Deal Cooldown</td>
+                            <td>{provider.Meta.DealCooldownUntil ? formatTimestamp(provider.Meta.DealCooldownUntil) : "Ready"}</td>
+                        </tr>
+                        <tr>
+                            <td>Cooldown Reason</td>
+                            <td>{provider.Meta.DealCooldownReason || "-"}</td>
+                        </tr>
+                        <tr>
+                            <td>Cooldown Attempts</td>
+                            <td>{provider.Meta.DealCooldownAttempts || 0}</td>
+                        </tr>
+                        <tr>
                             <td>Retr Probe Success</td>
                             <td>{provider.Meta.RetrProbeSuccess}</td>
                         </tr>
@@ -124,7 +135,7 @@ function Provider() {
                         <tr>
                             <td>Links</td>
                             <td>
-                                <a href={`https://filfox.info/en/address/${providerID}`} target="_blank">FilFox</a>
+                                <a href={`https://filfox.info/en/address/${providerID}`} target="_blank" rel="noreferrer">FilFox</a>
                             </td>
                         </tr>
 

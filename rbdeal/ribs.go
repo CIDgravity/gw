@@ -105,6 +105,8 @@ type ribs struct {
 	lastWalletInfoUpdate time.Time
 	dealLoopStatsLk      sync.Mutex
 	dealLoopStats        iface2.DealLoopStats
+	providerCooldownsLk  sync.Mutex
+	providerCooldowns    map[int64]providerCooldownState
 
 	// Balance manager state tracking
 	balanceManagerLk             sync.Mutex
@@ -292,7 +294,8 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 		//workerClosed: make(chan struct{}),
 		spCrawlClosed: make(chan struct{}),
 
-		moreDealsLocks: map[iface2.GroupKey]struct{}{},
+		moreDealsLocks:    map[iface2.GroupKey]struct{}{},
+		providerCooldowns: map[int64]providerCooldownState{},
 
 		retrCheckMetrics: newRetrievalCheckMetrics(),
 

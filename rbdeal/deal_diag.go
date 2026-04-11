@@ -2,6 +2,7 @@ package rbdeal
 
 import (
 	"context"
+	"time"
 
 	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/CIDgravity/filecoin-gateway/server/metrics"
@@ -28,7 +29,12 @@ func (r *ribs) CrawlState() iface2.CrawlState {
 }
 
 func (r *ribs) ReachableProviders() []iface2.ProviderMeta {
-	return r.db.ReachableProviders()
+	out := r.db.ReachableProviders()
+	now := time.Now()
+	for i := range out {
+		r.applyProviderCooldown(&out[i], now)
+	}
+	return out
 }
 
 func (r *ribs) DealLoopStats() iface2.DealLoopStats {
@@ -38,7 +44,12 @@ func (r *ribs) DealLoopStats() iface2.DealLoopStats {
 }
 
 func (r *ribs) ProviderInfo(id int64) (iface2.ProviderInfo, error) {
-	return r.db.ProviderInfo(id)
+	info, err := r.db.ProviderInfo(id)
+	if err != nil {
+		return iface2.ProviderInfo{}, err
+	}
+	r.applyProviderCooldown(&info.Meta, time.Now())
+	return info, nil
 }
 
 func (r *ribs) DealSummary() (iface2.DealSummary, error) {

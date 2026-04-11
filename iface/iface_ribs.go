@@ -246,6 +246,10 @@ type ProviderMeta struct {
 	DealFail     int64
 	DealRejected int64
 
+	DealCooldownUntil    int64
+	DealCooldownAttempts int64
+	DealCooldownReason   string
+
 	MostRecentDealStart int64
 
 	// price in fil/gib/epoch
