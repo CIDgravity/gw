@@ -2,8 +2,10 @@ package configuration
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -577,6 +579,9 @@ func LoadConfig() error {
 	if config.External.Localweb.Path == "" {
 		config.External.Localweb.Path = filepath.Join(config.Ribs.DataDir, "cardata")
 	}
+	if err := validateLocalwebConfig(config.External.Localweb); err != nil {
+		return err
+	}
 
 	rcfg := config.Ribs
 	if rcfg.MinimumReplicaCount < 1 {
@@ -630,6 +635,57 @@ func LoadConfig() error {
 
 	log.Debugw("Loaded config")
 	return nil
+}
+
+func validateLocalwebConfig(cfg LocalwebConfig) error {
+	if cfg.Url == "" {
+		return nil
+	}
+	if !cfg.BuiltinServer {
+		return xerrors.Errorf("EXTERNAL_LOCALWEB_BUILTIN_SERVER=false is no longer supported; use reverse-proxy mode with EXTERNAL_LOCALWEB_SERVER_TLS=false")
+	}
+
+	port, err := strconv.Atoi(cfg.ServerPort)
+	if err != nil || port < 1 || port > 65535 {
+		return xerrors.Errorf("invalid EXTERNAL_LOCALWEB_SERVER_PORT: %q", cfg.ServerPort)
+	}
+
+	parsed, err := url.Parse(cfg.Url)
+	if err != nil {
+		return xerrors.Errorf("invalid EXTERNAL_LOCALWEB_URL: %w", err)
+	}
+	if parsed.Hostname() == "" {
+		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must include a host")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include a path; use the host root and let RIBS append the randomized CAR filename")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include query or fragment components")
+	}
+
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if !cfg.ServerTLS && isLoopbackHostname(parsed.Hostname()) {
+			return nil
+		}
+	}
+
+	if cfg.ServerTLS {
+		return xerrors.Errorf("built-in autocert mode requires EXTERNAL_LOCALWEB_URL to use https")
+	}
+	return xerrors.Errorf("reverse-proxy mode requires an https EXTERNAL_LOCALWEB_URL; plain http is only allowed for loopback testing")
+}
+
+func isLoopbackHostname(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Config) configureLogLevels() error {

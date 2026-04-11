@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"time"
@@ -168,6 +169,31 @@ func (lwi *LocalWebInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) e
 func (lwi *LocalWebInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
 	url := fmt.Sprintf("%s/%s", lwi.url, lpath)
 	return &url, nil
+}
+
+func (lwi *LocalWebInfo) PreDealTransferCheck(ctx context.Context, gid iface.GroupKey, externalURL string, size int64) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodHead, externalURL, nil)
+	if err != nil {
+		return xerrors.Errorf("build staged CAR probe request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return xerrors.Errorf("probe staged CAR URL %s: %w", externalURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return xerrors.Errorf("probe staged CAR URL %s: unexpected status %d", externalURL, resp.StatusCode)
+	}
+	if size > 0 && resp.ContentLength > 0 && resp.ContentLength != size {
+		return xerrors.Errorf("probe staged CAR URL %s: size mismatch got %d expected %d", externalURL, resp.ContentLength, size)
+	}
+
+	return nil
 }
 
 func (lwi *LocalWebInfo) CleanExternal(gid iface.GroupKey, lpath string) error {

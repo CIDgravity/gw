@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -251,7 +252,7 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	t.Setenv("FGW_L2_CACHE_ENABLED", "true")
 	t.Setenv("RIBS_LOG_FORMAT", "json")
 	t.Setenv("EXTERNAL_LOCALWEB_PATH", "/custom/cars")
-	t.Setenv("EXTERNAL_LOCALWEB_URL", "https://example.com/cars")
+	t.Setenv("EXTERNAL_LOCALWEB_URL", "https://example.com")
 	t.Setenv("RIBS_ENABLE_PARALLEL_WRITES", "true")
 	t.Setenv("RIBS_MAX_PARALLEL_GROUPS", "8")
 
@@ -296,7 +297,7 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 		{"Cache.L2Enabled", cfg.Cache.L2Enabled, true},
 		{"LogFormat", cfg.LogFormat, "json"},
 		{"External.Localweb.Path", cfg.External.Localweb.Path, "/custom/cars"},
-		{"External.Localweb.Url", cfg.External.Localweb.Url, "https://example.com/cars"},
+		{"External.Localweb.Url", cfg.External.Localweb.Url, "https://example.com"},
 		{"ParallelWrite.Enabled", cfg.ParallelWrite.Enabled, true},
 		{"ParallelWrite.MaxParallelGroups", cfg.ParallelWrite.MaxParallelGroups, 8},
 	}
@@ -480,6 +481,85 @@ func TestLoadConfig_Validation_RetrievableThreshold(t *testing.T) {
 				if err != nil {
 					t.Errorf("LoadConfig() unexpected error = %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestLoadConfig_Validation_LocalwebModes(t *testing.T) {
+	tests := []struct {
+		name        string
+		url         string
+		builtin     string
+		serverTLS   string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "builtin autocert mode",
+			url:       "https://fgw.example.com",
+			builtin:   "true",
+			serverTLS: "true",
+		},
+		{
+			name:      "reverse proxy mode",
+			url:       "https://fgw.example.com",
+			builtin:   "true",
+			serverTLS: "false",
+		},
+		{
+			name:      "loopback http testing mode",
+			url:       "http://127.0.0.1:8443",
+			builtin:   "true",
+			serverTLS: "false",
+		},
+		{
+			name:        "non root url path rejected",
+			url:         "https://fgw.example.com/cars",
+			builtin:     "true",
+			serverTLS:   "true",
+			wantErr:     true,
+			errContains: "must not include a path",
+		},
+		{
+			name:        "builtin disabled rejected",
+			url:         "https://fgw.example.com",
+			builtin:     "false",
+			serverTLS:   "false",
+			wantErr:     true,
+			errContains: "EXTERNAL_LOCALWEB_BUILTIN_SERVER=false is no longer supported",
+		},
+		{
+			name:        "public http rejected",
+			url:         "http://fgw.example.com",
+			builtin:     "true",
+			serverTLS:   "false",
+			wantErr:     true,
+			errContains: "reverse-proxy mode requires an https EXTERNAL_LOCALWEB_URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetConfig()
+			setValidLogLevel(t)
+			t.Setenv("EXTERNAL_LOCALWEB_URL", tt.url)
+			t.Setenv("EXTERNAL_LOCALWEB_BUILTIN_SERVER", tt.builtin)
+			t.Setenv("EXTERNAL_LOCALWEB_SERVER_TLS", tt.serverTLS)
+
+			err := LoadConfig()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.errContains)
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Fatalf("expected error containing %q, got %q", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
 			}
 		})
 	}

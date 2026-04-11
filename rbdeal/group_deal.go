@@ -130,6 +130,17 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("get deal params: %w", err)
 	}
 
+	extURL, err := r.maybeGetExternalURL(id)
+	if err != nil {
+		return xerrors.Errorf("get staged CAR URL: %w", err)
+	}
+	if extURL == nil {
+		return xerrors.Errorf("get staged CAR URL: missing external URL for group %d", id)
+	}
+	if err := r.externalOffloader.PreDealTransferCheck(ctx, id, *extURL, dealInfo.CarSize); err != nil {
+		return xerrors.Errorf("probe staged CAR URL: %w", err)
+	}
+
 	notFailed, unretrievable, err := r.db.GetNonFailedDealCount(id)
 	if err != nil {
 		log.Errorw("getting non-failed deal count", "error", err)
