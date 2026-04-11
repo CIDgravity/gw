@@ -103,6 +103,8 @@ type ribs struct {
 	marketFundsLk        sync.Mutex
 	cachedWalletInfo     *iface2.WalletInfo
 	lastWalletInfoUpdate time.Time
+	dealLoopStatsLk      sync.Mutex
+	dealLoopStats        iface2.DealLoopStats
 
 	// Balance manager state tracking
 	balanceManagerLk             sync.Mutex
