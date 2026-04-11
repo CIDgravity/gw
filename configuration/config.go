@@ -574,6 +574,12 @@ func LoadConfig() error {
 	}
 
 	rcfg := config.Ribs
+	if rcfg.MinimumReplicaCount < 1 {
+		return xerrors.Errorf("MinimumReplicaCount must be at least 1: %d\n", rcfg.MinimumReplicaCount)
+	}
+	if rcfg.MaximumReplicaCount < 1 {
+		return xerrors.Errorf("MaximumReplicaCount must be at least 1: %d\n", rcfg.MaximumReplicaCount)
+	}
 	if rcfg.MinimumRetrievableCount > rcfg.MinimumReplicaCount {
 		return xerrors.Errorf("MinimunRetriveable count greater than MinimumReplica: %d > %d\n", rcfg.MinimumRetrievableCount, rcfg.MinimumReplicaCount)
 	}

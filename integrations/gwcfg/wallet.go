@@ -52,29 +52,6 @@ func WalletExistsOnChain(ctx context.Context, lotusAPIAddr, addrStr string) (boo
 	return true, nil
 }
 
-func FundWalletViaFaucet(faucetURL, addr string) error {
-	q := fmt.Sprintf("%s/fil?wallet=%s&fil=0.000001", faucetURL, addr)
-	res, err := http.Get(q)
-	if err != nil {
-		return fmt.Errorf("http faucet: %w", err)
-	}
-	defer res.Body.Close()
-	b, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 200 {
-		return fmt.Errorf("faucet non-200: %s: %s", res.Status, string(b))
-	}
-	var fr struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
-		Error   string `json:"error"`
-	}
-	_ = json.Unmarshal(b, &fr)
-	if !fr.Success {
-		return fmt.Errorf("faucet: %s", fr.Error)
-	}
-	return nil
-}
-
 func RequestDatacapViaFaucet(faucetURL, addr string, tibs int) (string, error) {
 	q := fmt.Sprintf("%s/datacap?wallet=%s&tibs=%d", faucetURL, addr, tibs)
 	res, err := http.Get(q)
@@ -103,10 +80,12 @@ func RequestDatacapViaFaucet(faucetURL, addr string, tibs int) (string, error) {
 	return fr.MessageCID, nil
 }
 
-// RequestFilViaFaucet requests a small amount of FIL from the faucet to top up the wallet.
-// This is called in parallel with datacap requests to ensure the wallet has some FIL for gas.
-func RequestFilViaFaucet(faucetURL, addr string) error {
-	q := fmt.Sprintf("%s/fil?wallet=%s", faucetURL, addr)
+func RequestFilViaFaucet(faucetURL, addr, filAmount string) error {
+	if filAmount == "" {
+		return fmt.Errorf("fil amount is required")
+	}
+
+	q := fmt.Sprintf("%s/fil?wallet=%s&fil=%s", faucetURL, addr, filAmount)
 	res, err := http.Get(q)
 	if err != nil {
 		return fmt.Errorf("http faucet: %w", err)

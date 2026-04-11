@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/CIDgravity/filecoin-gateway/test"
@@ -241,6 +242,83 @@ func TestWalIndex_Del(t *testing.T) {
 	require.Equal(t, int64(5), ents)
 
 	require.NoError(t, idx.Close())
+}
+
+func TestWalIndex_ConcurrentReadersDuringPut(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "idx.wal")
+	idx, err := CreateWalIndex(p)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, idx.Close())
+	}()
+
+	mhs := genMultihashes(t, 256)
+	offs := make([]int64, len(mhs))
+	for i := range offs {
+		offs[i] = makeOffsetLen(int64(i*128), 64+i%32)
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 16)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < 2000; i++ {
+			base := i % (len(mhs) - 8)
+			if err := idx.Put(mhs[base:base+8], offs[base:base+8]); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+
+	for r := 0; r < 8; r++ {
+		wg.Add(1)
+		go func(readerID int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < 1000; i++ {
+				base := (i + readerID) % (len(mhs) - 16)
+				subset := mhs[base : base+16]
+
+				switch i % 4 {
+				case 0:
+					if _, err := idx.Has(subset); err != nil {
+						errCh <- err
+						return
+					}
+				case 1:
+					if _, err := idx.Get(subset); err != nil {
+						errCh <- err
+						return
+					}
+				case 2:
+					if _, err := idx.Entries(); err != nil {
+						errCh <- err
+						return
+					}
+				case 3:
+					if err := idx.List(func(c multihash.Multihash, offs []int64) error {
+						return nil
+					}); err != nil {
+						errCh <- err
+						return
+					}
+				}
+			}
+		}(r)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		require.NoError(t, err)
+	}
 }
 
 // -------- Close/Reopen (WAL replay) tests --------

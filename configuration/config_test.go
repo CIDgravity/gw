@@ -349,6 +349,22 @@ func TestLoadConfig_Validation_ReplicaCounts(t *testing.T) {
 			errContains:    "MinimunReplica count greater than MaximumReplica",
 		},
 		{
+			name:           "invalid_zero_minReplica",
+			minRetrievable: "0",
+			minReplica:     "0",
+			maxReplica:     "10",
+			wantErr:        true,
+			errContains:    "MinimumReplicaCount must be at least 1",
+		},
+		{
+			name:           "invalid_zero_maxReplica",
+			minRetrievable: "1",
+			minReplica:     "1",
+			maxReplica:     "0",
+			wantErr:        true,
+			errContains:    "MaximumReplicaCount must be at least 1",
+		},
+		{
 			name:           "valid_all_equal",
 			minRetrievable: "5",
 			minReplica:     "5",

@@ -2,11 +2,16 @@ package test
 
 import (
 	"context"
+	"encoding/base32"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/filecoin-project/lotus/chain/wallet/key"
+	_ "github.com/filecoin-project/lotus/lib/sigs/secp"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
@@ -18,9 +23,10 @@ const yugabyteImage = "yugabytedb/yugabyte:2.25.2.0-b359"
 var log = logging.Logger("gw/test")
 
 type containerHarness struct {
-	yugabyte *testcontainers.Container
-	gw       *testcontainers.Container
-	net      *testcontainers.DockerNetwork
+	yugabyte  *testcontainers.Container
+	gw        *testcontainers.Container
+	net       *testcontainers.DockerNetwork
+	walletDir string
 }
 
 func newContainerHarness() *containerHarness {
@@ -42,6 +48,11 @@ func (ch *containerHarness) stop() {
 	if ch.gw != nil {
 		ch.terminateContainer(*ch.gw)
 	}
+	if ch.walletDir != "" {
+		if err := os.RemoveAll(ch.walletDir); err != nil {
+			log.Errorf("failed to remove wallet dir: %s", err)
+		}
+	}
 }
 
 func (ch *containerHarness) terminateContainer(ct testcontainers.Container) {
@@ -49,6 +60,26 @@ func (ch *containerHarness) terminateContainer(ct testcontainers.Container) {
 	if err != nil {
 		log.Fatalf("Failed to terminate the container %s", err)
 	}
+}
+
+func writeWalletKey(dir, name string, keyInfo types.KeyInfo) error {
+	encoded := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(name))
+	data, err := json.Marshal(keyInfo)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, encoded), data, 0o600)
+}
+
+func createTestWallet(dir string) error {
+	k, err := key.GenerateKey(types.KTSecp256k1)
+	if err != nil {
+		return err
+	}
+	if err := writeWalletKey(dir, "wallet-"+k.Address.String(), k.KeyInfo); err != nil {
+		return err
+	}
+	return writeWalletKey(dir, "default", k.KeyInfo)
 }
 
 func (ch *containerHarness) startYugabyte() {
@@ -84,6 +115,15 @@ func (ch *containerHarness) startYugabyte() {
 
 func (ch *containerHarness) startFilecoinGateway() {
 	ctx := context.Background()
+	walletDir, err := os.MkdirTemp("", "fgw-wallet-")
+	if err != nil {
+		log.Fatalf("failed to create wallet dir: %s", err)
+	}
+	if err := createTestWallet(walletDir); err != nil {
+		log.Fatalf("failed to create test wallet: %s", err)
+	}
+	ch.walletDir = walletDir
+
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
 			Context:        FindModuleRoot(),
@@ -93,6 +133,7 @@ func (ch *containerHarness) startFilecoinGateway() {
 		ExposedPorts: []string{"8078", "2112"},
 		WaitingFor:   wait.ForLog("Daemon is ready").WithStartupTimeout(2 * time.Minute),
 		Networks:     []string{ch.net.Name},
+		Mounts:       testcontainers.Mounts(testcontainers.BindMount(walletDir, testcontainers.ContainerMountTarget("/root/.ribswallet"))),
 		Cmd:          []string{"sh", "-c", "./kuri init && ./kuri daemon"},
 		Env: map[string]string{
 			"RIBS_YUGABYTE_CQL_HOSTS":       "yugabyte",

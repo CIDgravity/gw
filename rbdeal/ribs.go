@@ -50,8 +50,7 @@ func WithHostGetter(hg func(...libp2p.Option) (host.Host, error)) OpenOption {
 }
 
 // WithLocalWalletOpener sets the function used to open the local wallet path.
-// Defaults to using ributil.OpenWallet, where the wallet is instantiated if it does not exist.
-// In a case where it is auto generated, the wallet path must be backed up elsewhere.
+// Defaults to using ributil.OpenWallet.
 //
 // See: WithLocalWalletPath.
 func WithLocalWalletOpener(wg func(path string) (*ributil.LocalWallet, error)) OpenOption {
@@ -165,47 +164,76 @@ func (r *ribs) Wallet() iface2.Wallet {
 	return r
 }
 
+func resolveWalletDefault(wallet *ributil.LocalWallet, path string, allowCreate bool) (address.Address, error) {
+	defWallet, err := wallet.GetDefault()
+	if err == nil {
+		return defWallet, nil
+	}
+
+	wl, err := wallet.WalletList(context.TODO())
+	if err != nil {
+		return address.Undef, fmt.Errorf("get wallet list: %w", err)
+	}
+
+	if len(wl) == 0 {
+		if !allowCreate {
+			return address.Undef, fmt.Errorf("no wallet found at %s; create or mount the wallet before starting kuri", path)
+		}
+
+		a, err := wallet.WalletNew(context.TODO(), "secp256k1")
+		if err != nil {
+			return address.Undef, fmt.Errorf("creating wallet: %w", err)
+		}
+
+		color.Yellow("--------------------------------------------------------------")
+		fmt.Println("CREATED NEW GATEWAY WALLET")
+		fmt.Println("ADDRESS: ", color.GreenString("%s", a))
+		fmt.Println("")
+		fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", path)
+		color.Yellow("--------------------------------------------------------------")
+
+		return a, nil
+	}
+
+	if len(wl) != 1 {
+		return address.Undef, fmt.Errorf("no default wallet or more than one wallet: %#v", wl)
+	}
+
+	if err := wallet.SetDefault(wl[0]); err != nil {
+		return address.Undef, fmt.Errorf("setting default wallet: %w", err)
+	}
+
+	defWallet, err = wallet.GetDefault()
+	if err != nil {
+		return address.Undef, fmt.Errorf("getting default wallet: %w", err)
+	}
+
+	return defWallet, nil
+}
+
+func OpenExistingWallet(path string) (*ributil.LocalWallet, address.Address, error) {
+	wallet, err := ributil.OpenWallet(path)
+	if err != nil {
+		return nil, address.Undef, fmt.Errorf("open wallet: %w", err)
+	}
+
+	defWallet, err := resolveWalletDefault(wallet, path, false)
+	if err != nil {
+		return nil, address.Undef, err
+	}
+
+	return wallet, defWallet, nil
+}
+
 func OpenOrCreateWallet(path string) (*ributil.LocalWallet, address.Address, error) {
 	wallet, err := ributil.OpenWallet(path)
 	if err != nil {
 		return nil, address.Undef, fmt.Errorf("open wallet: %w", err)
 	}
 
-	defWallet, err := wallet.GetDefault()
+	defWallet, err := resolveWalletDefault(wallet, path, true)
 	if err != nil {
-		wl, err := wallet.WalletList(context.TODO())
-		if err != nil {
-			return nil, address.Undef, fmt.Errorf("get wallet list: %w", err)
-		}
-
-		if len(wl) == 0 {
-			a, err := wallet.WalletNew(context.TODO(), "secp256k1")
-			if err != nil {
-				return nil, address.Undef, fmt.Errorf("creating wallet: %w", err)
-			}
-
-			color.Yellow("--------------------------------------------------------------")
-			fmt.Println("CREATED NEW GATEWAY WALLET")
-			fmt.Println("ADDRESS: ", color.GreenString("%s", a))
-			fmt.Println("")
-			fmt.Printf("BACKUP YOUR WALLET DIRECTORY (%s)\n", path)
-			color.Yellow("--------------------------------------------------------------")
-
-			wl = append(wl, a)
-		}
-
-		if len(wl) != 1 {
-			return nil, address.Undef, fmt.Errorf("no default wallet or more than one wallet: %#v", wl)
-		}
-
-		if err := wallet.SetDefault(wl[0]); err != nil {
-			return nil, address.Undef, fmt.Errorf("setting default wallet: %w", err)
-		}
-
-		defWallet, err = wallet.GetDefault()
-		if err != nil {
-			return nil, address.Undef, fmt.Errorf("getting default wallet: %w", err)
-		}
+		return nil, address.Undef, err
 	}
 
 	return wallet, defWallet, nil
@@ -277,9 +305,13 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 	r.retrProv = rp
 
 	{
-		wallet, defWallet, err := OpenOrCreateWallet(opt.localWalletPath)
+		wallet, err := opt.localWalletOpener(opt.localWalletPath)
 		if err != nil {
-			return nil, xerrors.Errorf("open/create wallet: %w", err)
+			return nil, xerrors.Errorf("open wallet: %w", err)
+		}
+		defWallet, err := resolveWalletDefault(wallet, opt.localWalletPath, false)
+		if err != nil {
+			return nil, xerrors.Errorf("resolve wallet: %w", err)
 		}
 		fmt.Println("RIBS Wallet: ", defWallet)
 		r.wallet = wallet

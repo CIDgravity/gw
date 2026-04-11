@@ -20,6 +20,7 @@ var emailRe = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{
 
 const (
 	datacapRequestAmountTiB = 10
+	faucetFilRequestAmount  = "0.000001"
 )
 
 func resolveWalletPath(opts Opts) string {
@@ -39,13 +40,13 @@ func ensureLocalWallet(walletPath string) (string, error) {
 	return addr.String(), nil
 }
 
-func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
+func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) (bool, error) {
 	exists, err := WalletExistsOnChain(ctx, opts.lotusGateway, addr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if exists {
-		return nil
+		return false, nil
 	}
 
 	fund := true
@@ -59,12 +60,12 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 				Value(&fund),
 		),
 	).Run(); err != nil {
-		return err
+		return false, err
 	}
 	if fund {
 		fmt.Println("Requesting faucet funds...")
-		if err := FundWalletViaFaucet(opts.faucetUrl, addr); err != nil {
-			return err
+		if err := RequestFilViaFaucet(opts.faucetUrl, addr, faucetFilRequestAmount); err != nil {
+			return false, err
 		}
 		fmt.Println("✅ Faucet request successful. Waiting for wallet to become visible on-chain...")
 
@@ -72,15 +73,16 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 		err := WaitWalletAppearsOnChain(ctx, opts.lotusGateway, addr, opts.walletTimeout)
 		stop()
 		if err != nil {
-			return err
+			return true, err
 		}
 		fmt.Printf("\n✅ Wallet is now visible on-chain: %s\n", addr)
 		exists = true
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
+func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string, filAlreadyRequested bool) error {
 	if opts.faucetUrl == "" {
 		return nil
 	}
@@ -109,9 +111,13 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 		return nil
 	}
 
-	fmt.Println("Requesting datacap allocation and FIL top-up...")
+	if filAlreadyRequested {
+		fmt.Println("Requesting datacap allocation...")
+	} else {
+		fmt.Println("Requesting datacap allocation and FIL top-up...")
+	}
 
-	// Request datacap and FIL faucet in parallel
+	// Request datacap and, if needed, a FIL top-up in parallel.
 	type datacapResult struct {
 		messageCID string
 		err        error
@@ -121,26 +127,32 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 	}
 
 	datacapCh := make(chan datacapResult, 1)
-	filCh := make(chan filResult, 1)
+	var filCh chan filResult
 
 	go func() {
 		messageCID, err := RequestDatacapViaFaucet(opts.faucetUrl, addr, datacapRequestAmountTiB)
 		datacapCh <- datacapResult{messageCID: messageCID, err: err}
 	}()
 
-	go func() {
-		err := RequestFilViaFaucet(opts.faucetUrl, addr)
-		filCh <- filResult{err: err}
-	}()
+	if !filAlreadyRequested {
+		filCh = make(chan filResult, 1)
+		go func() {
+			err := RequestFilViaFaucet(opts.faucetUrl, addr, faucetFilRequestAmount)
+			filCh <- filResult{err: err}
+		}()
+	}
 
 	// Wait for both results
 	dcRes := <-datacapCh
-	filRes := <-filCh
+	var filRes filResult
+	if filCh != nil {
+		filRes = <-filCh
+	}
 
 	// Report FIL faucet result (non-fatal)
-	if filRes.err != nil {
+	if filCh != nil && filRes.err != nil {
 		fmt.Printf("⚠️  FIL faucet request failed (non-fatal): %v\n", filRes.err)
-	} else {
+	} else if filCh != nil {
 		fmt.Println("✅ FIL top-up request submitted.")
 	}
 
@@ -462,11 +474,12 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	if err != nil {
 		return err
 	}
-	if err := maybeInitializeOnChain(ctx, opts, addr); err != nil {
+	filRequested, err := maybeInitializeOnChain(ctx, opts, addr)
+	if err != nil {
 		return err
 	}
 
-	if err := maybeEnsureDatacap(ctx, opts, addr); err != nil {
+	if err := maybeEnsureDatacap(ctx, opts, addr, filRequested); err != nil {
 		return err
 	}
 
