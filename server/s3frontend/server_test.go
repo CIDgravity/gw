@@ -1,11 +1,24 @@
 package s3frontend
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type stubMultipartLookup struct {
+	upload *MultipartUpload
+	err    error
+}
+
+func (s stubMultipartLookup) GetUpload(context.Context, string) (*MultipartUpload, error) {
+	return s.upload, s.err
+}
 
 func TestParseBucketAndKey(t *testing.T) {
 	tests := []struct {
@@ -65,4 +78,48 @@ func TestParseBucketAndKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListPartsRejectsInactiveUploads(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "completed upload", status: "completed"},
+		{name: "aborted upload", status: "aborted"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewFrontendServer(nil, &BackendPool{}, nil, stubMultipartLookup{upload: &MultipartUpload{
+				UploadID:  "u1",
+				NodeID:    "node-1",
+				Status:    tt.status,
+				ExpiresAt: time.Now().Add(time.Hour),
+			}}, "frontend-1")
+
+			req := httptest.NewRequest(http.MethodGet, "/bucket/object?uploadId=u1", nil)
+			rr := httptest.NewRecorder()
+
+			srv.ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusNotFound, rr.Code)
+		})
+	}
+}
+
+func TestListPartsRejectsExpiredUploads(t *testing.T) {
+	srv := NewFrontendServer(nil, &BackendPool{}, nil, stubMultipartLookup{upload: &MultipartUpload{
+		UploadID:  "u1",
+		NodeID:    "node-1",
+		Status:    "active",
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}}, "frontend-1")
+
+	req := httptest.NewRequest(http.MethodGet, "/bucket/object?uploadId=u1", nil)
+	rr := httptest.NewRecorder()
+
+	srv.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusNotFound, rr.Code)
 }

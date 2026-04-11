@@ -73,6 +73,7 @@ type S3ObjectIndex interface {
 	Put(ctx context.Context, obj S3Object) error
 	Delete(ctx context.Context, bucket BucketName, key S3Key) error
 	List(ctx context.Context, bucket BucketName, prefix string, startAfter string, limit int32) (*ObjectList, error)
+	ListTemporary(ctx context.Context, bucket BucketName, prefix string, startAfter string, limit int32) (*ObjectList, error)
 	ListDir(ctx context.Context, bucket BucketName, prefix, startAfter string, limit int32, delimiter string) (*ObjectList, error)
 
 	// DeleteExpired removes S3Objects whose expires_at is in the past.
