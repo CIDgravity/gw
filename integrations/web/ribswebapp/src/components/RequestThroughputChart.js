@@ -44,6 +44,7 @@ function RequestThroughputChart({ data }) {
                         stroke="#2196f3"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Total"
                     />
                     <Line
@@ -52,6 +53,7 @@ function RequestThroughputChart({ data }) {
                         stroke="#4caf50"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Reads"
                     />
                     <Line
@@ -60,6 +62,7 @@ function RequestThroughputChart({ data }) {
                         stroke="#ff9800"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Writes"
                     />
                 </LineChart>

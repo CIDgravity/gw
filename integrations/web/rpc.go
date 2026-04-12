@@ -64,8 +64,7 @@ func (rc *RIBSRpc) CrawlState(ctx context.Context) (iface2.CrawlState, error) {
 }
 
 func (rc *RIBSRpc) CarUploadStats(ctx context.Context) (iface2.UploadStats, error) {
-	//return rc.ribs.DealDiag().CarUploadStats(), nil
-	return iface2.UploadStats{}, nil
+	return rc.ribs.DealDiag().CarUploadStats(), nil
 }
 
 func (rc *RIBSRpc) ReachableProviders(ctx context.Context) ([]iface2.ProviderMeta, error) {
@@ -78,6 +77,10 @@ func (rc *RIBSRpc) ProviderInfo(ctx context.Context, id int64) (iface2.ProviderI
 
 func (rc *RIBSRpc) DealSummary(ctx context.Context) (iface2.DealSummary, error) {
 	return rc.ribs.DealDiag().DealSummary()
+}
+
+func (rc *RIBSRpc) DealLoopStats(ctx context.Context) (iface2.DealLoopStats, error) {
+	return rc.ribs.DealDiag().DealLoopStats(), nil
 }
 
 func (rc *RIBSRpc) RetrStats(ctx context.Context) (iface2.RetrStats, error) {

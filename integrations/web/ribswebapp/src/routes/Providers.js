@@ -61,6 +61,20 @@ function Providers() {
         document.body.removeChild(a);
     };
 
+    const featureLabels = (provider) => {
+        const out = [];
+        if (provider.BoostDeals) out.push("boost");
+        if (provider.BoosterHttp) out.push("http");
+        if (provider.BoosterBitswap) out.push("bitswap");
+        return out.length ? out.join(" ") : "-";
+    };
+
+    const truncateReason = (reason) => {
+        if (!reason) return "";
+        if (reason.length <= 28) return reason;
+        return `${reason.slice(0, 28)}...`;
+    };
+
     return (
         <div className="Providers">
             <h2>Providers</h2>
@@ -75,6 +89,7 @@ function Providers() {
                         <div>Price</div>
                     </th>
                     <th>Features</th>
+                    <th>Cooldown</th>
                     <th>Started</th>
                     <th>Rejected</th>
                     <th>Failed</th>
@@ -93,7 +108,17 @@ function Providers() {
                             <div>{`${formatFil(provider.AskPrice * epochToMonth)} (${formatFil(provider.AskVerifiedPrice * epochToMonth)})`}</div>
                         </td>
                         <td>
-                            {`${provider.BoosterHttp ? "http " : ""} ${provider.BoosterBitswap ? "bitswap" : ""}`.trim()}
+                            {featureLabels(provider)}
+                        </td>
+                        <td className="providers-ask">
+                            {provider.DealCooldownUntil ? (
+                                <>
+                                    <div>{formatTimestamp(provider.DealCooldownUntil)}</div>
+                                    <div className="providers-muted" title={provider.DealCooldownReason || ""}>
+                                        x{provider.DealCooldownAttempts || 1} {truncateReason(provider.DealCooldownReason)}
+                                    </div>
+                                </>
+                            ) : "-"}
                         </td>
                         <td>{provider.DealStarted}</td>
                         <td>

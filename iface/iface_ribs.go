@@ -23,13 +23,14 @@ type RIBS interface {
 }
 
 type RIBSDiag interface {
-	//CarUploadStats() UploadStats
+	CarUploadStats() UploadStats
 	DealSummary() (DealSummary, error)
 	GroupDeals(gk GroupKey) ([]DealMeta, error)
 
 	ProviderInfo(id int64) (ProviderInfo, error)
 	CrawlState() CrawlState
 	ReachableProviders() []ProviderMeta
+	DealLoopStats() DealLoopStats
 
 	RetrStats() (RetrStats, error)
 
@@ -107,6 +108,12 @@ type RetrStats struct {
 }
 
 type UploadStats struct {
+	Enabled        bool
+	Module         string
+	BuiltinServer  bool
+	ActiveRequests int64
+	TotalBytes     int64
+
 	ByGroup map[GroupKey]*GroupUploadStats
 
 	LastTotalBytes int64
@@ -118,8 +125,11 @@ type GroupUploadStats struct {
 }
 
 type DealMeta struct {
-	UUID     string
-	Provider int64
+	UUID         string
+	Provider     int64
+	GroupID      GroupKey
+	Verified     bool
+	KeepUnsealed bool
 
 	Sealed, Failed, Rejected bool
 
@@ -212,6 +222,18 @@ type DealSummary struct {
 	StoredDataSize, StoredDealSize int64
 }
 
+type DealLoopStats struct {
+	Running             bool
+	BaseIntervalMs      int64
+	CurrentBackoffMs    int64
+	ConsecutiveFailures int64
+	LastStartUnix       int64
+	LastEndUnix         int64
+	NextCheckUnix       int64
+	LastDurationMs      int64
+	LastError           string
+}
+
 type ProviderInfo struct {
 	Meta        ProviderMeta
 	RecentDeals []DealMeta
@@ -225,13 +247,21 @@ type ProviderMeta struct {
 	BoosterHttp    bool
 	BoosterBitswap bool
 
-	IndexedSuccess int64
-	IndexedFail    int64
+	IndexedSuccess   int64
+	IndexedFail      int64
+	RetrProbeSuccess int64
+	RetrProbeFail    int64
+	RetrProbeBlocks  int64
+	RetrProbeBytes   int64
 
 	DealStarted  int64
 	DealSuccess  int64
 	DealFail     int64
 	DealRejected int64
+
+	DealCooldownUntil    int64
+	DealCooldownAttempts int64
+	DealCooldownReason   string
 
 	MostRecentDealStart int64
 

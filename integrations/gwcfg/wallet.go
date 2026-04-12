@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/rbdeal"
@@ -23,6 +24,14 @@ import (
 const (
 	WaitWalletPoll = 10 * time.Second
 )
+
+func isPendingWalletVisibilityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "actor not found") || strings.Contains(errStr, "execution reverted") || errors.Is(err, os.ErrNotExist)
+}
 
 func EnsureWalletExists(walletPath string) (*ributil.LocalWallet, address.Address, error) {
 	wallet, addr, err := rbdeal.OpenOrCreateWallet(walletPath)
@@ -44,35 +53,12 @@ func WalletExistsOnChain(ctx context.Context, lotusAPIAddr, addrStr string) (boo
 	defer closer()
 	_, err = gapi.StateLookupID(ctx, addr, types.EmptyTSK)
 	if err != nil {
-		if err.Error() == "actor not found" || errors.Is(err, os.ErrNotExist) {
+		if isPendingWalletVisibilityError(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("lookupid: %w", err)
 	}
 	return true, nil
-}
-
-func FundWalletViaFaucet(faucetURL, addr string) error {
-	q := fmt.Sprintf("%s/fil?wallet=%s&fil=0.000001", faucetURL, addr)
-	res, err := http.Get(q)
-	if err != nil {
-		return fmt.Errorf("http faucet: %w", err)
-	}
-	defer res.Body.Close()
-	b, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 200 {
-		return fmt.Errorf("faucet non-200: %s: %s", res.Status, string(b))
-	}
-	var fr struct {
-		Success bool   `json:"success"`
-		Message string `json:"message"`
-		Error   string `json:"error"`
-	}
-	_ = json.Unmarshal(b, &fr)
-	if !fr.Success {
-		return fmt.Errorf("faucet: %s", fr.Error)
-	}
-	return nil
 }
 
 func RequestDatacapViaFaucet(faucetURL, addr string, tibs int) (string, error) {
@@ -103,10 +89,12 @@ func RequestDatacapViaFaucet(faucetURL, addr string, tibs int) (string, error) {
 	return fr.MessageCID, nil
 }
 
-// RequestFilViaFaucet requests a small amount of FIL from the faucet to top up the wallet.
-// This is called in parallel with datacap requests to ensure the wallet has some FIL for gas.
-func RequestFilViaFaucet(faucetURL, addr string) error {
-	q := fmt.Sprintf("%s/fil?wallet=%s", faucetURL, addr)
+func RequestFilViaFaucet(faucetURL, addr, filAmount string) error {
+	if filAmount == "" {
+		return fmt.Errorf("fil amount is required")
+	}
+
+	q := fmt.Sprintf("%s/fil?wallet=%s&fil=%s", faucetURL, addr, filAmount)
 	res, err := http.Get(q)
 	if err != nil {
 		return fmt.Errorf("http faucet: %w", err)

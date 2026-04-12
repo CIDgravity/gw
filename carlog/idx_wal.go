@@ -24,7 +24,7 @@ import (
 type WalIndex struct {
 	f     *os.File
 	w     *bufio.Writer
-	mu    sync.Mutex // protects w and f writes
+	mu    sync.RWMutex // protects WAL file writes and in-memory index access
 	m     map[string]int64
 	count int64
 }
@@ -224,6 +224,9 @@ func (w *WalIndex) Put(c []multihash.Multihash, offs []int64) error {
 
 // Has checks whether each multihash exists in the index.
 func (w *WalIndex) Has(c []multihash.Multihash) ([]bool, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	out := make([]bool, len(c))
 	for i, mh := range c {
 		_, out[i] = w.m[string([]byte(mh))]
@@ -233,6 +236,9 @@ func (w *WalIndex) Has(c []multihash.Multihash) ([]bool, error) {
 
 // Get returns the packed offset for each multihash, or -1 if not found.
 func (w *WalIndex) Get(c []multihash.Multihash) ([]int64, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	out := make([]int64, len(c))
 	for i, mh := range c {
 		v, ok := w.m[string([]byte(mh))]
@@ -247,6 +253,9 @@ func (w *WalIndex) Get(c []multihash.Multihash) ([]int64, error) {
 
 // Entries returns the number of indexed entries. O(1).
 func (w *WalIndex) Entries() (int64, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	return w.count, nil
 }
 
@@ -254,6 +263,9 @@ func (w *WalIndex) Entries() (int64, error) {
 // is not guaranteed to be sorted. The BSST builder sorts internally, so
 // this is fine.
 func (w *WalIndex) List(f func(c multihash.Multihash, offs []int64) error) error {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	for mh, off := range w.m {
 		if err := f(multihash.Multihash(mh), []int64{off}); err != nil {
 			return err
@@ -265,6 +277,9 @@ func (w *WalIndex) List(f func(c multihash.Multihash, offs []int64) error) error
 // ToTruncate returns multihashes whose data-file offset is at or above the
 // given boundary. Used during crash recovery.
 func (w *WalIndex) ToTruncate(atOrAbove int64) ([]multihash.Multihash, error) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
 	var out []multihash.Multihash
 	for mh, off := range w.m {
 		dataOff, _ := fromOffsetLen(off)
@@ -279,6 +294,9 @@ func (w *WalIndex) ToTruncate(atOrAbove int64) ([]multihash.Multihash, error) {
 // is not rewritten — deleted entries simply won't be present in the map.
 // Only called during crash recovery truncation.
 func (w *WalIndex) Del(c []multihash.Multihash) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	for _, mh := range c {
 		key := string([]byte(mh))
 		if _, ok := w.m[key]; ok {

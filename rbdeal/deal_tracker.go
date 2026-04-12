@@ -37,10 +37,34 @@ const DealStatusV12ProtocolID = "/fil/storage/status/1.2.0"
 
 const DEBUG_LOOP_COUNT = 10000
 
+const dealCheckMaxBackoff = 5 * time.Minute
+
+func (r *ribs) updateDealLoopStats(fn func(*ribs2.DealLoopStats)) {
+	r.dealLoopStatsLk.Lock()
+	defer r.dealLoopStatsLk.Unlock()
+	fn(&r.dealLoopStats)
+}
+
 func (r *ribs) dealTracker(ctx context.Context) {
 	cfg := configuration.GetConfig()
+	baseInterval := cfg.Ribs.DealCheckInterval
+	backoff := time.Duration(0)
+	consecutiveFailures := int64(0)
+
+	r.updateDealLoopStats(func(stats *ribs2.DealLoopStats) {
+		stats.BaseIntervalMs = int64(baseInterval / time.Millisecond)
+	})
+
 	for {
 		checkStart := time.Now()
+		r.updateDealLoopStats(func(stats *ribs2.DealLoopStats) {
+			stats.Running = true
+			stats.LastStartUnix = checkStart.Unix()
+			stats.NextCheckUnix = 0
+			stats.CurrentBackoffMs = int64(backoff / time.Millisecond)
+			stats.ConsecutiveFailures = consecutiveFailures
+		})
+
 		select {
 		case <-r.close:
 			return
@@ -50,17 +74,49 @@ func (r *ribs) dealTracker(ctx context.Context) {
 		err := r.runDealCheckLoop(ctx)
 		if err != nil {
 			log.Errorw("deal check loop failed", "error", err)
+			consecutiveFailures++
+			if backoff == 0 {
+				backoff = 15 * time.Second
+			} else {
+				backoff *= 2
+				if backoff > dealCheckMaxBackoff {
+					backoff = dealCheckMaxBackoff
+				}
+			}
+		} else {
+			consecutiveFailures = 0
+			backoff = 0
 		}
 
 		checkDuration := time.Since(checkStart)
+		nextDelay := baseInterval + backoff
+		sleepFor := time.Duration(0)
+		if checkDuration < nextDelay {
+			sleepFor = nextDelay - checkDuration
+		}
+
+		nextCheck := time.Now().Add(sleepFor)
+		lastError := ""
+		if err != nil {
+			lastError = err.Error()
+		}
+		r.updateDealLoopStats(func(stats *ribs2.DealLoopStats) {
+			stats.Running = false
+			stats.LastEndUnix = time.Now().Unix()
+			stats.LastDurationMs = int64(checkDuration / time.Millisecond)
+			stats.NextCheckUnix = nextCheck.Unix()
+			stats.CurrentBackoffMs = int64(backoff / time.Millisecond)
+			stats.ConsecutiveFailures = consecutiveFailures
+			stats.LastError = lastError
+		})
 
 		log.Infow("deal check loop finished", "duration", checkDuration)
 
-		if checkDuration < cfg.Ribs.DealCheckInterval {
+		if sleepFor > 0 {
 			select {
 			case <-r.close:
 				return
-			case <-time.After(cfg.Ribs.DealCheckInterval - checkDuration):
+			case <-time.After(sleepFor):
 			}
 		}
 	}

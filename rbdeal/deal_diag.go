@@ -2,7 +2,9 @@ package rbdeal
 
 import (
 	"context"
+	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	iface2 "github.com/CIDgravity/filecoin-gateway/iface"
 	"github.com/CIDgravity/filecoin-gateway/server/metrics"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -28,15 +30,51 @@ func (r *ribs) CrawlState() iface2.CrawlState {
 }
 
 func (r *ribs) ReachableProviders() []iface2.ProviderMeta {
-	return r.db.ReachableProviders()
+	out := r.db.ReachableProviders()
+	now := time.Now()
+	for i := range out {
+		r.applyProviderCooldown(&out[i], now)
+	}
+	return out
+}
+
+func (r *ribs) DealLoopStats() iface2.DealLoopStats {
+	r.dealLoopStatsLk.Lock()
+	defer r.dealLoopStatsLk.Unlock()
+	return r.dealLoopStats
 }
 
 func (r *ribs) ProviderInfo(id int64) (iface2.ProviderInfo, error) {
-	return r.db.ProviderInfo(id)
+	info, err := r.db.ProviderInfo(id)
+	if err != nil {
+		return iface2.ProviderInfo{}, err
+	}
+	r.applyProviderCooldown(&info.Meta, time.Now())
+	return info, nil
 }
 
 func (r *ribs) DealSummary() (iface2.DealSummary, error) {
 	return r.db.DealSummary()
+}
+
+func (r *ribs) CarUploadStats() iface2.UploadStats {
+	out := iface2.UploadStats{
+		ByGroup: map[iface2.GroupKey]*iface2.GroupUploadStats{},
+	}
+
+	if r.externalOffloader == nil {
+		out.Module = "disabled"
+		return out
+	}
+
+	out.Enabled = true
+	out.Module = r.externalOffloader.GetModuleName()
+	out.BuiltinServer = out.Module == EXTERNAL_LOCALWEB && configuration.GetConfig().External.Localweb.BuiltinServer
+	out.ActiveRequests = r.carUploadActive.Load()
+	out.TotalBytes = r.carUploadBytes.Load()
+	out.LastTotalBytes = out.TotalBytes
+
+	return out
 }
 
 func (r *ribs) GroupDeals(gk iface2.GroupKey) ([]iface2.DealMeta, error) {

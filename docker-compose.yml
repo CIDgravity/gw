@@ -11,13 +11,14 @@ services:
     command: >
       sh -c "
         echo 'Resetting data (keeping config and wallet)...' &&
-        rm -rf /data/yb /data/fgw /data/ipfs &&
-        echo 'Done! Removed: yb, fgw, ipfs' &&
+        rm -rf /data/yb /data/fgw /data/ipfs /data/carstage &&
+        echo 'Done! Removed: yb, fgw, ipfs, carstage' &&
         echo 'Kept: config, wallet'
       "
 
   yugabyte:
     image: yugabytedb/yugabyte:2024.2.5.0-b59
+    restart: unless-stopped
     volumes:
       - ${DATA_DIR:-./data}/yb:/root/var
     environment:
@@ -46,11 +47,13 @@ services:
       retries: 10
   filecoingw:
     image: fgw:local
+    restart: unless-stopped
     ports:
-      - "8443:8443"
-      - "2112:2112"
+      - "443:8443"
+      - "127.0.0.1:8443:8443"
+      - "127.0.0.1:2112:2112"
       - "8078:8078"
-      - "9010:9010"
+      - "127.0.0.1:9010:9010"
     ulimits:
       nofile:
         soft: 1048576
@@ -58,9 +61,10 @@ services:
       nproc: 12000
     volumes:
       - ${DATA_DIR:-./data}/fgw/:/root/.ribsdata
+      - ${DATA_DIR:-./data}/carstage:/root/.ribsdata/cardata
       - ${DATA_DIR:-./data}/wallet:/root/.ribswallet
       - ${DATA_DIR:-./data}/ipfs/:/root/.ipfs
-    command: [ "sh", "-c", "./kuri init ; ./kuri daemon" ]
+    command: [ "sh", "-c", "if [ ! -f /root/.ipfs/config ]; then ./kuri init; fi; ./kuri daemon" ]
     env_file:
       - path: ${DATA_DIR:-./data}/config/settings.env
         required: false

@@ -38,6 +38,10 @@ func (m *meteredExternalOffloader) ReadCar(ctx context.Context, group iface.Grou
 	return res, err
 }
 
+func (m *meteredExternalOffloader) PreDealTransferCheck(ctx context.Context, gid iface.GroupKey, url string, size int64) error {
+	return m.ExternalOffloader.PreDealTransferCheck(ctx, gid, url, size)
+}
+
 func (m *meteredExternalOffloader) ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error) {
 	m.metrics.readReqs.Inc()
 	res, err := m.ExternalOffloader.ReadCarFile(ctx, group)

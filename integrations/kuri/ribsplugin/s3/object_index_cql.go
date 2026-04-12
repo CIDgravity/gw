@@ -30,9 +30,64 @@ func NewObjectIndexCql(db cqldb.Database) *ObjectIndexCql {
 }
 
 func (or *ObjectIndexCql) List(ctx context.Context, bucket iface2.BucketName, prefix string, startAfter string, limit int32) (*iface2.ObjectList, error) {
+	return or.listFiltered(ctx, bucket, prefix, startAfter, limit, false)
+}
+
+func (or *ObjectIndexCql) ListTemporary(ctx context.Context, bucket iface2.BucketName, prefix string, startAfter string, limit int32) (*iface2.ObjectList, error) {
+	return or.listFiltered(ctx, bucket, prefix, startAfter, limit, true)
+}
+
+func (or *ObjectIndexCql) listFiltered(ctx context.Context, bucket iface2.BucketName, prefix string, startAfter string, limit int32, temporaryOnly bool) (*iface2.ObjectList, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	var res []iface2.S3Object
+	rawStartAfter := startAfter
+	batchLimit := limit + 1
+	if batchLimit < 32 {
+		batchLimit = 32
+	}
+
+	for len(res) <= int(limit) {
+		page, err := or.listPage(ctx, bucket, prefix, rawStartAfter, batchLimit)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, obj := range page.Objects {
+			isTemporary := obj.ExpiresAt != nil
+			if temporaryOnly != isTemporary {
+				continue
+			}
+			res = append(res, obj)
+			if len(res) > int(limit) {
+				break
+			}
+		}
+
+		if len(res) > int(limit) || !page.IsTruncated || len(page.Objects) == 0 {
+			break
+		}
+
+		rawStartAfter = page.Objects[len(page.Objects)-1].Key.String()
+	}
+
+	truncated := len(res) > int(limit)
+	if truncated {
+		res = res[:limit]
+	}
+
+	return &iface2.ObjectList{
+		IsTruncated: truncated,
+		Objects:     res,
+	}, nil
+}
+
+func (or *ObjectIndexCql) listPage(ctx context.Context, bucket iface2.BucketName, prefix string, startAfter string, limit int32) (*iface2.ObjectList, error) {
 	var res []iface2.S3Object
 
-	statement := "select key, cid, size, updated, node_id from S3Objects where bucket = ?"
+	statement := "select key, cid, size, updated, node_id, expires_at from S3Objects where bucket = ?"
 	args := []interface{}{bucket.String()}
 
 	if startAfter != "" && startAfter > prefix {
@@ -87,7 +142,7 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 	end, endPrefixFound := prefixEnd(prefix)
 
 	buildStatement := func(prefix, startAfter string) (string, []interface{}) {
-		s := "select key, cid, size, updated, node_id from S3Objects where bucket = ?"
+		s := "select key, cid, size, updated, node_id, expires_at from S3Objects where bucket = ?"
 		args := []interface{}{bucket.String()}
 		if startAfter != "" && startAfter > prefix {
 			s += " and key > ?"
@@ -125,6 +180,11 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 			return nil, fmt.Errorf("listing s3 dir: %w", err)
 		}
 
+		startAfter = obj.Key.String()
+		if obj.ExpiresAt != nil {
+			continue
+		}
+
 		if int(limit) == len(commonPrefixes)+len(objs) {
 			truncated = true
 			break
@@ -147,7 +207,6 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 			continue
 		} else {
 			objs = append(objs, obj)
-			startAfter = obj.Key.String()
 		}
 	}
 
@@ -159,7 +218,7 @@ func (or *ObjectIndexCql) ListDir(ctx context.Context, bucket iface2.BucketName,
 }
 
 func (or *ObjectIndexCql) Get(ctx context.Context, bucket iface2.BucketName, key iface2.S3Key) (iface2.S3Object, error) {
-	query := or.db.Query("select key, cid, size, updated, node_id from S3Objects where bucket = ? and key = ?", bucket.String(), key.String()).
+	query := or.db.Query("select key, cid, size, updated, node_id, expires_at from S3Objects where bucket = ? and key = ?", bucket.String(), key.String()).
 		WithContext(ctx)
 
 	obj, err := scanS3Object(bucket, query)
@@ -231,8 +290,9 @@ func scanS3Object(bucket iface2.BucketName, scanner Scannable) (iface2.S3Object,
 	var updated time.Time
 	var key string
 	var nodeID string
+	var expiresAt *time.Time
 
-	err := scanner.Scan(&key, &cidString, &size, &updated, &nodeID)
+	err := scanner.Scan(&key, &cidString, &size, &updated, &nodeID, &expiresAt)
 	if err != nil {
 		return iface2.S3Object{}, err
 	}
@@ -244,6 +304,7 @@ func scanS3Object(bucket iface2.BucketName, scanner Scannable) (iface2.S3Object,
 
 	obj := iface2.NewS3Object(bucket, iface2.S3Key(key), c, size, updated)
 	obj.NodeID = nodeID
+	obj.ExpiresAt = expiresAt
 	return obj, nil
 }
 

@@ -2,11 +2,31 @@ import './Status.css';
 import React, { useState, useEffect, useRef } from "react";
 import RibsRPC from "../helpers/rpc";
 import { CopyToClipboard } from 'react-copy-to-clipboard';
-import {formatBytesBinary, formatBitsBinary, formatNum, formatNum6, calcEMA} from "../helpers/fmt";
-import content from "./Content";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer } from 'recharts';
+import {formatBytesBinary, formatNum, formatNum6, calcEMA, formatTimestamp} from "../helpers/fmt";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 
 const oneFil = 1000000000000000000
+
+function formatUnixTime(unixSeconds) {
+    if (!unixSeconds) return '-';
+    return new Date(unixSeconds * 1000).toLocaleTimeString();
+}
+
+function formatCountdown(unixSeconds) {
+    if (!unixSeconds) return '-';
+    const diffMs = unixSeconds * 1000 - Date.now();
+    if (diffMs <= 0) return 'now';
+    const totalSeconds = Math.ceil(diffMs / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${seconds}s`;
+}
+
+function formatLastAction(unixSeconds) {
+    if (!unixSeconds) return 'Never';
+    return formatTimestamp(unixSeconds);
+}
 
 function WalletInfoTile({ walletInfo }) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -22,8 +42,13 @@ function WalletInfoTile({ walletInfo }) {
     };
 
     const handleAddWithdrawClick = (type) => {
+        if (operationType === type && dropdownOpen) {
+            setDropdownOpen(false);
+            setOperationType('');
+            return;
+        }
         setOperationType(type);
-        setDropdownOpen(!dropdownOpen);
+        setDropdownOpen(true);
     };
 
     const handleAmountChange = (event) => {
@@ -125,9 +150,9 @@ function WalletInfoTile({ walletInfo }) {
                     </tr>
                     <tr>
                         <td colSpan={2} style={{textAlign: 'center'}}>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://filfox.info/en/address/${walletInfo.Addr}`}>FilFox</a>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://datacapstats.io/clients/${walletInfo.IDAddr}`}>DcapStats</a>
-                            <a target="_blank" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://dag.parts/client/${walletInfo.IDAddr}`}>DagParts</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://filfox.info/en/address/${walletInfo.Addr}`}>FilFox</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://datacapstats.io/clients/${walletInfo.IDAddr}`}>DcapStats</a>
+                            <a target="_blank" rel="noreferrer" className="button-ish button-sm" style={{marginRight: '4px'}} href={`https://dag.parts/client/${walletInfo.IDAddr}`}>DagParts</a>
                         </td>
                     </tr>
                     <tr>
@@ -158,15 +183,31 @@ function WalletInfoTile({ walletInfo }) {
                         </tr>
                     )}
                     <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last FIL request:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastFaucetFilRequest)}</td>
+                    </tr>
+                    <tr>
                         <td>Market Balance:</td>
                         <td>
                             <span style={{color: balanceInfo?.MarketBelowThreshold ? '#ff6b6b' : 'inherit'}}>
                                 {walletInfo.MarketBalance}
                             </span>
                             {' '}
-                            <button className="button-sm" onClick={() => handleAddWithdrawClick('add')}>Add</button>
+                            <span className="segmented-control">
+                                <button
+                                    className={`button-sm segmented-button ${operationType === 'add' && dropdownOpen ? 'active' : ''}`}
+                                    onClick={() => handleAddWithdrawClick('add')}
+                                >
+                                    {operationType === 'add' && dropdownOpen ? 'Add Selected' : 'Add'}
+                                </button>
                             {' '}
-                            <button className="button-sm" onClick={() => handleAddWithdrawClick('withdraw')}>Withdraw</button>
+                                <button
+                                    className={`button-sm segmented-button ${operationType === 'withdraw' && dropdownOpen ? 'active' : ''}`}
+                                    onClick={() => handleAddWithdrawClick('withdraw')}
+                                >
+                                    {operationType === 'withdraw' && dropdownOpen ? 'Withdraw Selected' : 'Withdraw'}
+                                </button>
+                            </span>
                             {' '}
                             <button 
                                 className="button-sm" 
@@ -196,6 +237,10 @@ function WalletInfoTile({ walletInfo }) {
                         <td style={{fontSize: '0.85em', color: '#666'}}>
                             {formatFil(balanceInfo?.MarketBalanceMin)} / {formatFil(balanceInfo?.MarketBalanceTarget)}
                         </td>
+                    </tr>
+                    <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last TopUp:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastMarketTopUp)}</td>
                     </tr>
                     <tr>
                         <td>Market Locked:</td>
@@ -231,6 +276,10 @@ function WalletInfoTile({ walletInfo }) {
                             <td style={{fontSize: '0.85em', color: '#666'}}>{formatTiB(balanceInfo?.DatacapThresholdTiB)}</td>
                         </tr>
                     )}
+                    <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last datacap request:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastFaucetDatacapRequest)}</td>
+                    </tr>
                     </tbody>
                 </table>
             )}
@@ -453,7 +502,7 @@ function ParallelWritesTile() {
     );
 }
 
-function DealsTile({ dealSummary }) {
+function DealsTile({ dealSummary, dealLoopStats }) {
     return (
         <div style={{background: '#FFF4DD'}}>
             <h2>Deals: {dealSummary.InProgress + dealSummary.Done}</h2>
@@ -487,6 +536,40 @@ function DealsTile({ dealSummary }) {
                     <td>Deals failed:</td>
                     <td>{dealSummary.Failed}</td>
                 </tr>
+                <tr>
+                    <td>Loop state:</td>
+                    <td>{dealLoopStats?.Running ? 'Running' : 'Sleeping'}</td>
+                </tr>
+                <tr>
+                    <td>Next deal check:</td>
+                    <td>{formatCountdown(dealLoopStats?.NextCheckUnix)}</td>
+                </tr>
+                <tr>
+                    <td>Last check:</td>
+                    <td>{formatUnixTime(dealLoopStats?.LastEndUnix)}</td>
+                </tr>
+                <tr>
+                    <td>Base interval:</td>
+                    <td>{dealLoopStats?.BaseIntervalMs || 0}ms</td>
+                </tr>
+                <tr>
+                    <td>Last duration:</td>
+                    <td>{dealLoopStats?.LastDurationMs || 0}ms</td>
+                </tr>
+                <tr>
+                    <td>Loop backoff:</td>
+                    <td>{dealLoopStats?.CurrentBackoffMs || 0}ms</td>
+                </tr>
+                <tr>
+                    <td>Consecutive failures:</td>
+                    <td>{dealLoopStats?.ConsecutiveFailures || 0}</td>
+                </tr>
+                {!!dealLoopStats?.LastError && (
+                    <tr>
+                        <td>Last loop error:</td>
+                        <td style={{color: '#f44336', fontSize: '0.85em'}}>{dealLoopStats.LastError}</td>
+                    </tr>
+                )}
                 </tbody>
             </table>
         </div>
@@ -502,6 +585,10 @@ function ProvidersTile({ reachableProviders }) {
                 <tr>
                     <td>Reachable Providers:</td>
                     <td>{reachableProviders.length}</td>
+                </tr>
+                <tr>
+                    <td>With boost-deals:</td>
+                    <td>{reachableProviders.filter(p => p.BoostDeals).length}</td>
                 </tr>
                 <tr>
                     <td>With booster-bitswap:</td>
@@ -520,8 +607,12 @@ function ProvidersTile({ reachableProviders }) {
                     <td>{reachableProviders.filter(p => p.DealSuccess).length}</td>
                 </tr>
                 <tr>
+                    <td>On cooldown:</td>
+                    <td>{reachableProviders.filter(p => p.DealCooldownUntil && p.DealCooldownUntil * 1000 > Date.now()).length}</td>
+                </tr>
+                <tr>
                     <td>With all rejected deals:</td>
-                    <td>{reachableProviders.filter(p => p.DealRejected).length}</td>
+                    <td>{reachableProviders.filter(p => p.DealStarted > 0 && p.DealRejected === p.DealStarted).length}</td>
                 </tr>
                 </tbody>
             </table>
@@ -530,95 +621,99 @@ function ProvidersTile({ reachableProviders }) {
 }
 
 function CarUploadStatsTile({ carUploadStats }) {
-    const [displayStats, setDisplayStats] = useState({});
-    const [globalRate, setGlobalRate] = useState(0);
-    const prevStatsRef = useRef({});
-    const [lastGlobalBytes, setLastGlobalBytes] = useState(0);
-    const rateEMARef = useRef({});
-    const smoothingFactor = 1 / 10;
-
-    const calcRates = () => {
-        const newDisplayStats = {};
-
-        let byGroup = {};
-        if (carUploadStats.ByGroup) {
-            byGroup = carUploadStats.ByGroup;
-        }
-
-        for (const [groupKey, uploadStats] of Object.entries(byGroup)) {
-            if (!prevStatsRef.current[groupKey]) {
-                // If previous stats for this group are not initialized, set them to the current stats
-                prevStatsRef.current[groupKey] = uploadStats;
-                continue;
-            }
-
-            const prevStats = prevStatsRef.current[groupKey] || { UploadBytes: 0 };
-            const bytesSent = uploadStats.UploadBytes;
-            const bytesRate = bytesSent - prevStats.UploadBytes;
-
-            rateEMARef.current[groupKey] = calcEMA(
-                bytesRate,
-                rateEMARef.current[groupKey] || 0,
-                smoothingFactor
-            );
-
-            newDisplayStats[groupKey] = {
-                ...uploadStats,
-                UploadRate: Math.round(rateEMARef.current[groupKey]),
-            };
-
-            prevStatsRef.current[groupKey] = { UploadBytes: bytesSent };
-        }
-
-        let lastBytes = lastGlobalBytes;
-        if(lastBytes === 0) {
-            lastBytes = carUploadStats.LastTotalBytes;
-        }
-
-        const globalBytesChange = carUploadStats.LastTotalBytes - lastBytes;
-        const globalRateEMA = calcEMA(
-            globalBytesChange,
-            globalRate || 0,
-            smoothingFactor / 10
-        );
-
-        setGlobalRate(Math.round(globalRateEMA));
-        setLastGlobalBytes(carUploadStats.LastTotalBytes);
-        setDisplayStats(newDisplayStats);
-    };
+    const [chartData, setChartData] = useState([]);
+    const [currentRate, setCurrentRate] = useState(0);
+    const prevSampleRef = useRef(null);
+    const rateEMARef = useRef(0);
+    const smoothingFactor = 1 / 6;
 
     useEffect(() => {
-        calcRates();
-        const interval = setInterval(calcRates, 1000);
-        return () => clearInterval(interval);
+        const now = Date.now();
+        const totalBytes = carUploadStats.TotalBytes || carUploadStats.LastTotalBytes || 0;
+        const activeRequests = carUploadStats.ActiveRequests || 0;
+
+        let nextRate = 0;
+        if (prevSampleRef.current) {
+            const elapsedSeconds = (now - prevSampleRef.current.at) / 1000;
+            const bytesDelta = Math.max(0, totalBytes - prevSampleRef.current.totalBytes);
+            const instantRate = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
+            if (rateEMARef.current === 0) {
+                rateEMARef.current = instantRate;
+            } else {
+                rateEMARef.current = calcEMA(instantRate, rateEMARef.current, smoothingFactor);
+            }
+            nextRate = Math.round(rateEMARef.current);
+        }
+
+        prevSampleRef.current = { at: now, totalBytes };
+        setCurrentRate(nextRate);
+        setChartData(prev => [
+            ...prev.slice(-59),
+            {
+                time: new Date(now).toLocaleTimeString(),
+                rate: nextRate,
+                activeRequests,
+            }
+        ]);
     }, [carUploadStats]);
 
+    const modeLabel = !carUploadStats.Enabled
+        ? 'Disabled'
+        : carUploadStats.BuiltinServer
+            ? 'Built-in LocalWeb'
+            : carUploadStats.Module === 'local-web'
+                ? 'Direct file serving'
+                : carUploadStats.Module;
+
     return (
-        <div>
+        <div className="car-upload-stats-tile">
             <h2>Car Upload Stats</h2>
             <table className="compact-table">
-                <thead>
-                <tr>
-                    <th style={{ width: '30%' }}>Group</th>
-                    <th style={{ width: '30%' }}>Reqs</th>
-                    <th style={{ width: '40%' }}>Rate</th>
-                </tr>
-                </thead>
                 <tbody>
                 <tr>
-                    <td>Global</td>
-                    <td></td>
-                    <td>{formatBitsBinary(globalRate)}</td>
+                    <td>Mode</td>
+                    <td>{modeLabel}</td>
                 </tr>
-                {Object.entries(displayStats).map(([groupKey, uploadStats]) => (
-                    <tr key={groupKey}>
-                        <td>Group {groupKey}</td>
-                        <td>{uploadStats.ActiveRequests}</td>
-                        <td>{formatBitsBinary(uploadStats.UploadRate)}</td>
-                    </tr>
-                ))}
+                <tr>
+                    <td>Active requests</td>
+                    <td>{carUploadStats.ActiveRequests || 0}</td>
+                </tr>
+                <tr>
+                    <td>Current rate</td>
+                    <td>{formatBytesBinary(currentRate)}/s</td>
+                </tr>
+                <tr>
+                    <td>Total bytes served</td>
+                    <td>{formatBytesBinary(carUploadStats.TotalBytes || carUploadStats.LastTotalBytes || 0)}</td>
+                </tr>
                 </tbody>
             </table>
+
+            {carUploadStats.BuiltinServer ? (
+                <div className="car-upload-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="time" minTickGap={32} />
+                            <YAxis yAxisId="rate" tickFormatter={(value) => formatBytesBinary(value)} />
+                            <YAxis yAxisId="active" orientation="right" allowDecimals={false} />
+                            <Tooltip
+                                formatter={(value, name) => {
+                                    if (name === 'Rate') {
+                                        return [`${formatBytesBinary(value)}/s`, name];
+                                    }
+                                    return [value, name];
+                                }}
+                            />
+                            <Legend />
+                            <Line yAxisId="rate" type="monotone" dataKey="rate" name="Rate" stroke="#1f77b4" dot={false} strokeWidth={2} isAnimationActive={false} />
+                            <Line yAxisId="active" type="monotone" dataKey="activeRequests" name="Active Requests" stroke="#d62728" dot={false} strokeWidth={2} isAnimationActive={false} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            ) : (
+                <p className="status-note">Built-in LocalWeb request stats are only available when the gateway serves CAR files directly. In direct file-serving mode, nginx or another server may serve `cardata` without passing traffic through the gateway.</p>
+            )}
         </div>
     );
 }
@@ -687,6 +782,7 @@ function IoStats() {
     const [groupIOStats, setGroupIOStats] = useState({});
     const prevStatsRef = useRef({});
     const [rates, setRates] = useState({readBlocks: 0, writeBlocks: 0, readBytes: 0, writeBytes: 0});
+    const [chartData, setChartData] = useState([]);
     const smoothingFactor = 1 / 15; // Smooth EMA for 10Hz updates
 
     const fetchStatus = async () => {
@@ -694,28 +790,42 @@ function IoStats() {
             const ioStats = await RibsRPC.call("GroupIOStats");
 
             const prevStats = prevStatsRef.current;
+            const now = Date.now();
             const readBlocks = ioStats.ReadBlocks;
             const writeBlocks = ioStats.WriteBlocks;
             const readBytes = ioStats.ReadBytes;
             const writeBytes = ioStats.WriteBytes;
 
             if (prevStats.ReadBlocks !== undefined && prevStats.WriteBlocks !== undefined) {
-                // Multiply by 10 to convert from per-100ms to per-second
-                const readBlocksRate = (readBlocks - prevStats.ReadBlocks) * 10;
-                const writeBlocksRate = (writeBlocks - prevStats.WriteBlocks) * 10;
-                const readBytesRate = (readBytes - prevStats.ReadBytes) * 10;
-                const writeBytesRate = (writeBytes - prevStats.WriteBytes) * 10;
+                const elapsedSeconds = (now - prevStats.At) / 1000;
+                const readBlocksRate = elapsedSeconds > 0 ? (readBlocks - prevStats.ReadBlocks) / elapsedSeconds : 0;
+                const writeBlocksRate = elapsedSeconds > 0 ? (writeBlocks - prevStats.WriteBlocks) / elapsedSeconds : 0;
+                const readBytesRate = elapsedSeconds > 0 ? (readBytes - prevStats.ReadBytes) / elapsedSeconds : 0;
+                const writeBytesRate = elapsedSeconds > 0 ? (writeBytes - prevStats.WriteBytes) / elapsedSeconds : 0;
 
-                setRates(prev => ({
+                setRates(prev => {
+                    const nextRates = {
                     readBlocks: calcEMA(readBlocksRate, prev.readBlocks, smoothingFactor),
                     writeBlocks: calcEMA(writeBlocksRate, prev.writeBlocks, smoothingFactor),
                     readBytes: calcEMA(readBytesRate, prev.readBytes, smoothingFactor),
                     writeBytes: calcEMA(writeBytesRate, prev.writeBytes, smoothingFactor),
-                }));
+                    };
+
+                    setChartData(prevChart => [
+                        ...prevChart.slice(-89),
+                        {
+                            time: new Date(now).toLocaleTimeString(),
+                            readBytes: Math.round(nextRates.readBytes),
+                            writeBytes: Math.round(nextRates.writeBytes),
+                        }
+                    ]);
+
+                    return nextRates;
+                });
             }
 
             setGroupIOStats(ioStats);
-            prevStatsRef.current = { ReadBlocks: readBlocks, WriteBlocks: writeBlocks, ReadBytes: readBytes, WriteBytes: writeBytes };
+            prevStatsRef.current = { ReadBlocks: readBlocks, WriteBlocks: writeBlocks, ReadBytes: readBytes, WriteBytes: writeBytes, At: now };
         } catch (error) {
             console.error("Error fetching status:", error);
         }
@@ -731,7 +841,7 @@ function IoStats() {
     }, []);
 
     return (
-        <div>
+        <div style={{gridColumn: "span 2"}}>
             <h2>IO Stats</h2>
             <table className="compact-table">
                 <tbody>
@@ -753,6 +863,20 @@ function IoStats() {
                 </tr>
                 </tbody>
             </table>
+
+            <div className="status-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="time" minTickGap={32} />
+                        <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
+                        <Tooltip formatter={(value, name) => [`${formatBytesBinary(value)}/s`, name === 'readBytes' ? 'Read' : 'Write']} />
+                        <Legend formatter={(value) => value === 'readBytes' ? 'Read' : 'Write'} />
+                        <Line type="monotone" dataKey="readBytes" stroke="#1f77b4" dot={false} strokeWidth={2} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="writeBytes" stroke="#2ca02c" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     );
 }
@@ -1083,6 +1207,7 @@ function WorkerStats({stats}) {
     const prevStatsRef = useRef({});
     const prevTimeRef = useRef(Date.now());
     const commPBytesRateRef = useRef(0);
+    const [chartData, setChartData] = useState([]);
     const smoothingFactor = 1 / 10;
 
     useEffect(() => {
@@ -1098,6 +1223,14 @@ function WorkerStats({stats}) {
                 commPBytesRateRef.current,
                 smoothingFactor
             );
+
+            setChartData(prev => [
+                ...prev.slice(-89),
+                {
+                    time: new Date(currentTime).toLocaleTimeString(),
+                    rate: Math.round(commPBytesRateRef.current),
+                }
+            ]);
         }
 
         prevStatsRef.current = stats;
@@ -1136,6 +1269,19 @@ function WorkerStats({stats}) {
                 </tr>
                 </tbody>
             </table>
+
+            <div className="status-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="time" minTickGap={32} />
+                        <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
+                        <Tooltip formatter={(value) => [`${formatBytesBinary(value)}/s`, 'DataCID Rate']} />
+                        <Legend />
+                        <Line type="monotone" dataKey="rate" name="DataCID Rate" stroke="#ff7f0e" dot={false} strokeWidth={2} isAnimationActive={false} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     )
 }
@@ -1188,8 +1334,8 @@ function DealCountsChart() {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="Retrievable" fill="#8884d8" />
-                    <Bar dataKey="Sealed" fill="#82ca9d" />
+                    <Bar dataKey="Retrievable" fill="#8884d8" isAnimationActive={false} />
+                    <Bar dataKey="Sealed" fill="#82ca9d" isAnimationActive={false} />
                 </BarChart>
             </ResponsiveContainer>
         </div>
@@ -1197,6 +1343,44 @@ function DealCountsChart() {
 }
 
 function RepairRetrievals() {
+    const [queueStats, setQueueStats] = useState({Total: 0, Assigned: 0});
+    const [repairStats, setRepairStats] = useState({});
+    const [retrievalRate, setRetrievalRate] = useState(0);
+    const prevProgressRef = useRef({at: 0, total: 0, ema: 0});
+
+    const fetchStats = async () => {
+        try {
+            const queue = await RibsRPC.call("RepairQueue");
+            const jobs = await RibsRPC.call("RepairStats");
+
+            setQueueStats(queue);
+            setRepairStats(jobs || {});
+
+            const totalProgress = Object.values(jobs || {}).reduce((sum, job) => sum + (job.FetchProgress || 0), 0);
+            const now = Date.now();
+            if (prevProgressRef.current.at) {
+                const elapsedSeconds = (now - prevProgressRef.current.at) / 1000;
+                const delta = Math.max(0, totalProgress - prevProgressRef.current.total);
+                const instantRate = elapsedSeconds > 0 ? delta / elapsedSeconds : 0;
+                const ema = calcEMA(instantRate, prevProgressRef.current.ema || 0, 1 / 5);
+                prevProgressRef.current.ema = ema;
+                setRetrievalRate(Math.round(ema));
+            }
+            prevProgressRef.current.at = now;
+            prevProgressRef.current.total = totalProgress;
+        } catch (error) {
+            console.error("Error fetching repair stats:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchStats();
+        const intervalId = setInterval(fetchStats, 1000);
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const activeJobs = Object.values(repairStats || {}).length;
+
     return (
         <div>
             <h2>Repair Retrievals</h2>
@@ -1205,15 +1389,15 @@ function RepairRetrievals() {
                 <tbody>
                 <tr>
                     <td>Queue</td>
-                    <td>0 Deals</td>
+                    <td>{queueStats.Total || 0} Deals</td>
                 </tr>
                 <tr>
                     <td>Active</td>
-                    <td>0 Deals</td>
+                    <td>{Math.max(queueStats.Assigned || 0, activeJobs)} Deals</td>
                 </tr>
                 <tr>
                     <td>Retrieval rate</td>
-                    <td>0 B/s</td>
+                    <td>{formatBytesBinary(retrievalRate)}/s</td>
                 </tr>
                 </tbody>
             </table>
@@ -1300,7 +1484,7 @@ function CIDGravityStatusTile() {
                     )}
                     <tr>
                         <td colSpan={2} style={{fontSize: '0.8em', color: '#666', paddingTop: '8px'}}>
-                            <a href="https://cidgravity.com" target="_blank" rel="noopener noreferrer" className="button-ish button-sm">
+                            <a href="https://app.cidgravity.com" target="_blank" rel="noopener noreferrer" className="button-ish button-sm">
                                 CIDGravity Dashboard
                             </a>
                         </td>
@@ -1451,6 +1635,7 @@ function Status() {
     const [carUploadStats, setCarUploadStats] = useState({});
     const [reachableProviders, setReachableProviders] = useState([]);
     const [dealSummary, setDealSummary] = useState({});
+    const [dealLoopStats, setDealLoopStats] = useState({});
     const [retrStats, setRetrStats] = useState({});
     const [retrChecker, setRetrChecker] = useState({})
     const [workerStats, setWorkerStats] = useState({})
@@ -1464,6 +1649,7 @@ function Status() {
             const carUploadStats = await RibsRPC.call("CarUploadStats");
             const reachableProviders = await RibsRPC.call("ReachableProviders");
             const dealSummary = await RibsRPC.call("DealSummary");
+            const dealLoopStats = await RibsRPC.call("DealLoopStats");
             const retrStats = await RibsRPC.call("RetrStats");
             const retrCheckerStats = await RibsRPC.call("RetrChecker")
             const workerStats = await RibsRPC.call("WorkerStats")
@@ -1473,6 +1659,7 @@ function Status() {
             setCarUploadStats(carUploadStats);
             setReachableProviders(reachableProviders);
             setDealSummary(dealSummary);
+            setDealLoopStats(dealLoopStats);
             setRetrStats(retrStats);
             setRetrChecker(retrCheckerStats);
             setWorkerStats(workerStats);
@@ -1503,7 +1690,7 @@ function Status() {
 
                 <h1><abbr title="Decentralized Storage Network">DSN</abbr></h1>
                 <div className="status-grid">
-                    <DealsTile dealSummary={dealSummary} />
+                    <DealsTile dealSummary={dealSummary} dealLoopStats={dealLoopStats} />
                     <DealCountsChart />
                     <ProvidersTile reachableProviders={reachableProviders} />
                     <CarUploadStatsTile carUploadStats={carUploadStats} />

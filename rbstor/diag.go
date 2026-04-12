@@ -158,7 +158,7 @@ func (r *rbs) WritableGroups() []iface.WritableGroupInfo {
 	r.lk.Lock()
 	defer r.lk.Unlock()
 
-	var groups []iface.WritableGroupInfo
+	groups := make([]iface.WritableGroupInfo, 0, len(r.writableGroups))
 	for key, group := range r.writableGroups {
 		info := iface.WritableGroupInfo{
 			GroupKey:       key,

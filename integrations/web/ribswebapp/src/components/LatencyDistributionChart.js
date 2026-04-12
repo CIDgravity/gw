@@ -55,6 +55,7 @@ function LatencyDistributionChart({ data }) {
                         stroke="#4caf50"
                         fill="#4caf50"
                         fillOpacity={0.3}
+                        isAnimationActive={false}
                         name="p50 (median)"
                     />
                     <Area
@@ -64,6 +65,7 @@ function LatencyDistributionChart({ data }) {
                         stroke="#ff9800"
                         fill="#ff9800"
                         fillOpacity={0.3}
+                        isAnimationActive={false}
                         name="p95"
                     />
                     <Area
@@ -73,6 +75,7 @@ function LatencyDistributionChart({ data }) {
                         stroke="#f44336"
                         fill="#f44336"
                         fillOpacity={0.3}
+                        isAnimationActive={false}
                         name="p99"
                     />
                 </AreaChart>

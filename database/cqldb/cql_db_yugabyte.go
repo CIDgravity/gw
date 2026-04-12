@@ -29,6 +29,32 @@ type yugabyteCqlDb struct {
 	ctx     context.Context
 }
 
+const cqlStartupMaxAttempts = 30
+
+func retryCQLStartup(name string, fn func() error) error {
+	backoff := 2 * time.Second
+	var err error
+
+	for attempt := 1; attempt <= cqlStartupMaxAttempts; attempt++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if attempt == cqlStartupMaxAttempts {
+			break
+		}
+		time.Sleep(backoff)
+		if backoff < 15*time.Second {
+			backoff *= 2
+			if backoff > 15*time.Second {
+				backoff = 15 * time.Second
+			}
+		}
+	}
+
+	return fmt.Errorf("%s after %d attempts: %w", name, cqlStartupMaxAttempts, err)
+}
+
 func (db *yugabyteCqlDb) Session() *gocql.Session {
 	return db.session
 }
@@ -46,7 +72,9 @@ func (db *yugabyteCqlDb) ExecuteBatch(batch *gocql.Batch) error {
 }
 
 func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) {
-	err := runMigrations(config)
+	err := retryCQLStartup("initialize yugabyte cql", func() error {
+		return runMigrations(config)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +99,12 @@ func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) 
 			return net.ParseIP(hosts[0]).To4(), port
 		})
 	}
-	session, err := cluster.CreateSession()
+	var session *gocql.Session
+	err = retryCQLStartup("create yugabyte cql session", func() error {
+		var sessionErr error
+		session, sessionErr = cluster.CreateSession()
+		return sessionErr
+	})
 
 	if err != nil {
 		return nil, fmt.Errorf("create cql session: %w", err)
@@ -104,6 +137,7 @@ func runMigrations(config configuration.YugabyteCqlConfig) error {
 	if err != nil {
 		return fmt.Errorf("create cql migrate session: %w", err)
 	}
+	defer session.Close()
 
 	migrations, err := iofs.New(migrationsfs, "migrations")
 	if err != nil {

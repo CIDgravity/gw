@@ -52,3 +52,44 @@
     color: #4caf50;
     font-weight: bold;
 }
+
+.segmented-control {
+    display: inline-flex;
+    gap: 0.35rem;
+    margin-right: 0.35rem;
+}
+
+.segmented-button {
+    border: 1px solid #c7ccd4;
+    background: #f0f2f5;
+    color: #243447;
+}
+
+.segmented-button.active {
+    background: #ffd6e7;
+    border-color: #d81b60;
+    color: #7a123f;
+    box-shadow: inset 0 0 0 1px rgba(216, 27, 96, 0.15);
+    font-weight: 600;
+}
+
+.car-upload-stats-tile {
+    min-height: 24rem;
+}
+
+.car-upload-chart {
+    height: 15rem;
+    margin-top: 1rem;
+}
+
+.status-note {
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    margin-top: 1rem;
+}
+
+.status-chart {
+    height: 15rem;
+    margin-top: 1rem;
+}

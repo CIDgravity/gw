@@ -16,6 +16,7 @@ type ExternalOffloader interface {
 	GetModuleName() string
 	EnsureExternalPush(gid iface.GroupKey, src CarSource) error
 	GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error)
+	PreDealTransferCheck(ctx context.Context, gid iface.GroupKey, url string, size int64) error
 	CleanExternal(gid iface.GroupKey, lpath string) error
 	ReadCar(ctx context.Context, group iface.GroupKey, path string, off int64, size int64) (io.ReadCloser, error)
 	ReadCarFile(ctx context.Context, group iface.GroupKey) (io.ReadSeekCloser, error)

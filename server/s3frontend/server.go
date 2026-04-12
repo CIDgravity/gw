@@ -1,6 +1,7 @@
 package s3frontend
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -18,13 +19,17 @@ type FrontendServer struct {
 	auth             *s3.Authenticator
 	backendPool      *BackendPool
 	router           *ObjectRouter
-	multipartTracker *MultipartTracker
+	multipartTracker multipartUploadLookup
 	nodeID           string
 	writeCounter     atomic.Uint64
 }
 
+type multipartUploadLookup interface {
+	GetUpload(rctx context.Context, uploadID string) (*MultipartUpload, error)
+}
+
 // NewFrontendServer creates a new S3 frontend proxy server
-func NewFrontendServer(auth *s3.Authenticator, backendPool *BackendPool, router *ObjectRouter, multipartTracker *MultipartTracker, nodeID string) *FrontendServer {
+func NewFrontendServer(auth *s3.Authenticator, backendPool *BackendPool, router *ObjectRouter, multipartTracker multipartUploadLookup, nodeID string) *FrontendServer {
 	return &FrontendServer{
 		auth:             auth,
 		backendPool:      backendPool,
@@ -184,6 +189,10 @@ func (s *FrontendServer) routeToCoordinator(w http.ResponseWriter, r *http.Reque
 			log.Errorw("Failed to lookup upload", "error", err, "upload_id", uploadID)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
+		return
+	}
+	if upload.Status != "active" || (!upload.ExpiresAt.IsZero() && time.Now().After(upload.ExpiresAt)) {
+		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
@@ -375,7 +384,7 @@ func parseBucketAndKey(path string) (bucket, key string, err error) {
 }
 
 // Start starts the frontend server
-func Start(cfg *configuration.S3APIConfig, auth *s3.Authenticator, backendPool *BackendPool, router *ObjectRouter, multipartTracker *MultipartTracker, nodeID string) (*http.Server, error) {
+func Start(cfg *configuration.S3APIConfig, auth *s3.Authenticator, backendPool *BackendPool, router *ObjectRouter, multipartTracker multipartUploadLookup, nodeID string) (*http.Server, error) {
 	server := NewFrontendServer(auth, backendPool, router, multipartTracker, nodeID)
 
 	httpServer := &http.Server{

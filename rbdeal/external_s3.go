@@ -221,6 +221,10 @@ func (s *S3OffloadInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*
 	return &u, nil
 }
 
+func (s *S3OffloadInfo) PreDealTransferCheck(ctx context.Context, gid iface.GroupKey, url string, size int64) error {
+	return nil
+}
+
 func (s *S3OffloadInfo) CleanExternal(gid iface.GroupKey, lpath string) error {
 	r := s.r
 

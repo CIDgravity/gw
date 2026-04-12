@@ -9,21 +9,36 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/mitchellh/go-homedir"
 
 	types "github.com/CIDgravity/filecoin-gateway/ributil/boosttypes"
-	"github.com/gbrlsnchs/jwt/v3"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/xerrors"
 )
 
 var bootTime = time.Now()
+
+type countingResponseWriter struct {
+	http.ResponseWriter
+	total *atomic.Int64
+}
+
+func (cw *countingResponseWriter) Write(p []byte) (int, error) {
+	n, err := cw.ResponseWriter.Write(p)
+	if n > 0 && cw.total != nil {
+		cw.total.Add(int64(n))
+	}
+	return n, err
+}
 
 func (r *ribs) setupCarServer(ctx context.Context) error {
 	cfg := configuration.GetConfig()
@@ -133,49 +148,8 @@ func (r *ribs) CarUploadStats() iface.UploadStats {
 	}
 } */
 
-var jwtKey = func() *jwt.HMACSHA { // todo generate / store
-	return jwt.NewHS256([]byte("this is super safe"))
-}()
-
-type carRequestToken struct {
-	Group   int64
-	Timeout int64
-	CarSize int64
-
-	DealUUID uuid.UUID
-}
-
-func (r *ribs) verify(ctx context.Context, token string) (carRequestToken, error) {
-	var payload carRequestToken
-	if _, err := jwt.Verify([]byte(token), jwtKey, &payload); err != nil {
-		return carRequestToken{}, xerrors.Errorf("JWT Verification failed: %w", err)
-	}
-
-	if payload.Timeout < time.Now().Add(-dealDownloadTimeout).Unix() {
-		return carRequestToken{}, xerrors.Errorf("token expired")
-	}
-
-	return payload, nil
-}
-
-func (r *ribs) makeCarRequestToken(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) ([]byte, error) {
-	p := carRequestToken{
-		Group:    group,
-		Timeout:  time.Now().Add(timeout).Unix(),
-		CarSize:  carSize,
-		DealUUID: deal,
-	}
-
-	return jwt.Sign(&p, jwtKey)
-}
-
 func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64, deal uuid.UUID) (types.Transfer, error) {
 	cfg := configuration.GetConfig()
-
-	reqToken, err := r.makeCarRequestToken(group, timeout, carSize, deal)
-	if err != nil {
-		return types.Transfer{}, xerrors.Errorf("make car request token: %w", err)
-	}
 
 	if cfg.External.S3.Endpoint != "" {
 		return types.Transfer{}, xerrors.Errorf("s3 endpoint is set, direct to s3 TODO")
@@ -191,9 +165,6 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 	}
 
 	transferParams := &types.HttpRequest{URL: *extu}
-	transferParams.Headers = map[string]string{
-		"Authorization": string(reqToken),
-	}
 
 	paramsBytes, err := json.Marshal(transferParams)
 	if err != nil {
@@ -210,99 +181,42 @@ func (r *ribs) makeCarRequest(group int64, timeout time.Duration, carSize int64,
 }
 
 func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
-	if req.Header.Get("Authorization") == "" {
-		log.Warnw("car request auth: no auth header", "url", req.URL)
-		w.WriteHeader(http.StatusUnauthorized)
+	requestPath := strings.TrimPrefix(pathpkg.Clean("/"+req.URL.Path), "/")
+	if requestPath == "" || requestPath == "." || strings.Contains(requestPath, "/") {
+		log.Warnw("car request: invalid path", "url", req.URL)
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
-	reqToken, err := r.verify(req.Context(), req.Header.Get("Authorization"))
+	group, err := r.db.GetGroupByExternalPath(EXTERNAL_LOCALWEB, requestPath)
 	if err != nil {
-		log.Warnw("car request auth: failed to verify token", "error", err, "url", req.URL)
-		http.Error(w, xerrors.Errorf("car request auth: %w", err).Error(), http.StatusUnauthorized)
+		log.Errorw("car request: lookup external path", "error", err, "path", requestPath, "url", req.URL)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if group == nil {
+		log.Warnw("car request: unknown path", "path", requestPath, "url", req.URL)
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	log := log.With("deal", reqToken.DealUUID)
-
-	// this is a local transfer, track stats
-
-	/*
-		r.uploadStatsLk.Lock()
-		if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
-			http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
-			r.uploadStatsLk.Unlock()
-			return
-		}
-
-		r.activeUploads[reqToken.DealUUID]++
-
-		if r.uploadStats[reqToken.Group] == nil {
-			r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
-		}
-
-		r.uploadStats[reqToken.Group].ActiveRequests++
-
-		r.uploadStatsLk.Unlock()
-
-		defer func() {
-			r.uploadStatsLk.Lock()
-			r.activeUploads[reqToken.DealUUID]--
-			if r.activeUploads[reqToken.DealUUID] == 0 {
-				delete(r.activeUploads, reqToken.DealUUID)
-			}
-			r.uploadStats[reqToken.Group].ActiveRequests--
-			r.uploadStatsLk.Unlock()
-		}()
-
-		transferInfo, err := r.db.GetTransferStatusByDealUUID(reqToken.DealUUID)
-		if err != nil {
-			log.Errorw("car request: get transfer status by deal uuid", "error", err, "url", req.URL)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if transferInfo.Failed == 1 {
-			http.Error(w, "deal is failed", http.StatusGone)
-			return
-		}
-
-		if transferInfo.CarTransferAttempts >= maxTransferRetries {
-			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer has been retried too much")); err != nil {
-				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-				return
-			}
-
-			http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
-			return
-		}
-	*/
+	log := log.With("group", *group, "path", requestPath)
+	r.carUploadActive.Add(1)
+	defer r.carUploadActive.Add(-1)
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
-	cf, err := r.externalOffloader.ReadCarFile(req.Context(), reqToken.Group)
+	cf, err := r.externalOffloader.ReadCarFile(req.Context(), *group)
 	if err != nil {
-		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
+		log.Errorw("car request: read car file", "error", err, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	defer cf.Close()
-	http.ServeContent(w, req, "gdata.car", time.Time{}, cf)
-
-	/* 	defer func() {
-	   		//werr := rateWriter.WriteError()
-	   		werr := err
-
-	   		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
-	   			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-	   			return
-	   		}
-	   	}()
-	*/
-	if err != nil {
-		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", reqToken.Group, "deal", reqToken.DealUUID, "remote", req.RemoteAddr)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	cw := &countingResponseWriter{ResponseWriter: w, total: &r.carUploadBytes}
+	http.ServeContent(cw, req, "gdata.car", time.Time{}, cf)
+	if ctxErr := req.Context().Err(); ctxErr != nil {
+		log.Errorw("car request: context error", "error", ctxErr, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 	}
 }
 

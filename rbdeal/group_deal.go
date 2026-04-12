@@ -130,6 +130,17 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 		return xerrors.Errorf("get deal params: %w", err)
 	}
 
+	extURL, err := r.maybeGetExternalURL(id)
+	if err != nil {
+		return xerrors.Errorf("get staged CAR URL: %w", err)
+	}
+	if extURL == nil {
+		return xerrors.Errorf("get staged CAR URL: missing external URL for group %d", id)
+	}
+	if err := r.externalOffloader.PreDealTransferCheck(ctx, id, *extURL, dealInfo.CarSize); err != nil {
+		return xerrors.Errorf("probe staged CAR URL: %w", err)
+	}
+
 	notFailed, unretrievable, err := r.db.GetNonFailedDealCount(id)
 	if err != nil {
 		log.Errorw("getting non-failed deal count", "error", err)
@@ -261,6 +272,21 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("invalid selected provider: %s: %w", prov, err)
 		}
 		provs = append(provs, dealProvider{id: int64(provid)})
+	}
+
+	filteredProvs := make([]dealProvider, 0, len(provs))
+	now := time.Now()
+	for _, prov := range provs {
+		if cooldown, ok := r.providerCooldown(prov.id, now); ok {
+			log.Infow("makeMoreDeals: skipping provider on cooldown", "group", id, "provider", fmt.Sprintf("f0%d", prov.id), "until", cooldown.Until, "reason", cooldown.Reason)
+			continue
+		}
+		filteredProvs = append(filteredProvs, prov)
+	}
+	provs = filteredProvs
+	if len(provs) == 0 {
+		log.Infow("makeMoreDeals: all candidate providers are on cooldown", "group", id)
+		return nil
 	}
 
 	makeDealWith := func(prov dealProvider) error {
@@ -397,6 +423,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			return xerrors.Errorf("marking deal as successfully proposed: %w", err)
 		}
 
+		r.clearProviderCooldown(prov.id)
+
 		log.Infof("Deal %s with %s accepted for group %d!!!", dealUuid, maddr, id)
 
 		return nil
@@ -425,6 +453,8 @@ func (r *ribs) makeMoreDeals(ctx context.Context, id iface.GroupKey, w *ributil.
 			// deal rejected
 			continue
 		}*/
+
+		r.recordProviderCooldown(prov.id, err)
 
 		log.Errorw("failed to make deal with provider", "provider", fmt.Sprintf("f0%d", prov.id), "error", err)
 	}

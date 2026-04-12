@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ var emailRe = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{
 
 const (
 	datacapRequestAmountTiB = 10
+	faucetFilRequestAmount  = "0.000001"
 )
 
 func resolveWalletPath(opts Opts) string {
@@ -39,13 +41,13 @@ func ensureLocalWallet(walletPath string) (string, error) {
 	return addr.String(), nil
 }
 
-func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
+func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) (bool, error) {
 	exists, err := WalletExistsOnChain(ctx, opts.lotusGateway, addr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if exists {
-		return nil
+		return false, nil
 	}
 
 	fund := true
@@ -59,12 +61,12 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 				Value(&fund),
 		),
 	).Run(); err != nil {
-		return err
+		return false, err
 	}
 	if fund {
 		fmt.Println("Requesting faucet funds...")
-		if err := FundWalletViaFaucet(opts.faucetUrl, addr); err != nil {
-			return err
+		if err := RequestFilViaFaucet(opts.faucetUrl, addr, faucetFilRequestAmount); err != nil {
+			return false, err
 		}
 		fmt.Println("✅ Faucet request successful. Waiting for wallet to become visible on-chain...")
 
@@ -72,15 +74,16 @@ func maybeInitializeOnChain(ctx context.Context, opts Opts, addr string) error {
 		err := WaitWalletAppearsOnChain(ctx, opts.lotusGateway, addr, opts.walletTimeout)
 		stop()
 		if err != nil {
-			return err
+			return true, err
 		}
 		fmt.Printf("\n✅ Wallet is now visible on-chain: %s\n", addr)
 		exists = true
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
+func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string, filAlreadyRequested bool) error {
 	if opts.faucetUrl == "" {
 		return nil
 	}
@@ -109,9 +112,13 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 		return nil
 	}
 
-	fmt.Println("Requesting datacap allocation and FIL top-up...")
+	if filAlreadyRequested {
+		fmt.Println("Requesting datacap allocation...")
+	} else {
+		fmt.Println("Requesting datacap allocation and FIL top-up...")
+	}
 
-	// Request datacap and FIL faucet in parallel
+	// Request datacap and, if needed, a FIL top-up in parallel.
 	type datacapResult struct {
 		messageCID string
 		err        error
@@ -121,26 +128,32 @@ func maybeEnsureDatacap(ctx context.Context, opts Opts, addr string) error {
 	}
 
 	datacapCh := make(chan datacapResult, 1)
-	filCh := make(chan filResult, 1)
+	var filCh chan filResult
 
 	go func() {
 		messageCID, err := RequestDatacapViaFaucet(opts.faucetUrl, addr, datacapRequestAmountTiB)
 		datacapCh <- datacapResult{messageCID: messageCID, err: err}
 	}()
 
-	go func() {
-		err := RequestFilViaFaucet(opts.faucetUrl, addr)
-		filCh <- filResult{err: err}
-	}()
+	if !filAlreadyRequested {
+		filCh = make(chan filResult, 1)
+		go func() {
+			err := RequestFilViaFaucet(opts.faucetUrl, addr, faucetFilRequestAmount)
+			filCh <- filResult{err: err}
+		}()
+	}
 
 	// Wait for both results
 	dcRes := <-datacapCh
-	filRes := <-filCh
+	var filRes filResult
+	if filCh != nil {
+		filRes = <-filCh
+	}
 
 	// Report FIL faucet result (non-fatal)
-	if filRes.err != nil {
+	if filCh != nil && filRes.err != nil {
 		fmt.Printf("⚠️  FIL faucet request failed (non-fatal): %v\n", filRes.err)
-	} else {
+	} else if filCh != nil {
 		fmt.Println("✅ FIL top-up request submitted.")
 	}
 
@@ -240,7 +253,7 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 	}
 	idAddrStr := idAddr.String()
 
-	cgClient := NewCidGravity(opts.cidgravityUrl)
+	cgClient := NewCidGravity(opts.cidgravityUrl, opts.cidgravitySvc)
 
 	for attempts := 0; attempts < 3; attempts++ {
 		friendly, contactEmail, entityName, err := collectCIDGravityAccountInfo()
@@ -304,15 +317,20 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 		fmt.Println("\n✅ Obtained CIDGravity API token via API.")
 		env[k.Var] = res.Token
 		claimed := false
-		message := fmt.Sprintf("Click this link to claim your account and manage CIDGravity settings:\n%s", res.URL)
+		message := fmt.Sprintf("Open this link, claim the CIDGravity account, and initialize the onboarding policy in the CIDGravity UI before continuing:\n%s", res.URL)
 		confirm := huh.NewConfirm().
-			Title("Claim CIDGravity account").
+			Title("Claim CIDGravity account and initialize onboarding policy").
 			Description(message).
-			Affirmative("I've claimed the account").
+			Affirmative("Done").
 			Negative("Skip").
 			Value(&claimed)
 		if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
 			return err
+		}
+		if claimed {
+			if err := maybeVerifyCIDGravityOnboardingPolicy(cgClient, res.Token); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -325,6 +343,38 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 	}
 	env[k.Var] = val
 	return nil
+}
+
+func maybeVerifyCIDGravityOnboardingPolicy(cgClient *CidGravity, apiToken string) error {
+	for {
+		stop := startSpinner("Testing CIDGravity provider selection...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := cgClient.TestGetBestAvailableProviders(ctx, apiToken)
+		cancel()
+		stop()
+		if err == nil {
+			fmt.Println("\n✅ CIDGravity onboarding policy looks ready.")
+			return nil
+		}
+
+		fmt.Printf("\n⚠️  CIDGravity provider-selection test failed: %v\n", err)
+		var choice string
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("What would you like to do?").
+				Description("If you just changed the onboarding policy in the CIDGravity UI, give it a moment and retry. You can also ignore the error and finish setup.").
+				Options(
+					huh.NewOption("Retry test", "retry"),
+					huh.NewOption("Ignore and continue", "ignore"),
+				).
+				Value(&choice),
+		)).Run(); err != nil {
+			return err
+		}
+		if choice == "ignore" {
+			return nil
+		}
+	}
 }
 
 // promptRetryOrManual asks the user whether to retry with corrected input
@@ -418,18 +468,46 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 		return fmt.Errorf("unable to configure staging storage path")
 	}
 
-	var urlVal string
-	var pathVal string
-	pathDefault := pathKey.DefaultValue
-	if pathDefault == "" {
-		pathDefault = "/tmp/ribs-carfiles"
+	portKey, ok := findKey("EXTERNAL_LOCALWEB_SERVER_PORT", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure staging server port")
 	}
 
-	err := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description(envComment(urlKey.Var)),
-		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files"),
-	)).Run()
-	if err != nil {
+	var urlVal string
+	var pathVal string
+	var portVal string
+	mode := "autocert"
+	pathDefault := pathKey.DefaultValue
+	if pathDefault == "" {
+		ribsDataPath := strings.TrimSpace(env["RIBS_DATA"])
+		if ribsDataPath == "" {
+			ribsDataPath = filepath.Join("~", ".ribsdata")
+		}
+		expanded, err := expandLocalPath(ribsDataPath)
+		if err == nil && expanded != "" {
+			ribsDataPath = expanded
+		}
+		pathDefault = filepath.Join(ribsDataPath, "cardata")
+	}
+	if portKey.DefaultValue != "" {
+		portVal = portKey.DefaultValue
+	} else {
+		portVal = "8443"
+	}
+
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("LocalWeb mode").
+			Description("Choose whether the gateway terminates TLS itself or an external reverse proxy/ingress handles TLS and forwards to the gateway.").
+			Options(
+				huh.NewOption("Built-in autocert TLS on the gateway", "autocert"),
+				huh.NewOption("Delegate TLS to a reverse proxy / ingress", "delegated"),
+			).
+			Value(&mode),
+		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description("Public root URL for staged CAR downloads, for example https://example.com (no path component)"),
+		huh.NewInput().Title(portKey.Var).Value(&portVal).Placeholder("8443").Description("Internal LocalWeb listen port. In delegated-TLS mode your reverse proxy should forward to 127.0.0.1:<port> on the gateway host."),
+		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files. The default is a persistent cardata directory under RIBS_DATA."),
+	)).Run(); err != nil {
 		return err
 	}
 
@@ -437,11 +515,31 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 	if pathVal == "" {
 		pathVal = pathDefault
 	}
-	env[pathKey.Var] = pathVal
+	expandedPath, err := expandLocalPath(pathVal)
+	if err != nil {
+		return err
+	}
+	env[pathKey.Var] = expandedPath
+
+	if portVal == "" {
+		portVal = "8443"
+	}
 
 	// Set sensible defaults for the built-in server
 	env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"] = "true"
-	env["EXTERNAL_LOCALWEB_SERVER_PORT"] = "8443"
+	env["EXTERNAL_LOCALWEB_SERVER_PORT"] = portVal
+	if mode == "delegated" {
+		env["EXTERNAL_LOCALWEB_SERVER_TLS"] = "false"
+	} else {
+		env["EXTERNAL_LOCALWEB_SERVER_TLS"] = "true"
+	}
+
+	if err := maybeTestStagingEndpoint(env); err != nil {
+		if errors.Is(err, errEditStaging) {
+			return setStagingConfig(keys, env)
+		}
+		return err
+	}
 
 	return nil
 }
@@ -454,6 +552,28 @@ func saveConfig(envPath string, env map[string]string) error {
 	return nil
 }
 
+func maybeOpenFullSettingsMenu(envPath string) error {
+	choice := "exit"
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Onboarding complete").
+			Description("gwcfg has saved a minimum viable setup. For more advanced deployments, you can open the full settings menu now to review or tune additional settings.").
+			Options(
+				huh.NewOption("Exit setup", "exit"),
+				huh.NewOption("Open full settings menu", "menu"),
+			).
+			Value(&choice),
+	)).Run(); err != nil {
+		return err
+	}
+
+	if choice == "menu" {
+		return wizard(envPath)
+	}
+
+	return nil
+}
+
 func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	ctx := context.Background()
 
@@ -462,11 +582,12 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	if err != nil {
 		return err
 	}
-	if err := maybeInitializeOnChain(ctx, opts, addr); err != nil {
+	filRequested, err := maybeInitializeOnChain(ctx, opts, addr)
+	if err != nil {
 		return err
 	}
 
-	if err := maybeEnsureDatacap(ctx, opts, addr); err != nil {
+	if err := maybeEnsureDatacap(ctx, opts, addr, filRequested); err != nil {
 		return err
 	}
 
@@ -480,11 +601,25 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 		return err
 	}
 
-	if err := setStagingConfig(keys, env); err != nil {
+	for {
+		if err := setStagingConfig(keys, env); err != nil {
+			return err
+		}
+
+		verified, err := runValidator("Staging", env)
+		if err != nil {
+			return err
+		}
+		if verified {
+			break
+		}
+	}
+
+	if err := saveConfig(envPath, env); err != nil {
 		return err
 	}
 
-	return saveConfig(envPath, env)
+	return maybeOpenFullSettingsMenu(envPath)
 }
 
 func startSpinner(message string) func() {

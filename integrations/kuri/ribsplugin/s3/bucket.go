@@ -332,7 +332,7 @@ func (b *Bucket) partKeyPrefix(key iface.S3Key, uploadId string) string {
 
 func (b *Bucket) listPartObjects(ctx context.Context, key iface.S3Key, uploadId string) ([]iface.S3Object, error) {
 	prefix := b.partKeyPrefix(key, uploadId)
-	result, err := b.region.index.List(ctx, b.name, prefix, "", 10000)
+	result, err := b.region.index.ListTemporary(ctx, b.name, prefix, "", 10000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list multipart parts: %w", err)
 	}

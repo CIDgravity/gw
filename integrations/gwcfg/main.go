@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -27,14 +28,20 @@ import (
 	"github.com/fatih/color"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/google/uuid"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/joho/godotenv"
+	"github.com/mitchellh/go-homedir"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
 	cidgHexChallengeRe = regexp.MustCompile(`^[a-f0-9]+$`)
 	cidgLotusSignRe    = regexp.MustCompile(`^lotus wallet sign f1[a-z0-9]+ [a-f0-9]+$`)
 	cidgApiKeyRe       = regexp.MustCompile(`^f0[a-z0-9]+-[A-Za-z0-9_\-]+$`)
+	errEditStaging     = errors.New("edit staging settings")
 )
+
+const stagingValidatedKey = "__gwcfg_staging_validated"
 
 // ---------------------- meta‑data helpers ------------------------------- //
 
@@ -242,8 +249,16 @@ func validateExternal(env map[string]string) (bool, error) {
 		return false, fmt.Errorf("EXTERNAL_LOCALWEB_PATH or URL not set")
 	}
 
+	expandedPath, err := expandLocalPath(path)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(expandedPath, 0o755); err != nil {
+		return false, err
+	}
+
 	name := uuid.NewString() + ".ribscfg"
-	full := filepath.Join(path, name)
+	full := filepath.Join(expandedPath, name)
 	if err := os.WriteFile(full, []byte("ribscfg connectivity check\n"), 0o644); err != nil {
 		return false, err
 	}
@@ -255,6 +270,13 @@ func validateExternal(env map[string]string) (bool, error) {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
+}
+
+func expandLocalPath(p string) (string, error) {
+	if strings.TrimSpace(p) == "" {
+		return "", nil
+	}
+	return homedir.Expand(p)
 }
 
 // ---------------------- wizard helpers ---------------------------------- //
@@ -416,103 +438,12 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 	}
 
 	if section == "Staging" && !editAdvanced {
-		builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
-		port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
-		urlStr := env["EXTERNAL_LOCALWEB_URL"]
-		if builtin == "true" {
-			// Validate port and URL
-			if !isValidPort(port) {
-				fmt.Printf("❌ Port %q is not valid. Please edit the settings.\n", port)
+		if err := maybeTestStagingEndpoint(env); err != nil {
+			if errors.Is(err, errEditStaging) {
 				return editSection("Staging", keys, env, false)
 			}
-			if !isValidURL(urlStr) {
-				fmt.Printf("❌ URL %q is not valid. Please edit the settings.\n", urlStr)
-				return editSection("Staging", keys, env, false)
-			}
-
-			// Ask if user wants to test
-			doTest := false
-			testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
-			if isInContainer() {
-				testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
-					"The test server binds inside the container, so it will only\n" +
-					"work if the container has the port mapped (e.g. --network=host\n" +
-					"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
-					"'docker run' without port mapping, skip this test."
-			}
-			if err := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title("Do you want to test the endpoint online?").
-						Description(testDesc).
-						Value(&doTest),
-				),
-			).Run(); err != nil {
-				return err
-			}
-			if doTest {
-				for {
-					// Start temp server
-					handler := http.NewServeMux()
-					handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-						fmt.Fprintln(w, "gwcfg test OK")
-					})
-					shutdown, err := startTempHTTPServer(port, handler)
-					if err != nil {
-						fmt.Printf("❌ Failed to start temporary server: %s\n", err)
-						goto afterTest
-					}
-
-					// Wait a moment for server to start
-					time.Sleep(500 * time.Millisecond)
-
-					{
-						// Test endpoint
-						testURL := urlStr
-						_, err := url.Parse(testURL)
-						if err != nil {
-							fmt.Printf("❌ Failed to parse URL: %s\n", err)
-							goto afterTest
-						}
-
-						fmt.Printf("Testing endpoint: %s ...\n", testURL)
-						testErr := testEndpoint(testURL)
-						if testErr == nil {
-							fmt.Println("✅ Endpoint is reachable!")
-						} else {
-							fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
-						}
-					}
-
-					// Stop the server immediately after the test
-					shutdown()
-
-				afterTest:
-					// Prompt for retry/edit/continue
-					var action string
-					opts := []huh.Option[string]{
-						huh.NewOption("Retry test", "retry"),
-						huh.NewOption("Edit settings", "edit"),
-						huh.NewOption("Continue", "continue"),
-					}
-					if err := huh.NewForm(
-						huh.NewGroup(
-							huh.NewSelect[string]().Title("What do you want to do?").Options(opts...).Value(&action),
-						),
-					).Run(); err != nil {
-						return err
-					}
-					switch action {
-					case "retry":
-						continue // re-run the test loop
-					case "edit":
-						return editSection("Staging", keys, env, false)
-					case "continue":
-						break // exit the test loop and continue
-					}
-					break // exit the test loop
-				}
-			}
+			fmt.Printf("❌ %s\n", err)
+			return editSection("Staging", keys, env, false)
 		}
 	}
 	return nil
@@ -538,7 +469,7 @@ func confirm(title string, def bool) (bool, error) {
 }
 
 func runValidator(section string, env map[string]string) (bool, error) {
-	v, ok := validators[section]
+	_, ok := validators[section]
 	if !ok {
 		return true, nil
 	}
@@ -546,7 +477,7 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	if err != nil || !do {
 		return true, err
 	}
-	okRes, err := v(env)
+	okRes, err := validateSection(section, env)
 	if err != nil {
 		fmt.Printf("Validation error: %v\n", err)
 		return false, nil
@@ -557,6 +488,20 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	}
 	fmt.Println("❌ Validation failed.")
 	return false, nil
+}
+
+func validateSection(section string, env map[string]string) (bool, error) {
+	if section == "Staging" && env[stagingValidatedKey] == "1" {
+		delete(env, stagingValidatedKey)
+		return true, nil
+	}
+
+	v, ok := validators[section]
+	if !ok {
+		return true, nil
+	}
+
+	return v(env)
 }
 
 func wizard(envPath string) error {
@@ -679,15 +624,15 @@ func envComment(key string) string {
 	case "RIBS_DATA":
 		return "The path to the RIBS data directory"
 	case "EXTERNAL_LOCALWEB_BUILTIN_SERVER":
-		return "Whether to run a local web server for deal uploads (true/false)"
+		return "Keep this enabled. Use EXTERNAL_LOCALWEB_SERVER_TLS=false when a reverse proxy or ingress owns 443"
 	case "EXTERNAL_LOCALWEB_SERVER_PORT":
-		return "The port to run the local web server on"
+		return "Internal port for the LocalWeb server. The default 8443 works for both built-in autocert and reverse-proxy mode"
 	case "EXTERNAL_LOCALWEB_URL":
-		return "Public URL that storage providers will use to fetch staged data (e.g. https://example.com). You need to configure this domain to point the Filecoin gateway"
+		return "Public root URL that storage providers will use to fetch staged data (for example https://example.com). Do not include a path; RIBS appends the randomized CAR filename"
 	case "EXTERNAL_LOCALWEB_SERVER_TLS":
-		return "Whether to run the local web server with TLS (true/false)"
+		return "true = built-in autocert mode on 443. false = reverse-proxy mode where nginx/caddy/ingress terminates TLS and forwards to the gateway"
 	case "EXTERNAL_LOCALWEB_PATH":
-		return "The path to the local web server's data directory (required for external web server, allowed for builtin server)"
+		return "The path to the local web server's data directory. Defaults to <RIBS_DATA>/cardata"
 	}
 	return ""
 }
@@ -763,11 +708,45 @@ func isValidURL(u string) bool {
 	return err == nil
 }
 
-// Start a temporary HTTP server on the given port, returns a shutdown function and the actual port used
-func startTempHTTPServer(port string, handler http.Handler) (shutdown func(), err error) {
-	ln, err := net.Listen("tcp", ":"+port)
+func makeTemporaryTLSConfig(env map[string]string, testURL string) (*tls.Config, error) {
+	parsedURL, err := url.Parse(testURL)
 	if err != nil {
 		return nil, err
+	}
+	host := parsedURL.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		return nil, fmt.Errorf("built-in autocert mode currently requires a DNS hostname in EXTERNAL_LOCALWEB_URL; while Let's Encrypt now supports IP certificates, the Go autocert client used here does not expose the short-lived IP certificate profile yet")
+	}
+
+	repoDir := strings.TrimSpace(env["RIBS_DATA"])
+	if repoDir == "" {
+		repoDir = filepath.Join("~", ".ribsdata")
+	}
+	repoDir, err = homedir.Expand(repoDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	certManager := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(host),
+		Cache:      autocert.DirCache(filepath.Join(repoDir, "acme")),
+	}
+
+	return certManager.TLSConfig(), nil
+}
+
+// Start a temporary HTTP server on the given port, returns a shutdown function and the actual port used
+func startTempHTTPServer(bindHost, port string, handler http.Handler, tlsConfig *tls.Config) (shutdown func(), err error) {
+	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, port))
+	if err != nil {
+		return nil, err
+	}
+	if tlsConfig != nil {
+		ln = tls.NewListener(ln, tlsConfig)
 	}
 	server := &http.Server{Handler: handler}
 	var wg sync.WaitGroup
@@ -782,21 +761,138 @@ func startTempHTTPServer(port string, handler http.Handler) (shutdown func(), er
 	}, nil
 }
 
-// Call an external API to test the endpoint (for demo, just GET the URL)
-func testEndpoint(url string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+func maybeTestStagingEndpoint(env map[string]string) error {
+	builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
+	port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
+	urlStr := env["EXTERNAL_LOCALWEB_URL"]
+	if builtin != "true" {
+		return nil
+	}
+
+	if !isValidPort(port) {
+		return fmt.Errorf("port %q is not valid", port)
+	}
+	if !isValidURL(urlStr) {
+		return fmt.Errorf("URL %q is not valid", urlStr)
+	}
+
+	doTest := false
+	testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
+	if env["EXTERNAL_LOCALWEB_SERVER_TLS"] == "false" {
+		testDesc += "\n* In delegated-TLS mode, make sure your reverse proxy forwards the public URL to 127.0.0.1:" + port + " on the gateway host."
+	}
+	if isInContainer() {
+		testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
+			"The test server binds inside the container, so it will only\n" +
+			"work if the container has the port mapped (e.g. --network=host\n" +
+			"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
+			"'docker run' without port mapping, skip this test."
+	}
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Do you want to test the endpoint online?").
+				Description(testDesc).
+				Value(&doTest),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !doTest {
+		return nil
+	}
+
+	for {
+		var shutdown func()
+		var testErr error
+		var err error
+		useTLS := env["EXTERNAL_LOCALWEB_SERVER_TLS"] == "true"
+		var tlsConfig *tls.Config
+		if useTLS {
+			tlsConfig, err = makeTemporaryTLSConfig(env, urlStr)
+			if err != nil {
+				fmt.Printf("❌ Failed to prepare temporary TLS server: %s\n", err)
+			}
+		}
+
+		handler := http.NewServeMux()
+		handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintln(w, "gwcfg test OK")
+		})
+		if err == nil {
+			shutdown, err = startTempHTTPServer("0.0.0.0", port, handler, tlsConfig)
+		}
+		if err != nil {
+			fmt.Printf("❌ Failed to start temporary server: %s\n", err)
+		} else {
+			time.Sleep(500 * time.Millisecond)
+
+			fmt.Printf("Testing endpoint: %s ...\n", urlStr)
+			testErr = testEndpoint(urlStr, false)
+			if testErr == nil {
+				fmt.Println("✅ Endpoint is reachable!")
+				env[stagingValidatedKey] = "1"
+				shutdown()
+				return nil
+			} else {
+				fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
+			}
+
+			shutdown()
+		}
+
+		var action string
+		opts := []huh.Option[string]{
+			huh.NewOption("Retry test", "retry"),
+			huh.NewOption("Edit settings", "edit"),
+			huh.NewOption("Continue", "continue"),
+		}
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().Title("What do you want to do?").Options(opts...).Value(&action),
+			),
+		).Run(); err != nil {
+			return err
+		}
+		switch action {
+		case "retry":
+			continue
+		case "edit":
+			return errEditStaging
+		case "continue":
+			return nil
+		}
+	}
+}
+
+// Call an external API to test the endpoint.
+func testEndpoint(url string, insecureTLS bool) error {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if insecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status: %s", resp.Status)
 	}
 	return nil
 }
 
+func quietThirdPartyLoggers() {
+	for _, name := range []string{"rpc"} {
+		if err := logging.SetLogLevel(name, "FATAL"); err != nil {
+			log.Printf("set log level for %s: %v", name, err)
+		}
+	}
+}
+
 func main() {
+	quietThirdPartyLoggers()
 	opts := loadOpts()
 
 	abs, _ := filepath.Abs(opts.envFile)

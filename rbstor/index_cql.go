@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/database/cqldb"
@@ -17,12 +18,20 @@ const maxBatchSize = 2000 //todo choose max batch size
 
 type CqlIndex struct {
 	db cqldb.Database
+
+	estimatedEntries atomic.Int64
 }
 
 func NewCqlIndex(db cqldb.Database) (iface.GroupIndex, error) {
 	index := &CqlIndex{
 		db: db,
 	}
+
+	entries, err := index.queryEntryCount(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("initialize cql index size estimate: %w", err)
+	}
+	index.estimatedEntries.Store(entries)
 
 	return index, nil
 }
@@ -129,6 +138,7 @@ func (ci *CqlIndex) AddGroup(ctx context.Context, mh []multihash.Multihash, size
 		if err := ci.executeAddGroupBatch(ctx, chunk, sizes[ichunk*maxBatchSize:ichunk*maxBatchSize+len(chunk)], group); err != nil {
 			return err
 		}
+		ci.estimatedEntries.Add(int64(len(chunk)))
 		ichunk++
 	}
 	return nil
@@ -159,6 +169,7 @@ func (ci *CqlIndex) DropGroup(ctx context.Context, mh []multihash.Multihash, gro
 		if err := ci.executeDropGroupBatch(ctx, chunk, group); err != nil {
 			return err
 		}
+		ci.estimatedEntries.Add(-int64(len(chunk)))
 	}
 	return nil
 }
@@ -178,6 +189,11 @@ func (ci *CqlIndex) executeDropGroupBatch(ctx context.Context, mh []multihash.Mu
 }
 
 func (ci *CqlIndex) EstimateSize(ctx context.Context) (int64, error) {
+	_ = ctx
+	return ci.estimatedEntries.Load(), nil
+}
+
+func (ci *CqlIndex) queryEntryCount(ctx context.Context) (int64, error) {
 	query := `SELECT COUNT(*) FROM MultihashToGroup`
 
 	iter := ci.db.Query(query).WithContext(ctx).Iter()
