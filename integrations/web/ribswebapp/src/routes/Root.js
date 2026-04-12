@@ -15,7 +15,7 @@ function Root() {
     return (
         <div className="Root">
             <div className="Root-head">
-                <div className="Root-head-logoname">RIBS</div>
+                <div className="Root-head-logoname">Filecoin Gateway</div>
                 <div className="Root-head-path">{formatPath()}</div>
                 <div className="Root-head-state"><RpcStatus /></div>
             </div>

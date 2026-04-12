@@ -1,3 +1,9 @@
+ :root {
+    --fgw-blue: #0090ff;
+    --fgw-blue-dark: #0b6ed0;
+    --fgw-blue-light: #46b2ff;
+ }
+
 * {
     box-sizing: border-box;
 }
@@ -35,16 +41,17 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background-color: #4CAF50;
+    background: linear-gradient(90deg, var(--fgw-blue-dark) 0%, var(--fgw-blue) 52%, var(--fgw-blue-light) 100%);
     padding: 0 20px;
     color: white;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
 .Root-head-logoname {
-    font-size: 24px;
+    font-size: 22px;
     font-weight: bold;
     margin-right: 10px;
+    white-space: nowrap;
 }
 
 .Root-head-path {
@@ -89,11 +96,11 @@ body {
 }
 
 .Root-nav-item a:hover {
-    color: #4CAF50;
+    color: var(--fgw-blue-dark);
 }
 
 .Root-nav-item a:hover {
-    color: #4CAF50;
+    color: var(--fgw-blue-dark);
 }
 
 .Root-body {
@@ -102,7 +109,7 @@ body {
 }
 
 button, .button-ish {
-    background-color: #4caf50;
+    background-color: var(--fgw-blue);
     border: none;
     border-radius: 3px;
     color: white;
@@ -117,7 +124,7 @@ button, .button-ish {
 }
 
 button:hover, .button-ish {
-    background-color: #45a049;
+    background-color: var(--fgw-blue-dark);
     color: white;
 }
 
@@ -135,7 +142,7 @@ a {
 }
 
 a:hover {
-    color: #4CAF50;
+    color: var(--fgw-blue-dark);
 }
 
 th {

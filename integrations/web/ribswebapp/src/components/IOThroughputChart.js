@@ -54,6 +54,7 @@ function IOThroughputChart({ data }) {
                         stroke="#9c27b0"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Total"
                     />
                     <Line
@@ -62,6 +63,7 @@ function IOThroughputChart({ data }) {
                         stroke="#4caf50"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Reads"
                     />
                     <Line
@@ -70,6 +72,7 @@ function IOThroughputChart({ data }) {
                         stroke="#ff9800"
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                         name="Writes"
                     />
                 </LineChart>

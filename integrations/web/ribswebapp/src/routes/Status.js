@@ -637,7 +637,11 @@ function CarUploadStatsTile({ carUploadStats }) {
             const elapsedSeconds = (now - prevSampleRef.current.at) / 1000;
             const bytesDelta = Math.max(0, totalBytes - prevSampleRef.current.totalBytes);
             const instantRate = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
-            rateEMARef.current = calcEMA(instantRate, rateEMARef.current || 0, smoothingFactor);
+            if (rateEMARef.current === 0) {
+                rateEMARef.current = instantRate;
+            } else {
+                rateEMARef.current = calcEMA(instantRate, rateEMARef.current, smoothingFactor);
+            }
             nextRate = Math.round(rateEMARef.current);
         }
 
@@ -702,8 +706,8 @@ function CarUploadStatsTile({ carUploadStats }) {
                                 }}
                             />
                             <Legend />
-                            <Line yAxisId="rate" type="monotone" dataKey="rate" name="Rate" stroke="#1f77b4" dot={false} strokeWidth={2} />
-                            <Line yAxisId="active" type="monotone" dataKey="activeRequests" name="Active Requests" stroke="#d62728" dot={false} strokeWidth={2} />
+                            <Line yAxisId="rate" type="monotone" dataKey="rate" name="Rate" stroke="#1f77b4" dot={false} strokeWidth={2} isAnimationActive={false} />
+                            <Line yAxisId="active" type="monotone" dataKey="activeRequests" name="Active Requests" stroke="#d62728" dot={false} strokeWidth={2} isAnimationActive={false} />
                         </LineChart>
                     </ResponsiveContainer>
                 </div>
@@ -868,8 +872,8 @@ function IoStats() {
                         <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
                         <Tooltip formatter={(value, name) => [`${formatBytesBinary(value)}/s`, name === 'readBytes' ? 'Read' : 'Write']} />
                         <Legend formatter={(value) => value === 'readBytes' ? 'Read' : 'Write'} />
-                        <Line type="monotone" dataKey="readBytes" stroke="#1f77b4" dot={false} strokeWidth={2} />
-                        <Line type="monotone" dataKey="writeBytes" stroke="#2ca02c" dot={false} strokeWidth={2} />
+                        <Line type="monotone" dataKey="readBytes" stroke="#1f77b4" dot={false} strokeWidth={2} isAnimationActive={false} />
+                        <Line type="monotone" dataKey="writeBytes" stroke="#2ca02c" dot={false} strokeWidth={2} isAnimationActive={false} />
                     </LineChart>
                 </ResponsiveContainer>
             </div>
@@ -1274,7 +1278,7 @@ function WorkerStats({stats}) {
                         <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
                         <Tooltip formatter={(value) => [`${formatBytesBinary(value)}/s`, 'DataCID Rate']} />
                         <Legend />
-                        <Line type="monotone" dataKey="rate" name="DataCID Rate" stroke="#ff7f0e" dot={false} strokeWidth={2} />
+                        <Line type="monotone" dataKey="rate" name="DataCID Rate" stroke="#ff7f0e" dot={false} strokeWidth={2} isAnimationActive={false} />
                     </LineChart>
                 </ResponsiveContainer>
             </div>
@@ -1330,8 +1334,8 @@ function DealCountsChart() {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="Retrievable" fill="#8884d8" />
-                    <Bar dataKey="Sealed" fill="#82ca9d" />
+                    <Bar dataKey="Retrievable" fill="#8884d8" isAnimationActive={false} />
+                    <Bar dataKey="Sealed" fill="#82ca9d" isAnimationActive={false} />
                 </BarChart>
             </ResponsiveContainer>
         </div>

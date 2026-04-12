@@ -54,7 +54,7 @@ function ErrorRateChart({ data }) {
                             return [`${value.toFixed(2)}% (trend: ${trend})`, "Error Rate"];
                         }}
                     />
-                    <Bar dataKey="errorRate" name="Error Rate %">
+                    <Bar dataKey="errorRate" name="Error Rate %" isAnimationActive={false}>
                         {chartData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={getBarColor(entry.errorRate)} />
                         ))}
