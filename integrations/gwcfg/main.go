@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -30,6 +31,7 @@ import (
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/joho/godotenv"
 	"github.com/mitchellh/go-homedir"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
@@ -706,11 +708,45 @@ func isValidURL(u string) bool {
 	return err == nil
 }
 
+func makeTemporaryTLSConfig(env map[string]string, testURL string) (*tls.Config, error) {
+	parsedURL, err := url.Parse(testURL)
+	if err != nil {
+		return nil, err
+	}
+	host := parsedURL.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		return nil, fmt.Errorf("built-in autocert mode currently requires a DNS hostname in EXTERNAL_LOCALWEB_URL; while Let's Encrypt now supports IP certificates, the Go autocert client used here does not expose the short-lived IP certificate profile yet")
+	}
+
+	repoDir := strings.TrimSpace(env["RIBS_DATA"])
+	if repoDir == "" {
+		repoDir = filepath.Join("~", ".ribsdata")
+	}
+	repoDir, err = homedir.Expand(repoDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	certManager := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(host),
+		Cache:      autocert.DirCache(filepath.Join(repoDir, "acme")),
+	}
+
+	return certManager.TLSConfig(), nil
+}
+
 // Start a temporary HTTP server on the given port, returns a shutdown function and the actual port used
-func startTempHTTPServer(bindHost, port string, handler http.Handler) (shutdown func(), err error) {
+func startTempHTTPServer(bindHost, port string, handler http.Handler, tlsConfig *tls.Config) (shutdown func(), err error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, port))
 	if err != nil {
 		return nil, err
+	}
+	if tlsConfig != nil {
+		ln = tls.NewListener(ln, tlsConfig)
 	}
 	server := &http.Server{Handler: handler}
 	var wg sync.WaitGroup
@@ -769,19 +805,30 @@ func maybeTestStagingEndpoint(env map[string]string) error {
 	for {
 		var shutdown func()
 		var testErr error
+		var err error
+		useTLS := env["EXTERNAL_LOCALWEB_SERVER_TLS"] == "true"
+		var tlsConfig *tls.Config
+		if useTLS {
+			tlsConfig, err = makeTemporaryTLSConfig(env, urlStr)
+			if err != nil {
+				fmt.Printf("❌ Failed to prepare temporary TLS server: %s\n", err)
+			}
+		}
 
 		handler := http.NewServeMux()
 		handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintln(w, "gwcfg test OK")
 		})
-		shutdown, err := startTempHTTPServer("0.0.0.0", port, handler)
+		if err == nil {
+			shutdown, err = startTempHTTPServer("0.0.0.0", port, handler, tlsConfig)
+		}
 		if err != nil {
 			fmt.Printf("❌ Failed to start temporary server: %s\n", err)
 		} else {
 			time.Sleep(500 * time.Millisecond)
 
 			fmt.Printf("Testing endpoint: %s ...\n", urlStr)
-			testErr = testEndpoint(urlStr)
+			testErr = testEndpoint(urlStr, false)
 			if testErr == nil {
 				fmt.Println("✅ Endpoint is reachable!")
 				env[stagingValidatedKey] = "1"
@@ -818,14 +865,18 @@ func maybeTestStagingEndpoint(env map[string]string) error {
 	}
 }
 
-// Call an external API to test the endpoint (for demo, just GET the URL)
-func testEndpoint(url string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+// Call an external API to test the endpoint.
+func testEndpoint(url string, insecureTLS bool) error {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if insecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: transport}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status: %s", resp.Status)
 	}
