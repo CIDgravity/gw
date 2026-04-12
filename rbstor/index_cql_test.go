@@ -162,6 +162,13 @@ func TestEstimateSize(t *testing.T) {
 	result, err := idx.EstimateSize(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, initialSize+10, result)
+
+	err = idx.DropGroup(context.Background(), mhs, testGroup)
+	require.NoError(t, err)
+
+	result, err = idx.EstimateSize(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, initialSize, result)
 }
 
 func genMhashList(t testing.TB, count int) ([]multihash.Multihash, []int32) {
