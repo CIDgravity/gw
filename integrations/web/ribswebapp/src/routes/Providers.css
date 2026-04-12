@@ -37,3 +37,8 @@
 .providers-nodeal-longtime {
     color: #f44336;
 }
+
+.providers-muted {
+    color: #666;
+    font-size: 11px;
+}

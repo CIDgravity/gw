@@ -4,15 +4,14 @@
 
 .provider-deals-error-col {
     color: #f44336;
-
-    overflow: hidden;       /* Hides overflow */
+    overflow: hidden;
 }
 
 .provider-deals-error-col pre {
-    white-space: pre-wrap; /* Allows the content to wrap */
-    word-wrap: break-word; /* Breaks words if they're too long */
-    overflow: auto;        /* Adds a scrollbar if content overflows */
-    max-height: 100%;      /* Ensures the pre doesn't grow beyond its container */
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow: auto;
+    max-height: 100%;
 }
 
 .prov-progress-container {
@@ -25,5 +24,48 @@
 }
 
 .prov-text-with-progress {
-    margin-bottom: 1px;  /* Adjust as needed for spacing between text and progress bar */
+    margin-bottom: 1px;
+}
+
+.provider-progress-bar {
+    background-color: #e0e0e0;
+    height: 6px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.provider-progress-bar__fill {
+    background-color: #4caf50;
+    height: 100%;
+}
+
+.provider-subtle {
+    color: #666;
+    font-size: 0.85em;
+}
+
+.provider-warning {
+    color: #c62828;
+    font-size: 0.85em;
+}
+
+.provider-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.provider-badge {
+    background: #e1f5e8;
+    border-radius: 999px;
+    color: #1b5e20;
+    display: inline-block;
+    font-size: 0.75em;
+    padding: 2px 8px;
+}
+
+.provider-badge-secondary {
+    background: #e3f2fd;
+    color: #0d47a1;
 }
