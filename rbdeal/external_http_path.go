@@ -184,7 +184,9 @@ func (lwi *LocalWebInfo) PreDealTransferCheck(ctx context.Context, gid iface.Gro
 	if err != nil {
 		return xerrors.Errorf("probe staged CAR URL %s: %w", externalURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return xerrors.Errorf("probe staged CAR URL %s: unexpected status %d", externalURL, resp.StatusCode)

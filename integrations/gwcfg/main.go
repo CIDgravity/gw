@@ -772,7 +772,7 @@ func maybeTestStagingEndpoint(env map[string]string) error {
 
 		handler := http.NewServeMux()
 		handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintln(w, "gwcfg test OK")
+			_, _ = fmt.Fprintln(w, "gwcfg test OK")
 		})
 		shutdown, err := startTempHTTPServer("0.0.0.0", port, handler)
 		if err != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/wallet/key"
 	_ "github.com/filecoin-project/lotus/lib/sigs/secp"
@@ -133,7 +134,6 @@ func (ch *containerHarness) startFilecoinGateway() {
 		ExposedPorts: []string{"8078", "2112"},
 		WaitingFor:   wait.ForLog("Daemon is ready").WithStartupTimeout(2 * time.Minute),
 		Networks:     []string{ch.net.Name},
-		Mounts:       testcontainers.Mounts(testcontainers.BindMount(walletDir, testcontainers.ContainerMountTarget("/root/.ribswallet"))),
 		Cmd:          []string{"sh", "-c", "./kuri init && ./kuri daemon"},
 		Env: map[string]string{
 			"RIBS_YUGABYTE_CQL_HOSTS":       "yugabyte",
@@ -150,6 +150,13 @@ func (ch *containerHarness) startFilecoinGateway() {
 		},
 		ConfigModifier: func(config *container.Config) {
 			config.Hostname = "fgw"
+		},
+		HostConfigModifier: func(hostConfig *container.HostConfig) {
+			hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
+				Type:   mount.TypeBind,
+				Source: walletDir,
+				Target: "/root/.ribswallet",
+			})
 		},
 		LogConsumerCfg: &testcontainers.LogConsumerConfig{
 			Consumers: []testcontainers.LogConsumer{&taggingLogConsumer{"fgw"}},

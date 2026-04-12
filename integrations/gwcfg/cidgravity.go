@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+func closeResponseBody(body io.Closer) {
+	if body == nil {
+		return
+	}
+	_ = body.Close()
+}
+
 type CidGravity struct {
 	apiURL     string
 	serviceURL string
@@ -174,7 +181,7 @@ func (cd *CidGravity) InitializeOnboardingPolicy(ctx context.Context, bearerToke
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp.Body)
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
@@ -220,7 +227,7 @@ func (cd *CidGravity) TestGetBestAvailableProviders(ctx context.Context, apiToke
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer closeResponseBody(resp.Body)
 
 	body, _ := io.ReadAll(resp.Body)
 	var out gbapResponse
