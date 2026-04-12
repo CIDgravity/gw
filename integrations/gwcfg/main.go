@@ -39,6 +39,8 @@ var (
 	errEditStaging     = errors.New("edit staging settings")
 )
 
+const stagingValidatedKey = "__gwcfg_staging_validated"
+
 // ---------------------- meta‑data helpers ------------------------------- //
 
 type groupedEnvKey struct {
@@ -465,7 +467,7 @@ func confirm(title string, def bool) (bool, error) {
 }
 
 func runValidator(section string, env map[string]string) (bool, error) {
-	v, ok := validators[section]
+	_, ok := validators[section]
 	if !ok {
 		return true, nil
 	}
@@ -473,7 +475,7 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	if err != nil || !do {
 		return true, err
 	}
-	okRes, err := v(env)
+	okRes, err := validateSection(section, env)
 	if err != nil {
 		fmt.Printf("Validation error: %v\n", err)
 		return false, nil
@@ -484,6 +486,20 @@ func runValidator(section string, env map[string]string) (bool, error) {
 	}
 	fmt.Println("❌ Validation failed.")
 	return false, nil
+}
+
+func validateSection(section string, env map[string]string) (bool, error) {
+	if section == "Staging" && env[stagingValidatedKey] == "1" {
+		delete(env, stagingValidatedKey)
+		return true, nil
+	}
+
+	v, ok := validators[section]
+	if !ok {
+		return true, nil
+	}
+
+	return v(env)
 }
 
 func wizard(envPath string) error {
@@ -768,6 +784,9 @@ func maybeTestStagingEndpoint(env map[string]string) error {
 			testErr = testEndpoint(urlStr)
 			if testErr == nil {
 				fmt.Println("✅ Endpoint is reachable!")
+				env[stagingValidatedKey] = "1"
+				shutdown()
+				return nil
 			} else {
 				fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
 			}

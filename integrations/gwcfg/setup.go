@@ -515,6 +515,28 @@ func saveConfig(envPath string, env map[string]string) error {
 	return nil
 }
 
+func maybeOpenFullSettingsMenu(envPath string) error {
+	choice := "exit"
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Onboarding complete").
+			Description("gwcfg has saved a minimum viable setup. For more advanced deployments, you can open the full settings menu now to review or tune additional settings.").
+			Options(
+				huh.NewOption("Exit setup", "exit"),
+				huh.NewOption("Open full settings menu", "menu"),
+			).
+			Value(&choice),
+	)).Run(); err != nil {
+		return err
+	}
+
+	if choice == "menu" {
+		return wizard(envPath)
+	}
+
+	return nil
+}
+
 func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 	ctx := context.Background()
 
@@ -556,7 +578,11 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 		}
 	}
 
-	return saveConfig(envPath, env)
+	if err := saveConfig(envPath, env); err != nil {
+		return err
+	}
+
+	return maybeOpenFullSettingsMenu(envPath)
 }
 
 func startSpinner(message string) func() {
