@@ -215,10 +215,8 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	defer cf.Close()
 	cw := &countingResponseWriter{ResponseWriter: w, total: &r.carUploadBytes}
 	http.ServeContent(cw, req, "gdata.car", time.Time{}, cf)
-	if err != nil {
-		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if ctxErr := req.Context().Err(); ctxErr != nil {
+		log.Errorw("car request: context error", "error", ctxErr, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 	}
 }
 
