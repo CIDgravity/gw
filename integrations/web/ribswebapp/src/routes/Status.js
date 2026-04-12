@@ -778,6 +778,7 @@ function IoStats() {
     const [groupIOStats, setGroupIOStats] = useState({});
     const prevStatsRef = useRef({});
     const [rates, setRates] = useState({readBlocks: 0, writeBlocks: 0, readBytes: 0, writeBytes: 0});
+    const [chartData, setChartData] = useState([]);
     const smoothingFactor = 1 / 15; // Smooth EMA for 10Hz updates
 
     const fetchStatus = async () => {
@@ -785,28 +786,42 @@ function IoStats() {
             const ioStats = await RibsRPC.call("GroupIOStats");
 
             const prevStats = prevStatsRef.current;
+            const now = Date.now();
             const readBlocks = ioStats.ReadBlocks;
             const writeBlocks = ioStats.WriteBlocks;
             const readBytes = ioStats.ReadBytes;
             const writeBytes = ioStats.WriteBytes;
 
             if (prevStats.ReadBlocks !== undefined && prevStats.WriteBlocks !== undefined) {
-                // Multiply by 10 to convert from per-100ms to per-second
-                const readBlocksRate = (readBlocks - prevStats.ReadBlocks) * 10;
-                const writeBlocksRate = (writeBlocks - prevStats.WriteBlocks) * 10;
-                const readBytesRate = (readBytes - prevStats.ReadBytes) * 10;
-                const writeBytesRate = (writeBytes - prevStats.WriteBytes) * 10;
+                const elapsedSeconds = (now - prevStats.At) / 1000;
+                const readBlocksRate = elapsedSeconds > 0 ? (readBlocks - prevStats.ReadBlocks) / elapsedSeconds : 0;
+                const writeBlocksRate = elapsedSeconds > 0 ? (writeBlocks - prevStats.WriteBlocks) / elapsedSeconds : 0;
+                const readBytesRate = elapsedSeconds > 0 ? (readBytes - prevStats.ReadBytes) / elapsedSeconds : 0;
+                const writeBytesRate = elapsedSeconds > 0 ? (writeBytes - prevStats.WriteBytes) / elapsedSeconds : 0;
 
-                setRates(prev => ({
+                setRates(prev => {
+                    const nextRates = {
                     readBlocks: calcEMA(readBlocksRate, prev.readBlocks, smoothingFactor),
                     writeBlocks: calcEMA(writeBlocksRate, prev.writeBlocks, smoothingFactor),
                     readBytes: calcEMA(readBytesRate, prev.readBytes, smoothingFactor),
                     writeBytes: calcEMA(writeBytesRate, prev.writeBytes, smoothingFactor),
-                }));
+                    };
+
+                    setChartData(prevChart => [
+                        ...prevChart.slice(-89),
+                        {
+                            time: new Date(now).toLocaleTimeString(),
+                            readBytes: Math.round(nextRates.readBytes),
+                            writeBytes: Math.round(nextRates.writeBytes),
+                        }
+                    ]);
+
+                    return nextRates;
+                });
             }
 
             setGroupIOStats(ioStats);
-            prevStatsRef.current = { ReadBlocks: readBlocks, WriteBlocks: writeBlocks, ReadBytes: readBytes, WriteBytes: writeBytes };
+            prevStatsRef.current = { ReadBlocks: readBlocks, WriteBlocks: writeBlocks, ReadBytes: readBytes, WriteBytes: writeBytes, At: now };
         } catch (error) {
             console.error("Error fetching status:", error);
         }
@@ -822,7 +837,7 @@ function IoStats() {
     }, []);
 
     return (
-        <div>
+        <div style={{gridColumn: "span 2"}}>
             <h2>IO Stats</h2>
             <table className="compact-table">
                 <tbody>
@@ -844,6 +859,20 @@ function IoStats() {
                 </tr>
                 </tbody>
             </table>
+
+            <div className="status-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="time" minTickGap={32} />
+                        <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
+                        <Tooltip formatter={(value, name) => [`${formatBytesBinary(value)}/s`, name === 'readBytes' ? 'Read' : 'Write']} />
+                        <Legend formatter={(value) => value === 'readBytes' ? 'Read' : 'Write'} />
+                        <Line type="monotone" dataKey="readBytes" stroke="#1f77b4" dot={false} strokeWidth={2} />
+                        <Line type="monotone" dataKey="writeBytes" stroke="#2ca02c" dot={false} strokeWidth={2} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     );
 }
@@ -1174,6 +1203,7 @@ function WorkerStats({stats}) {
     const prevStatsRef = useRef({});
     const prevTimeRef = useRef(Date.now());
     const commPBytesRateRef = useRef(0);
+    const [chartData, setChartData] = useState([]);
     const smoothingFactor = 1 / 10;
 
     useEffect(() => {
@@ -1189,6 +1219,14 @@ function WorkerStats({stats}) {
                 commPBytesRateRef.current,
                 smoothingFactor
             );
+
+            setChartData(prev => [
+                ...prev.slice(-89),
+                {
+                    time: new Date(currentTime).toLocaleTimeString(),
+                    rate: Math.round(commPBytesRateRef.current),
+                }
+            ]);
         }
 
         prevStatsRef.current = stats;
@@ -1227,6 +1265,19 @@ function WorkerStats({stats}) {
                 </tr>
                 </tbody>
             </table>
+
+            <div className="status-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="time" minTickGap={32} />
+                        <YAxis tickFormatter={(value) => formatBytesBinary(value)} />
+                        <Tooltip formatter={(value) => [`${formatBytesBinary(value)}/s`, 'DataCID Rate']} />
+                        <Legend />
+                        <Line type="monotone" dataKey="rate" name="DataCID Rate" stroke="#ff7f0e" dot={false} strokeWidth={2} />
+                    </LineChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     )
 }
