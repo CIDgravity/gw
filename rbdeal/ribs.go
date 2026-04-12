@@ -107,6 +107,8 @@ type ribs struct {
 	dealLoopStats        iface2.DealLoopStats
 	providerCooldownsLk  sync.Mutex
 	providerCooldowns    map[int64]providerCooldownState
+	carUploadActive      atomic.Int64
+	carUploadBytes       atomic.Int64
 
 	// Balance manager state tracking
 	balanceManagerLk             sync.Mutex

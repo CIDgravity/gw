@@ -64,7 +64,7 @@ services:
       - ${DATA_DIR:-./data}/carstage:/root/.ribsdata/cardata
       - ${DATA_DIR:-./data}/wallet:/root/.ribswallet
       - ${DATA_DIR:-./data}/ipfs/:/root/.ipfs
-    command: [ "sh", "-c", "./kuri init && ./kuri daemon" ]
+    command: [ "sh", "-c", "if [ ! -f /root/.ipfs/config ]; then ./kuri init; fi; ./kuri daemon" ]
     env_file:
       - path: ${DATA_DIR:-./data}/config/settings.env
         required: false

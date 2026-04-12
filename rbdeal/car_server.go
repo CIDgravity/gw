@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
@@ -25,6 +26,19 @@ import (
 )
 
 var bootTime = time.Now()
+
+type countingResponseWriter struct {
+	http.ResponseWriter
+	total *atomic.Int64
+}
+
+func (cw *countingResponseWriter) Write(p []byte) (int, error) {
+	n, err := cw.ResponseWriter.Write(p)
+	if n > 0 && cw.total != nil {
+		cw.total.Add(int64(n))
+	}
+	return n, err
+}
 
 func (r *ribs) setupCarServer(ctx context.Context) error {
 	cfg := configuration.GetConfig()
@@ -187,59 +201,8 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	log := log.With("group", *group, "path", requestPath)
-
-	// this is a local transfer, track stats
-
-	/*
-		r.uploadStatsLk.Lock()
-		if n := r.activeUploads[reqToken.DealUUID]; n > cfg.External.Localweb.MaxConcurrentUploadsPerDeal {
-			http.Error(w, "transfer for deal already ongoing", http.StatusTooManyRequests)
-			r.uploadStatsLk.Unlock()
-			return
-		}
-
-		r.activeUploads[reqToken.DealUUID]++
-
-		if r.uploadStats[reqToken.Group] == nil {
-			r.uploadStats[reqToken.Group] = &iface.GroupUploadStats{}
-		}
-
-		r.uploadStats[reqToken.Group].ActiveRequests++
-
-		r.uploadStatsLk.Unlock()
-
-		defer func() {
-			r.uploadStatsLk.Lock()
-			r.activeUploads[reqToken.DealUUID]--
-			if r.activeUploads[reqToken.DealUUID] == 0 {
-				delete(r.activeUploads, reqToken.DealUUID)
-			}
-			r.uploadStats[reqToken.Group].ActiveRequests--
-			r.uploadStatsLk.Unlock()
-		}()
-
-		transferInfo, err := r.db.GetTransferStatusByDealUUID(reqToken.DealUUID)
-		if err != nil {
-			log.Errorw("car request: get transfer status by deal uuid", "error", err, "url", req.URL)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		if transferInfo.Failed == 1 {
-			http.Error(w, "deal is failed", http.StatusGone)
-			return
-		}
-
-		if transferInfo.CarTransferAttempts >= maxTransferRetries {
-			if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, xerrors.Errorf("transfer has been retried too much")); err != nil {
-				log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-				return
-			}
-
-			http.Error(w, "transfer has been retried too much", http.StatusTooManyRequests)
-			return
-		}
-	*/
+	r.carUploadActive.Add(1)
+	defer r.carUploadActive.Add(-1)
 	w.Header().Set("Content-Type", "application/vnd.ipld.car")
 
 	cf, err := r.externalOffloader.ReadCarFile(req.Context(), *group)
@@ -250,18 +213,8 @@ func (r *ribs) handleCarRequest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	defer cf.Close()
-	http.ServeContent(w, req, "gdata.car", time.Time{}, cf)
-
-	/* 	defer func() {
-	   		//werr := rateWriter.WriteError()
-	   		werr := err
-
-	   		if err := r.db.UpdateTransferStats(reqToken.DealUUID, sw.wrote, werr); err != nil {
-	   			log.Errorw("car request: update transfer stats", "error", err, "url", req.URL)
-	   			return
-	   		}
-	   	}()
-	*/
+	cw := &countingResponseWriter{ResponseWriter: w, total: &r.carUploadBytes}
+	http.ServeContent(cw, req, "gdata.car", time.Time{}, cf)
 	if err != nil {
 		log.Errorw("car request: write car", "error", err, "url", req.URL, "group", *group, "remote", req.RemoteAddr)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

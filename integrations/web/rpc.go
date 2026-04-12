@@ -64,8 +64,7 @@ func (rc *RIBSRpc) CrawlState(ctx context.Context) (iface2.CrawlState, error) {
 }
 
 func (rc *RIBSRpc) CarUploadStats(ctx context.Context) (iface2.UploadStats, error) {
-	//return rc.ribs.DealDiag().CarUploadStats(), nil
-	return iface2.UploadStats{}, nil
+	return rc.ribs.DealDiag().CarUploadStats(), nil
 }
 
 func (rc *RIBSRpc) ReachableProviders(ctx context.Context) ([]iface2.ProviderMeta, error) {

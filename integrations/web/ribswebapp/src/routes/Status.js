@@ -2,9 +2,8 @@ import './Status.css';
 import React, { useState, useEffect, useRef } from "react";
 import RibsRPC from "../helpers/rpc";
 import { CopyToClipboard } from 'react-copy-to-clipboard';
-import {formatBytesBinary, formatBitsBinary, formatNum, formatNum6, calcEMA, formatTimestamp} from "../helpers/fmt";
-import content from "./Content";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer } from 'recharts';
+import {formatBytesBinary, formatNum, formatNum6, calcEMA, formatTimestamp} from "../helpers/fmt";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 
 const oneFil = 1000000000000000000
 
@@ -622,95 +621,95 @@ function ProvidersTile({ reachableProviders }) {
 }
 
 function CarUploadStatsTile({ carUploadStats }) {
-    const [displayStats, setDisplayStats] = useState({});
-    const [globalRate, setGlobalRate] = useState(0);
-    const prevStatsRef = useRef({});
-    const [lastGlobalBytes, setLastGlobalBytes] = useState(0);
-    const rateEMARef = useRef({});
-    const smoothingFactor = 1 / 10;
-
-    const calcRates = () => {
-        const newDisplayStats = {};
-
-        let byGroup = {};
-        if (carUploadStats.ByGroup) {
-            byGroup = carUploadStats.ByGroup;
-        }
-
-        for (const [groupKey, uploadStats] of Object.entries(byGroup)) {
-            if (!prevStatsRef.current[groupKey]) {
-                // If previous stats for this group are not initialized, set them to the current stats
-                prevStatsRef.current[groupKey] = uploadStats;
-                continue;
-            }
-
-            const prevStats = prevStatsRef.current[groupKey] || { UploadBytes: 0 };
-            const bytesSent = uploadStats.UploadBytes;
-            const bytesRate = bytesSent - prevStats.UploadBytes;
-
-            rateEMARef.current[groupKey] = calcEMA(
-                bytesRate,
-                rateEMARef.current[groupKey] || 0,
-                smoothingFactor
-            );
-
-            newDisplayStats[groupKey] = {
-                ...uploadStats,
-                UploadRate: Math.round(rateEMARef.current[groupKey]),
-            };
-
-            prevStatsRef.current[groupKey] = { UploadBytes: bytesSent };
-        }
-
-        let lastBytes = lastGlobalBytes;
-        if(lastBytes === 0) {
-            lastBytes = carUploadStats.LastTotalBytes;
-        }
-
-        const globalBytesChange = carUploadStats.LastTotalBytes - lastBytes;
-        const globalRateEMA = calcEMA(
-            globalBytesChange,
-            globalRate || 0,
-            smoothingFactor / 10
-        );
-
-        setGlobalRate(Math.round(globalRateEMA));
-        setLastGlobalBytes(carUploadStats.LastTotalBytes);
-        setDisplayStats(newDisplayStats);
-    };
+    const [chartData, setChartData] = useState([]);
+    const [currentRate, setCurrentRate] = useState(0);
+    const prevSampleRef = useRef(null);
+    const rateEMARef = useRef(0);
+    const smoothingFactor = 1 / 6;
 
     useEffect(() => {
-        calcRates();
-        const interval = setInterval(calcRates, 1000);
-        return () => clearInterval(interval);
+        const now = Date.now();
+        const totalBytes = carUploadStats.TotalBytes || carUploadStats.LastTotalBytes || 0;
+        const activeRequests = carUploadStats.ActiveRequests || 0;
+
+        let nextRate = 0;
+        if (prevSampleRef.current) {
+            const elapsedSeconds = (now - prevSampleRef.current.at) / 1000;
+            const bytesDelta = Math.max(0, totalBytes - prevSampleRef.current.totalBytes);
+            const instantRate = elapsedSeconds > 0 ? bytesDelta / elapsedSeconds : 0;
+            rateEMARef.current = calcEMA(instantRate, rateEMARef.current || 0, smoothingFactor);
+            nextRate = Math.round(rateEMARef.current);
+        }
+
+        prevSampleRef.current = { at: now, totalBytes };
+        setCurrentRate(nextRate);
+        setChartData(prev => [
+            ...prev.slice(-59),
+            {
+                time: new Date(now).toLocaleTimeString(),
+                rate: nextRate,
+                activeRequests,
+            }
+        ]);
     }, [carUploadStats]);
 
+    const modeLabel = !carUploadStats.Enabled
+        ? 'Disabled'
+        : carUploadStats.BuiltinServer
+            ? 'Built-in LocalWeb'
+            : carUploadStats.Module === 'local-web'
+                ? 'Direct file serving'
+                : carUploadStats.Module;
+
     return (
-        <div>
+        <div className="car-upload-stats-tile">
             <h2>Car Upload Stats</h2>
             <table className="compact-table">
-                <thead>
-                <tr>
-                    <th style={{ width: '30%' }}>Group</th>
-                    <th style={{ width: '30%' }}>Reqs</th>
-                    <th style={{ width: '40%' }}>Rate</th>
-                </tr>
-                </thead>
                 <tbody>
                 <tr>
-                    <td>Global</td>
-                    <td></td>
-                    <td>{formatBitsBinary(globalRate)}</td>
+                    <td>Mode</td>
+                    <td>{modeLabel}</td>
                 </tr>
-                {Object.entries(displayStats).map(([groupKey, uploadStats]) => (
-                    <tr key={groupKey}>
-                        <td>Group {groupKey}</td>
-                        <td>{uploadStats.ActiveRequests}</td>
-                        <td>{formatBitsBinary(uploadStats.UploadRate)}</td>
-                    </tr>
-                ))}
+                <tr>
+                    <td>Active requests</td>
+                    <td>{carUploadStats.ActiveRequests || 0}</td>
+                </tr>
+                <tr>
+                    <td>Current rate</td>
+                    <td>{formatBytesBinary(currentRate)}/s</td>
+                </tr>
+                <tr>
+                    <td>Total bytes served</td>
+                    <td>{formatBytesBinary(carUploadStats.TotalBytes || carUploadStats.LastTotalBytes || 0)}</td>
+                </tr>
                 </tbody>
             </table>
+
+            {carUploadStats.BuiltinServer ? (
+                <div className="car-upload-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="time" minTickGap={32} />
+                            <YAxis yAxisId="rate" tickFormatter={(value) => formatBytesBinary(value)} />
+                            <YAxis yAxisId="active" orientation="right" allowDecimals={false} />
+                            <Tooltip
+                                formatter={(value, name) => {
+                                    if (name === 'Rate') {
+                                        return [`${formatBytesBinary(value)}/s`, name];
+                                    }
+                                    return [value, name];
+                                }}
+                            />
+                            <Legend />
+                            <Line yAxisId="rate" type="monotone" dataKey="rate" name="Rate" stroke="#1f77b4" dot={false} strokeWidth={2} />
+                            <Line yAxisId="active" type="monotone" dataKey="activeRequests" name="Active Requests" stroke="#d62728" dot={false} strokeWidth={2} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            ) : (
+                <p className="status-note">Built-in LocalWeb request stats are only available when the gateway serves CAR files directly. In direct file-serving mode, nginx or another server may serve `cardata` without passing traffic through the gateway.</p>
+            )}
         </div>
     );
 }
