@@ -119,8 +119,11 @@ type GroupUploadStats struct {
 }
 
 type DealMeta struct {
-	UUID     string
-	Provider int64
+	UUID         string
+	Provider     int64
+	GroupID      GroupKey
+	Verified     bool
+	KeepUnsealed bool
 
 	Sealed, Failed, Rejected bool
 
@@ -238,8 +241,12 @@ type ProviderMeta struct {
 	BoosterHttp    bool
 	BoosterBitswap bool
 
-	IndexedSuccess int64
-	IndexedFail    int64
+	IndexedSuccess   int64
+	IndexedFail      int64
+	RetrProbeSuccess int64
+	RetrProbeFail    int64
+	RetrProbeBlocks  int64
+	RetrProbeBytes   int64
 
 	DealStarted  int64
 	DealSuccess  int64

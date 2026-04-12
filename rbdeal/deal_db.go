@@ -857,19 +857,41 @@ FROM
 func (r *ribsDB) ProviderInfo(providerID int64) (iface2.ProviderInfo, error) {
 	var pInfo iface2.ProviderInfo
 	err := r.db.QueryRow(`
-		SELECT id, ping_ok, boost_deals, booster_http, booster_bitswap,
-		indexed_success, indexed_fail, ask_price, ask_verif_price,
-		ask_min_piece_size, ask_max_piece_size
-		FROM providers WHERE id = $1`, providerID).Scan(
+		SELECT p.id, p.ping_ok, p.boost_deals, p.booster_http, p.booster_bitswap,
+		p.indexed_success, p.indexed_fail, p.retrprobe_success, p.retrprobe_fail, p.retrprobe_blocks, p.retrprobe_bytes,
+		p.ask_price, p.ask_verif_price, p.ask_min_piece_size, p.ask_max_piece_size,
+		COALESCE(ds.deal_started, 0), COALESCE(ds.deal_success, 0), COALESCE(ds.deal_fail, 0), COALESCE(ds.deal_rejected, 0), COALESCE(ds.most_recent_deal_start, 0),
+		COALESCE(rs.retrievable_deals, 0), COALESCE(rs.unretrievable_deals, 0)
+		FROM providers p
+		LEFT JOIN (
+			SELECT provider_addr,
+				count(*) AS deal_started,
+				sum(case when sealed = 1 then 1 else 0 end) AS deal_success,
+				sum(case when rejected != 1 and failed = 1 then 1 else 0 end) AS deal_fail,
+				sum(case when rejected = 1 then 1 else 0 end) AS deal_rejected,
+				COALESCE(extract(epoch from max(start_time))::bigint, 0) AS most_recent_deal_start
+			FROM deals
+			WHERE provider_addr = $1
+			GROUP BY provider_addr
+		) ds ON p.id = ds.provider_addr
+		LEFT JOIN sp_retr_stats_view rs ON p.id = rs.sp_id
+		WHERE p.id = $1`, providerID).Scan(
 		&pInfo.Meta.ID, &pInfo.Meta.PingOk, &pInfo.Meta.BoostDeals,
 		&pInfo.Meta.BoosterHttp, &pInfo.Meta.BoosterBitswap, &pInfo.Meta.IndexedSuccess,
-		&pInfo.Meta.IndexedFail,
-		&pInfo.Meta.AskPrice, &pInfo.Meta.AskVerifiedPrice, &pInfo.Meta.AskMinPieceSize, &pInfo.Meta.AskMaxPieceSize)
+		&pInfo.Meta.IndexedFail, &pInfo.Meta.RetrProbeSuccess, &pInfo.Meta.RetrProbeFail, &pInfo.Meta.RetrProbeBlocks, &pInfo.Meta.RetrProbeBytes,
+		&pInfo.Meta.AskPrice, &pInfo.Meta.AskVerifiedPrice, &pInfo.Meta.AskMinPieceSize, &pInfo.Meta.AskMaxPieceSize,
+		&pInfo.Meta.DealStarted, &pInfo.Meta.DealSuccess, &pInfo.Meta.DealFail, &pInfo.Meta.DealRejected, &pInfo.Meta.MostRecentDealStart,
+		&pInfo.Meta.RetrievDeals, &pInfo.Meta.UnretrievDeals)
 	if err != nil {
 		return pInfo, xerrors.Errorf("querying provider metadata: %w", err)
 	}
 
-	res, err := r.db.Query("select uuid, provider_addr, sealed, failed, rejected, deal_id, sp_status, sp_sealing_status, error_msg, sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch, start_time from deals where provider_addr = $1 ORDER BY start_time DESC LIMIT 100", providerID)
+	res, err := r.db.Query(`select uuid, provider_addr, group_id, verified, keep_unsealed,
+		sealed, failed, rejected, deal_id, sp_status, sp_sealing_status, error_msg,
+		sp_recv_bytes, sp_txsize, sp_pub_msg_cid, start_epoch, end_epoch, start_time,
+		retrieval_probes_success, retrieval_probes_fail, retrieval_probe_prev_ttfb_ms,
+		last_retrieval_check > 0 AND last_retrieval_check > (last_retrieval_check_success + 3600*24) as no_recent_retr
+		from deals where provider_addr = $1 ORDER BY start_time DESC LIMIT 100`, providerID)
 	if err != nil {
 		return pInfo, xerrors.Errorf("getting group meta: %w", err)
 	}
@@ -878,6 +900,9 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface2.ProviderInfo, error) {
 	for res.Next() {
 		var dealUuid string
 		var provider int64
+		var groupID iface2.GroupKey
+		var verified bool
+		var keepUnsealed bool
 		var sealed, failed, rejected bool
 		var startEpoch, endEpoch int64
 		var startTime time.Time
@@ -888,28 +913,39 @@ func (r *ribsDB) ProviderInfo(providerID int64) (iface2.ProviderInfo, error) {
 		var txSize *int64
 		var pubCid *string
 		var dealID *int64
+		var retrievalProbesSuccess *int64
+		var retrievalProbesFail *int64
+		var retrievalProbeTTFBMS *int64
+		var noRecentRetrievalSuccess bool
 
-		err := res.Scan(&dealUuid, &provider, &sealed, &failed, &rejected, &dealID, &status, &sealStatus, &errMsg, &bytesRecv, &txSize, &pubCid, &startEpoch, &endEpoch, &startTime)
+		err := res.Scan(&dealUuid, &provider, &groupID, &verified, &keepUnsealed, &sealed, &failed, &rejected, &dealID, &status, &sealStatus, &errMsg, &bytesRecv, &txSize, &pubCid, &startEpoch, &endEpoch, &startTime, &retrievalProbesSuccess, &retrievalProbesFail, &retrievalProbeTTFBMS, &noRecentRetrievalSuccess)
 		if err != nil {
 			return pInfo, xerrors.Errorf("scanning deal: %w", err)
 		}
 
 		pInfo.RecentDeals = append(pInfo.RecentDeals, iface2.DealMeta{
-			UUID:       dealUuid,
-			Provider:   provider,
-			Sealed:     sealed,
-			Failed:     failed,
-			Rejected:   rejected,
-			StartEpoch: startEpoch,
-			EndEpoch:   endEpoch,
-			StartTime:  startTime.Unix(),
-			Status:     DerefOr(status, ""),
-			SealStatus: DerefOr(sealStatus, ""),
-			Error:      DerefOr(errMsg, ""),
-			DealID:     DerefOr(dealID, 0),
-			BytesRecv:  DerefOr(bytesRecv, 0),
-			TxSize:     DerefOr(txSize, 0),
-			PubCid:     DerefOr(pubCid, ""),
+			UUID:            dealUuid,
+			Provider:        provider,
+			GroupID:         groupID,
+			Verified:        verified,
+			KeepUnsealed:    keepUnsealed,
+			Sealed:          sealed,
+			Failed:          failed,
+			Rejected:        rejected,
+			StartEpoch:      startEpoch,
+			EndEpoch:        endEpoch,
+			StartTime:       startTime.Unix(),
+			Status:          DerefOr(status, ""),
+			SealStatus:      DerefOr(sealStatus, ""),
+			Error:           DerefOr(errMsg, ""),
+			DealID:          DerefOr(dealID, 0),
+			BytesRecv:       DerefOr(bytesRecv, 0),
+			TxSize:          DerefOr(txSize, 0),
+			PubCid:          DerefOr(pubCid, ""),
+			RetrSuccess:     DerefOr(retrievalProbesSuccess, 0),
+			RetrFail:        DerefOr(retrievalProbesFail, 0),
+			RetrTTFBMs:      DerefOr(retrievalProbeTTFBMS, 0),
+			NoRecentSuccess: noRecentRetrievalSuccess,
 		})
 	}
 
