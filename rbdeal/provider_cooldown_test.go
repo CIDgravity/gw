@@ -16,13 +16,13 @@ func TestRecordProviderCooldownBumpsAttempts(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(1), first.Attempts)
 	require.Equal(t, "busy", first.Key)
-	require.WithinDuration(t, time.Now().Add(30*time.Minute), first.Until, 5*time.Second)
+	require.WithinDuration(t, time.Now().Add(time.Minute), first.Until, 5*time.Second)
 
 	r.recordProviderCooldown(1234, ErrRejected{Reason: "provider busy, try again later"})
 	second, ok := r.providerCooldown(1234, time.Now())
 	require.True(t, ok)
 	require.Equal(t, int64(2), second.Attempts)
-	require.WithinDuration(t, time.Now().Add(time.Hour), second.Until, 5*time.Second)
+	require.WithinDuration(t, time.Now().Add(2*time.Minute), second.Until, 5*time.Second)
 }
 
 func TestProviderCooldownExpiresAndClears(t *testing.T) {

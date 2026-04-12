@@ -32,9 +32,9 @@ func providerCooldownForError(err error) providerCooldownPolicy {
 		lower := strings.ToLower(reason)
 		switch {
 		case strings.Contains(lower, "busy"), strings.Contains(lower, "try again"), strings.Contains(lower, "too many"), strings.Contains(lower, "later"), strings.Contains(lower, "temporarily unavailable"):
-			return providerCooldownPolicy{key: "busy", reason: reason, base: 30 * time.Minute, max: 4 * time.Hour}
+			return providerCooldownPolicy{key: "busy", reason: reason, base: time.Minute, max: 15 * time.Minute}
 		default:
-			return providerCooldownPolicy{key: "rejected", reason: reason, base: time.Hour, max: 12 * time.Hour}
+			return providerCooldownPolicy{key: "rejected", reason: reason, base: 15 * time.Minute, max: 4 * time.Hour}
 		}
 	}
 

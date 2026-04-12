@@ -48,7 +48,7 @@ cd filecoin-gateway
 docker build . -t fgw:local
 
 # Create data directories
-mkdir -p ${DATA_DIR:-./data}/{config,wallet,fgw,yb,ipfs}
+mkdir -p ${DATA_DIR:-./data}/{config,wallet,fgw,carstage,yb,ipfs}
 
 # Start YugabyteDB first (the gateway depends on it being healthy)
 docker compose up -d yugabyte
@@ -65,6 +65,8 @@ docker compose up -d yugabyte
 # When prompted for the staging URL, enter the public root URL that storage
 # providers will use to fetch CAR files (e.g. https://your-host.example.com).
 # Do not include a path component; RIBS appends the randomized CAR filename.
+# When prompted for the staging path, accept the default (`<RIBS_DATA>/cardata`)
+# unless you intentionally want a different persistent location.
 # When asked to test the endpoint, choose No — the test server runs inside
 # the container without port mapping and cannot be reached externally.
 docker run -it --rm \
@@ -118,6 +120,7 @@ In Docker mode, the following directories are mounted as volumes:
 | Host Path | Container Path | Description |
 |-----------|---------------|-------------|
 | `${DATA_DIR}/fgw/` | `/root/.ribsdata` | Block groups and sector data (largest) |
+| `${DATA_DIR}/carstage/` | `/root/.ribsdata/cardata` | Staged CAR files served by LocalWeb |
 | `${DATA_DIR}/wallet/` | `/root/.ribswallet` | Filecoin wallet keys (backup this!) |
 | `${DATA_DIR}/ipfs/` | `/root/.ipfs` | IPFS/Kubo data |
 | `${DATA_DIR}/yb/` | `/root/var` | YugabyteDB database |

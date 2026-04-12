@@ -434,7 +434,11 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 	var pathVal string
 	pathDefault := pathKey.DefaultValue
 	if pathDefault == "" {
-		pathDefault = "/tmp/ribs-carfiles"
+		ribsDataPath := strings.TrimSpace(env["RIBS_DATA"])
+		if ribsDataPath == "" {
+			ribsDataPath = filepath.Join("~", ".ribsdata")
+		}
+		pathDefault = filepath.Join(ribsDataPath, "cardata")
 	}
 
 	err := huh.NewForm(huh.NewGroup(

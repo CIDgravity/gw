@@ -11,8 +11,8 @@ services:
     command: >
       sh -c "
         echo 'Resetting data (keeping config and wallet)...' &&
-        rm -rf /data/yb /data/fgw /data/ipfs &&
-        echo 'Done! Removed: yb, fgw, ipfs' &&
+        rm -rf /data/yb /data/fgw /data/ipfs /data/carstage &&
+        echo 'Done! Removed: yb, fgw, ipfs, carstage' &&
         echo 'Kept: config, wallet'
       "
 
@@ -61,6 +61,7 @@ services:
       nproc: 12000
     volumes:
       - ${DATA_DIR:-./data}/fgw/:/root/.ribsdata
+      - ${DATA_DIR:-./data}/carstage:/root/.ribsdata/cardata
       - ${DATA_DIR:-./data}/wallet:/root/.ribswallet
       - ${DATA_DIR:-./data}/ipfs/:/root/.ipfs
     command: [ "sh", "-c", "./kuri init && ./kuri daemon" ]

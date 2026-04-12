@@ -27,6 +27,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/google/uuid"
+	logging "github.com/ipfs/go-log/v2"
 	"github.com/joho/godotenv"
 )
 
@@ -796,7 +797,16 @@ func testEndpoint(url string) error {
 	return nil
 }
 
+func quietThirdPartyLoggers() {
+	for _, name := range []string{"rpc"} {
+		if err := logging.SetLogLevel(name, "FATAL"); err != nil {
+			log.Printf("set log level for %s: %v", name, err)
+		}
+	}
+}
+
 func main() {
+	quietThirdPartyLoggers()
 	opts := loadOpts()
 
 	abs, _ := filepath.Abs(opts.envFile)
