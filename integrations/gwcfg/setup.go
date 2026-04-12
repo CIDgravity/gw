@@ -253,7 +253,7 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 	}
 	idAddrStr := idAddr.String()
 
-	cgClient := NewCidGravity(opts.cidgravityUrl)
+	cgClient := NewCidGravity(opts.cidgravityUrl, opts.cidgravitySvc)
 
 	for attempts := 0; attempts < 3; attempts++ {
 		friendly, contactEmail, entityName, err := collectCIDGravityAccountInfo()
@@ -317,15 +317,20 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 		fmt.Println("\n✅ Obtained CIDGravity API token via API.")
 		env[k.Var] = res.Token
 		claimed := false
-		message := fmt.Sprintf("Click this link to claim your account and manage CIDGravity settings:\n%s", res.URL)
+		message := fmt.Sprintf("Open this link, claim the CIDGravity account, and initialize the onboarding policy in the CIDGravity UI before continuing:\n%s", res.URL)
 		confirm := huh.NewConfirm().
-			Title("Claim CIDGravity account").
+			Title("Claim CIDGravity account and initialize onboarding policy").
 			Description(message).
-			Affirmative("I've claimed the account").
+			Affirmative("Done").
 			Negative("Skip").
 			Value(&claimed)
 		if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
 			return err
+		}
+		if claimed {
+			if err := maybeVerifyCIDGravityOnboardingPolicy(cgClient, res.Token); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -338,6 +343,38 @@ func setCIDGravityToken(keys []groupedEnvKey, walletPath string, env map[string]
 	}
 	env[k.Var] = val
 	return nil
+}
+
+func maybeVerifyCIDGravityOnboardingPolicy(cgClient *CidGravity, apiToken string) error {
+	for {
+		stop := startSpinner("Testing CIDGravity provider selection...")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := cgClient.TestGetBestAvailableProviders(ctx, apiToken)
+		cancel()
+		stop()
+		if err == nil {
+			fmt.Println("\n✅ CIDGravity onboarding policy looks ready.")
+			return nil
+		}
+
+		fmt.Printf("\n⚠️  CIDGravity provider-selection test failed: %v\n", err)
+		var choice string
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("What would you like to do?").
+				Description("If you just changed the onboarding policy in the CIDGravity UI, give it a moment and retry. You can also ignore the error and finish setup.").
+				Options(
+					huh.NewOption("Retry test", "retry"),
+					huh.NewOption("Ignore and continue", "ignore"),
+				).
+				Value(&choice),
+		)).Run(); err != nil {
+			return err
+		}
+		if choice == "ignore" {
+			return nil
+		}
+	}
 }
 
 // promptRetryOrManual asks the user whether to retry with corrected input
