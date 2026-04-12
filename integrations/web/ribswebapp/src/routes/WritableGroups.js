@@ -7,11 +7,13 @@ function WritableGroups() {
     const [writableGroups, setWritableGroups] = useState([]);
     const [parallelStats, setParallelStats] = useState({Enabled: false});
 
+    const groups = Array.isArray(writableGroups) ? writableGroups : [];
+
     const fetchData = async () => {
         try {
             const groups = await RibsRPC.call("WritableGroups");
             const stats = await RibsRPC.call("ParallelWriteStats");
-            setWritableGroups(groups);
+            setWritableGroups(Array.isArray(groups) ? groups : []);
             setParallelStats(stats);
         } catch (error) {
             console.error("Error fetching writable groups:", error);
@@ -47,20 +49,20 @@ function WritableGroups() {
                 </div>
             )}
 
-            {writableGroups.length === 0 ? (
+            {groups.length === 0 ? (
                 <p>No writable groups available. Groups become writable when they have space for new data.</p>
             ) : (
                 <>
                     <div style={{marginBottom: '20px'}}>
-                        <strong>Total Writable Groups: {writableGroups.length}</strong>
+                        <strong>Total Writable Groups: {groups.length}</strong>
                         {parallelStats.Enabled && (
                             <span style={{marginLeft: '20px'}}>
-                                Total Active Writers: {writableGroups.reduce((sum, g) => sum + (g.ActiveWriters || 0), 0)}
+                                Total Active Writers: {groups.reduce((sum, g) => sum + (g.ActiveWriters || 0), 0)}
                             </span>
                         )}
                     </div>
 
-                    {writableGroups.map((group) => (
+                    {groups.map((group) => (
                         <div key={group.GroupKey} className="group" style={{
                             borderLeft: group.HasAffinity ? '4px solid #4CAF50' : '4px solid #ccc'
                         }}>
