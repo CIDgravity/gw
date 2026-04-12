@@ -68,10 +68,13 @@ docker compose up -d yugabyte
 # Do not include a path component; RIBS appends the randomized CAR filename.
 # When prompted for the staging path, accept the default (`<RIBS_DATA>/cardata`)
 # unless you intentionally want a different persistent location.
-# When asked to test the endpoint, choose No — the test server runs inside
-# the container without port mapping and cannot be reached externally.
+# If you want gwcfg's LocalWeb reachability check to work from inside `docker run`,
+# publish the LocalWeb port through the container, for example `-p 443:8443` for
+# the common reverse-proxy path or `-p 8443:8443` for direct testing. Otherwise,
+# choose No when gwcfg offers the online test.
 docker run -it --rm \
   --entrypoint ./gwcfg \
+  -p 443:8443 \
   -v ${DATA_DIR:-./data}/config:/app/config \
   -v ${DATA_DIR:-./data}/wallet:/root/.ribswallet \
   fgw:local -f /app/config/settings.env
