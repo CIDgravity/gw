@@ -2,7 +2,7 @@ import './Status.css';
 import React, { useState, useEffect, useRef } from "react";
 import RibsRPC from "../helpers/rpc";
 import { CopyToClipboard } from 'react-copy-to-clipboard';
-import {formatBytesBinary, formatBitsBinary, formatNum, formatNum6, calcEMA} from "../helpers/fmt";
+import {formatBytesBinary, formatBitsBinary, formatNum, formatNum6, calcEMA, formatTimestamp} from "../helpers/fmt";
 import content from "./Content";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, ResponsiveContainer } from 'recharts';
 
@@ -22,6 +22,11 @@ function formatCountdown(unixSeconds) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}m ${seconds}s`;
+}
+
+function formatLastAction(unixSeconds) {
+    if (!unixSeconds) return 'Never';
+    return formatTimestamp(unixSeconds);
 }
 
 function WalletInfoTile({ walletInfo }) {
@@ -179,6 +184,10 @@ function WalletInfoTile({ walletInfo }) {
                         </tr>
                     )}
                     <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last FIL request:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastFaucetFilRequest)}</td>
+                    </tr>
+                    <tr>
                         <td>Market Balance:</td>
                         <td>
                             <span style={{color: balanceInfo?.MarketBelowThreshold ? '#ff6b6b' : 'inherit'}}>
@@ -231,6 +240,10 @@ function WalletInfoTile({ walletInfo }) {
                         </td>
                     </tr>
                     <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last TopUp:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastMarketTopUp)}</td>
+                    </tr>
+                    <tr>
                         <td>Market Locked:</td>
                         <td>{walletInfo.MarketLocked}</td>
                     </tr>
@@ -264,6 +277,10 @@ function WalletInfoTile({ walletInfo }) {
                             <td style={{fontSize: '0.85em', color: '#666'}}>{formatTiB(balanceInfo?.DatacapThresholdTiB)}</td>
                         </tr>
                     )}
+                    <tr>
+                        <td style={{paddingLeft: '1em', fontSize: '0.85em', color: '#666'}}>Last datacap request:</td>
+                        <td style={{fontSize: '0.85em', color: '#666'}}>{formatLastAction(balanceInfo?.LastFaucetDatacapRequest)}</td>
+                    </tr>
                     </tbody>
                 </table>
             )}
@@ -533,12 +550,20 @@ function DealsTile({ dealSummary, dealLoopStats }) {
                     <td>{formatUnixTime(dealLoopStats?.LastEndUnix)}</td>
                 </tr>
                 <tr>
+                    <td>Base interval:</td>
+                    <td>{dealLoopStats?.BaseIntervalMs || 0}ms</td>
+                </tr>
+                <tr>
                     <td>Last duration:</td>
                     <td>{dealLoopStats?.LastDurationMs || 0}ms</td>
                 </tr>
                 <tr>
                     <td>Loop backoff:</td>
                     <td>{dealLoopStats?.CurrentBackoffMs || 0}ms</td>
+                </tr>
+                <tr>
+                    <td>Consecutive failures:</td>
+                    <td>{dealLoopStats?.ConsecutiveFailures || 0}</td>
                 </tr>
                 {!!dealLoopStats?.LastError && (
                     <tr>
@@ -563,6 +588,10 @@ function ProvidersTile({ reachableProviders }) {
                     <td>{reachableProviders.length}</td>
                 </tr>
                 <tr>
+                    <td>With boost-deals:</td>
+                    <td>{reachableProviders.filter(p => p.BoostDeals).length}</td>
+                </tr>
+                <tr>
                     <td>With booster-bitswap:</td>
                     <td>{reachableProviders.filter(p => p.BoosterBitswap).length}</td>
                 </tr>
@@ -579,8 +608,12 @@ function ProvidersTile({ reachableProviders }) {
                     <td>{reachableProviders.filter(p => p.DealSuccess).length}</td>
                 </tr>
                 <tr>
+                    <td>On cooldown:</td>
+                    <td>{reachableProviders.filter(p => p.DealCooldownUntil && p.DealCooldownUntil * 1000 > Date.now()).length}</td>
+                </tr>
+                <tr>
                     <td>With all rejected deals:</td>
-                    <td>{reachableProviders.filter(p => p.DealRejected).length}</td>
+                    <td>{reachableProviders.filter(p => p.DealStarted > 0 && p.DealRejected === p.DealStarted).length}</td>
                 </tr>
                 </tbody>
             </table>
@@ -1256,6 +1289,44 @@ function DealCountsChart() {
 }
 
 function RepairRetrievals() {
+    const [queueStats, setQueueStats] = useState({Total: 0, Assigned: 0});
+    const [repairStats, setRepairStats] = useState({});
+    const [retrievalRate, setRetrievalRate] = useState(0);
+    const prevProgressRef = useRef({at: 0, total: 0, ema: 0});
+
+    const fetchStats = async () => {
+        try {
+            const queue = await RibsRPC.call("RepairQueue");
+            const jobs = await RibsRPC.call("RepairStats");
+
+            setQueueStats(queue);
+            setRepairStats(jobs || {});
+
+            const totalProgress = Object.values(jobs || {}).reduce((sum, job) => sum + (job.FetchProgress || 0), 0);
+            const now = Date.now();
+            if (prevProgressRef.current.at) {
+                const elapsedSeconds = (now - prevProgressRef.current.at) / 1000;
+                const delta = Math.max(0, totalProgress - prevProgressRef.current.total);
+                const instantRate = elapsedSeconds > 0 ? delta / elapsedSeconds : 0;
+                const ema = calcEMA(instantRate, prevProgressRef.current.ema || 0, 1 / 5);
+                prevProgressRef.current.ema = ema;
+                setRetrievalRate(Math.round(ema));
+            }
+            prevProgressRef.current.at = now;
+            prevProgressRef.current.total = totalProgress;
+        } catch (error) {
+            console.error("Error fetching repair stats:", error);
+        }
+    };
+
+    useEffect(() => {
+        fetchStats();
+        const intervalId = setInterval(fetchStats, 1000);
+        return () => clearInterval(intervalId);
+    }, []);
+
+    const activeJobs = Object.values(repairStats || {}).length;
+
     return (
         <div>
             <h2>Repair Retrievals</h2>
@@ -1264,15 +1335,15 @@ function RepairRetrievals() {
                 <tbody>
                 <tr>
                     <td>Queue</td>
-                    <td>0 Deals</td>
+                    <td>{queueStats.Total || 0} Deals</td>
                 </tr>
                 <tr>
                     <td>Active</td>
-                    <td>0 Deals</td>
+                    <td>{Math.max(queueStats.Assigned || 0, activeJobs)} Deals</td>
                 </tr>
                 <tr>
                     <td>Retrieval rate</td>
-                    <td>0 B/s</td>
+                    <td>{formatBytesBinary(retrievalRate)}/s</td>
                 </tr>
                 </tbody>
             </table>
