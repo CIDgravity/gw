@@ -59,7 +59,8 @@ docker compose up -d yugabyte
 #   - Request faucet funds and wait for on-chain confirmation
 #   - Request DataCap
 #   - Create a CIDGravity account for provider discovery
-#   - Configure the staging (localweb) server URL and path
+#   - Configure the staging (localweb) URL, listen port, and TLS mode
+#   - Offer both a temporary online reachability test and the normal staging validator
 #   - Write all settings to settings.env
 #
 # When prompted for the staging URL, enter the public root URL that storage

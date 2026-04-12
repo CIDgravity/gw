@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -430,22 +431,46 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 		return fmt.Errorf("unable to configure staging storage path")
 	}
 
+	portKey, ok := findKey("EXTERNAL_LOCALWEB_SERVER_PORT", keys)
+	if !ok {
+		return fmt.Errorf("unable to configure staging server port")
+	}
+
 	var urlVal string
 	var pathVal string
+	var portVal string
+	mode := "autocert"
 	pathDefault := pathKey.DefaultValue
 	if pathDefault == "" {
 		ribsDataPath := strings.TrimSpace(env["RIBS_DATA"])
 		if ribsDataPath == "" {
 			ribsDataPath = filepath.Join("~", ".ribsdata")
 		}
+		expanded, err := expandLocalPath(ribsDataPath)
+		if err == nil && expanded != "" {
+			ribsDataPath = expanded
+		}
 		pathDefault = filepath.Join(ribsDataPath, "cardata")
 	}
+	if portKey.DefaultValue != "" {
+		portVal = portKey.DefaultValue
+	} else {
+		portVal = "8443"
+	}
 
-	err := huh.NewForm(huh.NewGroup(
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("LocalWeb mode").
+			Description("Choose whether the gateway terminates TLS itself or an external reverse proxy/ingress handles TLS and forwards to the gateway.").
+			Options(
+				huh.NewOption("Built-in autocert TLS on the gateway", "autocert"),
+				huh.NewOption("Delegate TLS to a reverse proxy / ingress", "delegated"),
+			).
+			Value(&mode),
 		huh.NewInput().Title(urlKey.Var).Value(&urlVal).Placeholder(urlKey.DefaultValue).Description("Public root URL for staged CAR downloads, for example https://example.com (no path component)"),
-		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files"),
-	)).Run()
-	if err != nil {
+		huh.NewInput().Title(portKey.Var).Value(&portVal).Placeholder("8443").Description("Internal LocalWeb listen port. In delegated-TLS mode your reverse proxy should forward to 127.0.0.1:<port> on the gateway host."),
+		huh.NewInput().Title(pathKey.Var).Value(&pathVal).Placeholder(pathDefault).Description("Local filesystem path for staging CAR files. The default is a persistent cardata directory under RIBS_DATA."),
+	)).Run(); err != nil {
 		return err
 	}
 
@@ -453,11 +478,31 @@ func setStagingConfig(keys []groupedEnvKey, env map[string]string) error {
 	if pathVal == "" {
 		pathVal = pathDefault
 	}
-	env[pathKey.Var] = pathVal
+	expandedPath, err := expandLocalPath(pathVal)
+	if err != nil {
+		return err
+	}
+	env[pathKey.Var] = expandedPath
+
+	if portVal == "" {
+		portVal = "8443"
+	}
 
 	// Set sensible defaults for the built-in server
 	env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"] = "true"
-	env["EXTERNAL_LOCALWEB_SERVER_PORT"] = "8443"
+	env["EXTERNAL_LOCALWEB_SERVER_PORT"] = portVal
+	if mode == "delegated" {
+		env["EXTERNAL_LOCALWEB_SERVER_TLS"] = "false"
+	} else {
+		env["EXTERNAL_LOCALWEB_SERVER_TLS"] = "true"
+	}
+
+	if err := maybeTestStagingEndpoint(env); err != nil {
+		if errors.Is(err, errEditStaging) {
+			return setStagingConfig(keys, env)
+		}
+		return err
+	}
 
 	return nil
 }
@@ -497,8 +542,18 @@ func initialSetupWizard(envPath string, keys []groupedEnvKey, opts Opts) error {
 		return err
 	}
 
-	if err := setStagingConfig(keys, env); err != nil {
-		return err
+	for {
+		if err := setStagingConfig(keys, env); err != nil {
+			return err
+		}
+
+		verified, err := runValidator("Staging", env)
+		if err != nil {
+			return err
+		}
+		if verified {
+			break
+		}
 	}
 
 	return saveConfig(envPath, env)

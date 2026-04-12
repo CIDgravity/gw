@@ -29,12 +29,14 @@ import (
 	"github.com/google/uuid"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/joho/godotenv"
+	"github.com/mitchellh/go-homedir"
 )
 
 var (
 	cidgHexChallengeRe = regexp.MustCompile(`^[a-f0-9]+$`)
 	cidgLotusSignRe    = regexp.MustCompile(`^lotus wallet sign f1[a-z0-9]+ [a-f0-9]+$`)
 	cidgApiKeyRe       = regexp.MustCompile(`^f0[a-z0-9]+-[A-Za-z0-9_\-]+$`)
+	errEditStaging     = errors.New("edit staging settings")
 )
 
 // ---------------------- meta‑data helpers ------------------------------- //
@@ -243,8 +245,16 @@ func validateExternal(env map[string]string) (bool, error) {
 		return false, fmt.Errorf("EXTERNAL_LOCALWEB_PATH or URL not set")
 	}
 
+	expandedPath, err := expandLocalPath(path)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(expandedPath, 0o755); err != nil {
+		return false, err
+	}
+
 	name := uuid.NewString() + ".ribscfg"
-	full := filepath.Join(path, name)
+	full := filepath.Join(expandedPath, name)
 	if err := os.WriteFile(full, []byte("ribscfg connectivity check\n"), 0o644); err != nil {
 		return false, err
 	}
@@ -256,6 +266,13 @@ func validateExternal(env map[string]string) (bool, error) {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
+}
+
+func expandLocalPath(p string) (string, error) {
+	if strings.TrimSpace(p) == "" {
+		return "", nil
+	}
+	return homedir.Expand(p)
 }
 
 // ---------------------- wizard helpers ---------------------------------- //
@@ -417,103 +434,12 @@ func editSection(section string, keys []groupedEnvKey, env map[string]string, ed
 	}
 
 	if section == "Staging" && !editAdvanced {
-		builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
-		port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
-		urlStr := env["EXTERNAL_LOCALWEB_URL"]
-		if builtin == "true" {
-			// Validate port and URL
-			if !isValidPort(port) {
-				fmt.Printf("❌ Port %q is not valid. Please edit the settings.\n", port)
+		if err := maybeTestStagingEndpoint(env); err != nil {
+			if errors.Is(err, errEditStaging) {
 				return editSection("Staging", keys, env, false)
 			}
-			if !isValidURL(urlStr) {
-				fmt.Printf("❌ URL %q is not valid. Please edit the settings.\n", urlStr)
-				return editSection("Staging", keys, env, false)
-			}
-
-			// Ask if user wants to test
-			doTest := false
-			testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
-			if isInContainer() {
-				testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
-					"The test server binds inside the container, so it will only\n" +
-					"work if the container has the port mapped (e.g. --network=host\n" +
-					"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
-					"'docker run' without port mapping, skip this test."
-			}
-			if err := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title("Do you want to test the endpoint online?").
-						Description(testDesc).
-						Value(&doTest),
-				),
-			).Run(); err != nil {
-				return err
-			}
-			if doTest {
-				for {
-					// Start temp server
-					handler := http.NewServeMux()
-					handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-						fmt.Fprintln(w, "gwcfg test OK")
-					})
-					shutdown, err := startTempHTTPServer(port, handler)
-					if err != nil {
-						fmt.Printf("❌ Failed to start temporary server: %s\n", err)
-						goto afterTest
-					}
-
-					// Wait a moment for server to start
-					time.Sleep(500 * time.Millisecond)
-
-					{
-						// Test endpoint
-						testURL := urlStr
-						_, err := url.Parse(testURL)
-						if err != nil {
-							fmt.Printf("❌ Failed to parse URL: %s\n", err)
-							goto afterTest
-						}
-
-						fmt.Printf("Testing endpoint: %s ...\n", testURL)
-						testErr := testEndpoint(testURL)
-						if testErr == nil {
-							fmt.Println("✅ Endpoint is reachable!")
-						} else {
-							fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
-						}
-					}
-
-					// Stop the server immediately after the test
-					shutdown()
-
-				afterTest:
-					// Prompt for retry/edit/continue
-					var action string
-					opts := []huh.Option[string]{
-						huh.NewOption("Retry test", "retry"),
-						huh.NewOption("Edit settings", "edit"),
-						huh.NewOption("Continue", "continue"),
-					}
-					if err := huh.NewForm(
-						huh.NewGroup(
-							huh.NewSelect[string]().Title("What do you want to do?").Options(opts...).Value(&action),
-						),
-					).Run(); err != nil {
-						return err
-					}
-					switch action {
-					case "retry":
-						continue // re-run the test loop
-					case "edit":
-						return editSection("Staging", keys, env, false)
-					case "continue":
-						break // exit the test loop and continue
-					}
-					break // exit the test loop
-				}
-			}
+			fmt.Printf("❌ %s\n", err)
+			return editSection("Staging", keys, env, false)
 		}
 	}
 	return nil
@@ -765,8 +691,8 @@ func isValidURL(u string) bool {
 }
 
 // Start a temporary HTTP server on the given port, returns a shutdown function and the actual port used
-func startTempHTTPServer(port string, handler http.Handler) (shutdown func(), err error) {
-	ln, err := net.Listen("tcp", ":"+port)
+func startTempHTTPServer(bindHost, port string, handler http.Handler) (shutdown func(), err error) {
+	ln, err := net.Listen("tcp", net.JoinHostPort(bindHost, port))
 	if err != nil {
 		return nil, err
 	}
@@ -781,6 +707,96 @@ func startTempHTTPServer(port string, handler http.Handler) (shutdown func(), er
 	return func() {
 		server.Close()
 	}, nil
+}
+
+func maybeTestStagingEndpoint(env map[string]string) error {
+	builtin := env["EXTERNAL_LOCALWEB_BUILTIN_SERVER"]
+	port := env["EXTERNAL_LOCALWEB_SERVER_PORT"]
+	urlStr := env["EXTERNAL_LOCALWEB_URL"]
+	if builtin != "true" {
+		return nil
+	}
+
+	if !isValidPort(port) {
+		return fmt.Errorf("port %q is not valid", port)
+	}
+	if !isValidURL(urlStr) {
+		return fmt.Errorf("URL %q is not valid", urlStr)
+	}
+
+	doTest := false
+	testDesc := "* A temporary server will be started on 0.0.0.0:" + port + ".\n* A request will be made to the configured URL to verify connectivity."
+	if env["EXTERNAL_LOCALWEB_SERVER_TLS"] == "false" {
+		testDesc += "\n* In delegated-TLS mode, make sure your reverse proxy forwards the public URL to 127.0.0.1:" + port + " on the gateway host."
+	}
+	if isInContainer() {
+		testDesc += "\n\nNOTE: You appear to be running inside a container.\n" +
+			"The test server binds inside the container, so it will only\n" +
+			"work if the container has the port mapped (e.g. --network=host\n" +
+			"or -p " + port + ":" + port + "). If you are running gwcfg via\n" +
+			"'docker run' without port mapping, skip this test."
+	}
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title("Do you want to test the endpoint online?").
+				Description(testDesc).
+				Value(&doTest),
+		),
+	).Run(); err != nil {
+		return err
+	}
+	if !doTest {
+		return nil
+	}
+
+	for {
+		var shutdown func()
+		var testErr error
+
+		handler := http.NewServeMux()
+		handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, "gwcfg test OK")
+		})
+		shutdown, err := startTempHTTPServer("0.0.0.0", port, handler)
+		if err != nil {
+			fmt.Printf("❌ Failed to start temporary server: %s\n", err)
+		} else {
+			time.Sleep(500 * time.Millisecond)
+
+			fmt.Printf("Testing endpoint: %s ...\n", urlStr)
+			testErr = testEndpoint(urlStr)
+			if testErr == nil {
+				fmt.Println("✅ Endpoint is reachable!")
+			} else {
+				fmt.Printf("❌ Endpoint test failed: %s\n", testErr)
+			}
+
+			shutdown()
+		}
+
+		var action string
+		opts := []huh.Option[string]{
+			huh.NewOption("Retry test", "retry"),
+			huh.NewOption("Edit settings", "edit"),
+			huh.NewOption("Continue", "continue"),
+		}
+		if err := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().Title("What do you want to do?").Options(opts...).Value(&action),
+			),
+		).Run(); err != nil {
+			return err
+		}
+		switch action {
+		case "retry":
+			continue
+		case "edit":
+			return errEditStaging
+		case "continue":
+			return nil
+		}
+	}
 }
 
 // Call an external API to test the endpoint (for demo, just GET the URL)
