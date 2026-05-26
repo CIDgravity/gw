@@ -3,8 +3,9 @@ package kuboribs
 import (
 	"context"
 	"fmt"
-    "github.com/ipfs/boxo/blockservice"
-    "github.com/ipfs/boxo/exchange/offline"
+	"github.com/ipfs/boxo/blockservice"
+	"github.com/ipfs/boxo/exchange/offline"
+	"github.com/multiformats/go-multihash"
 	"os"
 
 	lotusbstore "github.com/filecoin-project/lotus/blockstore"
@@ -26,10 +27,10 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/lotus-web3/ribs"
+	"github.com/lotus-web3/ribs/configuration"
 	ribsbstore "github.com/lotus-web3/ribs/integrations/blockstore"
 	"github.com/lotus-web3/ribs/integrations/web"
 	"github.com/lotus-web3/ribs/rbdeal"
-	"github.com/lotus-web3/ribs/configuration"
 	"github.com/mitchellh/go-homedir"
 	"go.uber.org/fx"
 	"golang.org/x/xerrors"
@@ -152,11 +153,11 @@ func ribsMetadata(r ribs.RIBS /*, lc fx.Lifecycle */) ribs.MetadataDB {
 	rbmeta := r.MetaDB()
 
 	/*
-	lc.Append(fx.Hook{
-		OnStop: func(ctx context.Context) error {
-			return ribs.Close()
-		},
-	})*/
+		lc.Append(fx.Hook{
+			OnStop: func(ctx context.Context) error {
+				return ribs.Close()
+			},
+		})*/
 
 	return rbmeta
 }
@@ -199,18 +200,18 @@ var _ blockstore.GCLocker = (*flushingGCLocker)(nil)
 // MFS Durability
 
 func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ribsbstore.Blockstore, mdb ribs.MetadataDB) (*mfs.Root, error) {
-    bsv := blockservice.New(rbs, offline.Exchange(rbs))
-    dag := merkledag.NewDAGService(bsv)
+	bsv := blockservice.New(rbs, offline.Exchange(rbs))
+	dag := merkledag.NewDAGService(bsv)
 
-    dsk := datastore.NewKey("/local/filesroot")
-    pf := func(ctx context.Context, c cid.Cid) error {
-        rootDS := repo.Datastore()
-        /*if err := rootDS.Sync(ctx, blockstore.BlockPrefix); err != nil {
-            return err
-		}
-		if err := rootDS.Sync(ctx, filestore.FilestorePrefix); err != nil {
-			return err
-		}*/
+	dsk := datastore.NewKey("/local/filesroot")
+	pf := func(ctx context.Context, c cid.Cid) error {
+		rootDS := repo.Datastore()
+		/*if err := rootDS.Sync(ctx, blockstore.BlockPrefix); err != nil {
+		            return err
+				}
+				if err := rootDS.Sync(ctx, filestore.FilestorePrefix); err != nil {
+					return err
+				}*/
 		log.Infow("new files root", "cid", c.String())
 
 		if err := rbs.Flush(ctx); err != nil {
@@ -259,7 +260,7 @@ func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ri
 		return nil, err
 	}
 
-	root, err := mfs.NewRoot(ctx, dag, nd, pf)
+	root, err := mfs.NewRoot(ctx, dag, nd, pf, noopProvider{})
 
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
@@ -277,3 +278,8 @@ func RibsFiles(mctx helpers.MetricsCtx, lc fx.Lifecycle, repo repo.Repo, rbs *ri
 
 	return root, err
 }
+
+// noopProvider is a no-op MultihashProvider for mfs.NewRoot.
+type noopProvider struct{}
+
+func (noopProvider) StartProviding(_ bool, _ ...multihash.Multihash) error { return nil }

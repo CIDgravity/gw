@@ -68,7 +68,7 @@ var claimsExtendCmd = &cli.Command{
 
 		fmt.Printf("Getting claims for %d providers\n", len(provs))
 
-		chain, closer, err := cliutil.GetGatewayAPI(c)
+		chain, closer, err := cliutil.GetGatewayAPIV1(c)
 		if err != nil {
 			return xerrors.Errorf("getting gateway api: %w", err)
 		}

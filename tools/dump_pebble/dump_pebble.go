@@ -9,8 +9,8 @@ import (
 	"os"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/multiformats/go-multihash"
 	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multihash"
 )
 
 // Struct for storing multihash and type
@@ -28,11 +28,11 @@ type CIDDetails struct {
 
 // Main struct to hold all the data
 type CIDInfo struct {
-	Group uint64    `json:"group,omitempty"`
-	Size uint32    `json:"size,omitempty"`
-	Prefix string    `json:"prefix"`
-	MH    MHInfo    `json:"mh"`
-	CID   CIDDetails `json:"cid"`
+	Group  uint64     `json:"group,omitempty"`
+	Size   uint32     `json:"size,omitempty"`
+	Prefix string     `json:"prefix"`
+	MH     MHInfo     `json:"mh"`
+	CID    CIDDetails `json:"cid"`
 }
 
 func main() {
@@ -63,50 +63,52 @@ func main() {
 	}()
 
 	// Iterate through all keys
-	iter := db.NewIter(nil)
+	iter, err := db.NewIter(nil)
+	if err != nil {
+		log.Fatalf("ERROR: Failed to create Pebble iterator: %s", err)
+	}
 	defer iter.Close() // Close the iterator once we're done
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
 		val := iter.Value()
-        var mhBytes []byte
-        var group uint64
-        var size  uint32
-        var prefix []byte
+		var mhBytes []byte
+		var group uint64
+		var size uint32
+		var prefix []byte
 
-        // Extract data for i: entries
-        if len(key) > 2 && key[0] == 'i' && key[1] == ':' {
-            prefix = []byte("i:")
-            groupBytes := key[len(key)-8:]
-            group = binary.BigEndian.Uint64(groupBytes)
-            mhBytes = key[len(prefix) : len(key)-8]
+		// Extract data for i: entries
+		if len(key) > 2 && key[0] == 'i' && key[1] == ':' {
+			prefix = []byte("i:")
+			groupBytes := key[len(key)-8:]
+			group = binary.BigEndian.Uint64(groupBytes)
+			mhBytes = key[len(prefix) : len(key)-8]
 
-        // Extract data for s: entries
-        } else if len(key) > 2 && key[0] == 's' && key[1] == ':' {
-            prefix = []byte("s:")
-            mhBytes = key[len(prefix):]
-            sizeBytes := key[:4]
-            size = binary.BigEndian.Uint32(sizeBytes)
-            groupBytes := val[4:]
-            if len(groupBytes) != 8 {
-                log.Printf("WARNING: Expected 8 bytes for group, but got %d bytes for key: %x", len(groupBytes), key)
-            } else {
-                group = binary.BigEndian.Uint64(groupBytes)
-            }
-         }
+			// Extract data for s: entries
+		} else if len(key) > 2 && key[0] == 's' && key[1] == ':' {
+			prefix = []byte("s:")
+			mhBytes = key[len(prefix):]
+			sizeBytes := key[:4]
+			size = binary.BigEndian.Uint32(sizeBytes)
+			groupBytes := val[4:]
+			if len(groupBytes) != 8 {
+				log.Printf("WARNING: Expected 8 bytes for group, but got %d bytes for key: %x", len(groupBytes), key)
+			} else {
+				group = binary.BigEndian.Uint64(groupBytes)
+			}
+		}
 
+		mh, err := multihash.Cast(mhBytes)
+		if err != nil {
+			log.Printf("WARNING: Failed to cast multihash for key %s, mhBytes: %x, error: %s", key, mhBytes, err)
+			continue
+		}
 
-         mh, err := multihash.Cast(mhBytes)
-        if err != nil {
-            log.Printf("WARNING: Failed to cast multihash for key %s, mhBytes: %x, error: %s", key, mhBytes, err)
-            continue
-        }
-
-        mhinfo, err := multihash.Decode(mhBytes)
-        if err != nil {
-            log.Printf("WARNING: Failed to decode multihash: %s", err)
-            continue
-        }
+		mhinfo, err := multihash.Decode(mhBytes)
+		if err != nil {
+			log.Printf("WARNING: Failed to decode multihash: %s", err)
+			continue
+		}
 
 		// Generate the CID v1
 		v1 := cid.NewCidV1(cid.Raw, mh)
@@ -121,9 +123,9 @@ func main() {
 
 		// Format and Print
 		cidInfo := CIDInfo{
-			Group: group,
-            Prefix: string(prefix),
-            Size: size,
+			Group:  group,
+			Prefix: string(prefix),
+			Size:   size,
 			MH: MHInfo{
 				MH:   mh.String(),
 				Type: multihash.Codes[mhinfo.Code],
@@ -142,4 +144,3 @@ func main() {
 		fmt.Println(string(jsonData))
 	}
 }
-
