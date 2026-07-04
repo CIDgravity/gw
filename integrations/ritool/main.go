@@ -19,6 +19,7 @@ func main() {
 			groupCmd,
 			claimsExtendCmd,
 			loadtestCmd,
+			migrateCmd,
 		},
 	}
 

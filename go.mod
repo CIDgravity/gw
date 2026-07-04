@@ -13,6 +13,7 @@ require (
 	github.com/aws/smithy-go v1.23.0
 	github.com/charmbracelet/huh v0.7.0
 	github.com/cheggaaa/pb v1.0.29
+	github.com/cockroachdb/pebble v1.1.4
 	github.com/docker/docker v28.2.2+incompatible
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.18.0

@@ -1,6 +1,6 @@
 GOTOOLCHAIN ?= go1.24.5
 
-all: kuboribs gwcfg s3-proxy
+all: kuboribs gwcfg s3-proxy ritool
 
 kuboribs:
 	GOTOOLCHAIN=$(GOTOOLCHAIN) go build -o kuri ./integrations/kuri/cmd/kuri
@@ -14,6 +14,10 @@ s3-proxy:
 	GOTOOLCHAIN=$(GOTOOLCHAIN) go build -o s3-proxy ./server/s3frontend/cmd
 .PHONY: s3-proxy
 
+ritool:
+	GOTOOLCHAIN=$(GOTOOLCHAIN) go build -o ritool ./integrations/ritool
+.PHONY: ritool
+
 clean:
-	rm -f kuri gwcfg s3-proxy
+	rm -f kuri gwcfg s3-proxy ritool
 .PHONY: clean
