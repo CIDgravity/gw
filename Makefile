@@ -1,4 +1,4 @@
-GOTOOLCHAIN ?= go1.24.5
+GOTOOLCHAIN ?= go1.25.7
 
 all: kuboribs gwcfg s3-proxy ritool
 
