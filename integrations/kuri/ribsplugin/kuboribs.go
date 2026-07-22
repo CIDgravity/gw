@@ -95,13 +95,17 @@ func (p *ribsPlugin) Options(info core.FXNodeInfo) ([]fx.Option, error) {
 
 		fx.Decorate(RibsFiles),
 
-		//fx.Invoke(StartMfsDav),
 		fx.Invoke(fgw_metrics.StartPrometheusServer),
 		fx.Invoke(fgw_s3.StartS3Server),
 		//fx.Invoke(StartMfsNFSFs),
 		fx.Invoke(StartMeta),
 		fx.Invoke(cidlocation2.StartWorkers),
 	)
+
+	if configuration.GetConfig().Ribs.WebDAVEnabled {
+		opts = append(opts, fx.Invoke(StartMfsDav))
+	}
+
 	return opts, nil
 }
 

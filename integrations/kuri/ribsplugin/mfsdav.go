@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/iface"
 	"go.uber.org/fx"
 	"golang.org/x/net/webdav"
@@ -41,9 +42,10 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb iface.MetadataDB) {
 		},
 	}
 
-	log.Infow("davfs: Listening")
+	addr := configuration.GetConfig().Ribs.WebDAVBindAddr
+	log.Infow("davfs: Listening", "addr", addr)
 	srv := &http.Server{
-		Addr:    ":8077",
+		Addr:    addr,
 		Handler: davHandler,
 	}
 
@@ -53,8 +55,6 @@ func StartMfsDav(lc fx.Lifecycle, fr *mfs.Root, mdb iface.MetadataDB) {
 				if err := srv.ListenAndServe(); err != nil {
 					log.Errorf("failed to start ribs http server: %s", err)
 				}
-
-				fmt.Println("dav http at http://localhost:8077")
 			}()
 			return nil
 		},

@@ -114,7 +114,10 @@ func (ch *containerHarness) startYugabyte() {
 	ch.yugabyte = &yugabyte
 }
 
-func (ch *containerHarness) startFilecoinGateway() {
+// startFilecoinGateway builds and starts the full gateway container.
+// extraEnv entries override or extend the default environment; extraPorts
+// are exposed in addition to the S3 and metrics ports.
+func (ch *containerHarness) startFilecoinGateway(extraEnv map[string]string, extraPorts ...string) {
 	ctx := context.Background()
 	walletDir, err := os.MkdirTemp("", "fgw-wallet-")
 	if err != nil {
@@ -125,29 +128,34 @@ func (ch *containerHarness) startFilecoinGateway() {
 	}
 	ch.walletDir = walletDir
 
+	env := map[string]string{
+		"RIBS_YUGABYTE_CQL_HOSTS":       "yugabyte",
+		"RIBS_YUGABYTE_CQL_KEYSPACE":    "filecoingw_test",
+		"RIBS_YUGABYTE_SQL_HOST":        "yugabyte",
+		"RIBS_YUGABYTE_SQL_DB":          "filecoingw_test",
+		"RIBS_LOGLEVEL":                 "ribs:.*=debug,gw/.*=debug,ribs:rbdeal=info",
+		"EXTERNAL_LOCALWEB_PATH":        "/data",
+		"EXTERNAL_LOCALWEB_URL":         "http://127.0.0.1:8443",
+		"EXTERNAL_LOCALWEB_SERVER_TLS":  "false",
+		"RIBS_S3API_AUTH_ENABLED":       "true",
+		"RIBS_S3API_ROOT_ACCESS_KEY_ID": "test-access-key",
+		"RIBS_S3API_ROOT_SECRET_KEY":    "test-secret-key",
+	}
+	for k, v := range extraEnv {
+		env[k] = v
+	}
+
 	req := testcontainers.ContainerRequest{
 		FromDockerfile: testcontainers.FromDockerfile{
 			Context:        FindModuleRoot(),
 			Dockerfile:     "Dockerfile",
 			KeepImage:      true,
 			BuildLogWriter: os.Stdout},
-		ExposedPorts: []string{"8078", "2112"},
+		ExposedPorts: append([]string{"8078", "2112"}, extraPorts...),
 		WaitingFor:   wait.ForLog("Daemon is ready").WithStartupTimeout(2 * time.Minute),
 		Networks:     []string{ch.net.Name},
 		Cmd:          []string{"sh", "-c", "./kuri init && ./kuri daemon"},
-		Env: map[string]string{
-			"RIBS_YUGABYTE_CQL_HOSTS":       "yugabyte",
-			"RIBS_YUGABYTE_CQL_KEYSPACE":    "filecoingw_test",
-			"RIBS_YUGABYTE_SQL_HOST":        "yugabyte",
-			"RIBS_YUGABYTE_SQL_DB":          "filecoingw_test",
-			"RIBS_LOGLEVEL":                 "ribs:.*=debug,gw/.*=debug,ribs:rbdeal=info",
-			"EXTERNAL_LOCALWEB_PATH":        "/data",
-			"EXTERNAL_LOCALWEB_URL":         "http://127.0.0.1:8443",
-			"EXTERNAL_LOCALWEB_SERVER_TLS":  "false",
-			"RIBS_S3API_AUTH_ENABLED":       "true",
-			"RIBS_S3API_ROOT_ACCESS_KEY_ID": "test-access-key",
-			"RIBS_S3API_ROOT_SECRET_KEY":    "test-secret-key",
-		},
+		Env:          env,
 		ConfigModifier: func(config *container.Config) {
 			config.Hostname = "fgw"
 		},

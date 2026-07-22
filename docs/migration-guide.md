@@ -126,6 +126,8 @@ RIBS_DATA=/data/ribsdata            # the migrated directory
 RIBS_YUGABYTE_SQL_*                 # as during migration
 RIBS_YUGABYTE_CQL_*                 # as during migration
 RIBS_MONGODB_URI=...                # unchanged from the old deployment
+RIBS_WEBDAV_ENABLED=true            # WebDAV frontend (off by default);
+RIBS_WEBDAV_BINDADDR=:8077          # listen address
 RIBS_GC_ENABLED=false               # keep off: GC refcounts derive from S3
                                     # object references, which this
                                     # deployment does not populate
@@ -135,10 +137,11 @@ For WebDAV/Mongo deployments two more things to know:
 
 - File metadata keeps flowing to Mongo (`StartMeta` is wired in kuri as
   before). Nothing to migrate there.
-- The WebDAV and NFS frontends are currently disabled in code
-  (`fx.Invoke(StartMfsDav)` / `StartMfsNFSFs` are commented out in
-  `integrations/kuri/ribsplugin/kuboribs.go`) — re-enabling them is a
-  build-time change until they are made configurable.
+- The WebDAV frontend is off by default; enable it with
+  `RIBS_WEBDAV_ENABLED=true` (listen address `RIBS_WEBDAV_BINDADDR`,
+  default `:8077`). The NFS frontend remains disabled in code
+  (`StartMfsNFSFs` in `integrations/kuri/ribsplugin/kuboribs.go`) and needs
+  more than re-wiring — its listener is commented out internally.
 
 Start the node and smoke-test:
 

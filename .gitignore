@@ -1,8 +1,8 @@
 /build.sh
 /deploy.sh
 /ritool
-gwcfg
-kuri
+/gwcfg
+/kuri
 settings.env
 .env
 *~
@@ -15,4 +15,4 @@ settings.env
 *.dylib
 *.bin
 *.app
-s3-proxy
+/s3-proxy

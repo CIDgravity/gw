@@ -164,6 +164,13 @@ type RibsConfig struct {
 	// Example: "mongodb://localhost:27017/ribs"
 	MongoDBUri string `envconfig:"RIBS_MONGODB_URI"`
 
+	// WebDAVEnabled starts the kuri WebDAV frontend, serving the MFS root
+	// over HTTP. File metadata is recorded in MongoDB when MongoDBUri is set.
+	WebDAVEnabled bool `envconfig:"RIBS_WEBDAV_ENABLED" default:"false"`
+
+	// WebDAVBindAddr is the listen address of the WebDAV frontend.
+	WebDAVBindAddr string `envconfig:"RIBS_WEBDAV_BINDADDR" default:":8077"`
+
 	// RunSpCrawler enables the background storage provider crawler that
 	// discovers and monitors Filecoin storage providers for deal making.
 	RunSpCrawler bool `envconfig:"RIBS_RUN_SP_CRAWLER" default:"true"`

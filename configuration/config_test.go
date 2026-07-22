@@ -1035,3 +1035,35 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestLoadConfig_WebDAV(t *testing.T) {
+	resetConfig()
+	setValidLogLevel(t)
+	os.Unsetenv("RIBS_WEBDAV_ENABLED")
+	os.Unsetenv("RIBS_WEBDAV_BINDADDR")
+
+	// defaults: disabled, standard port
+	if err := LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if GetConfig().Ribs.WebDAVEnabled {
+		t.Error("WebDAVEnabled should default to false")
+	}
+	if got := GetConfig().Ribs.WebDAVBindAddr; got != ":8077" {
+		t.Errorf("WebDAVBindAddr default = %q, want %q", got, ":8077")
+	}
+
+	resetConfig()
+	t.Setenv("RIBS_WEBDAV_ENABLED", "true")
+	t.Setenv("RIBS_WEBDAV_BINDADDR", "127.0.0.1:9077")
+
+	if err := LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !GetConfig().Ribs.WebDAVEnabled {
+		t.Error("WebDAVEnabled should be true when RIBS_WEBDAV_ENABLED=true")
+	}
+	if got := GetConfig().Ribs.WebDAVBindAddr; got != "127.0.0.1:9077" {
+		t.Errorf("WebDAVBindAddr = %q, want %q", got, "127.0.0.1:9077")
+	}
+}
