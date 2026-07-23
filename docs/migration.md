@@ -125,9 +125,11 @@ migration dies or is stopped, **re-run the same command** — completed
 phases are skipped and the index load resumes from the last checkpoint. All
 database writes are idempotent, so overlap around a checkpoint is harmless.
 
-To redo everything from scratch instead, delete the state file and pass
-`--force-sql` (truncates the migrated SQL tables; CQL rows are upserts and
-need no reset).
+When the SQL phase (re)starts — first run, or a re-run after a mid-phase
+failure, or after deleting the state file for a full redo — any rows
+already present in the migrated tables are cleared first (logged as
+`clearing non-empty target table`). CQL rows are upserts and need no
+reset.
 
 ### Verification
 
@@ -198,7 +200,8 @@ Yugabyte side can simply be dropped and re-created for another attempt.
 
 | Symptom | Cause / fix |
 |---|---|
-| `target tables not empty` | A previous attempt wrote SQL rows but the state file is missing. Resume with the state file, or redo with `--force-sql`. |
+| `clearing non-empty target table` (warning) | Leftovers of a previous SQL-phase attempt (or a deliberate redo after deleting the state file) are being truncated before recopying. |
+| `values out of int64 range were clamped` (warning) | The old sqlite held REAL values beyond int64 (e.g. absurd `ask_price` asks like 1.23e20); they are clamped to the int64 maximum. Informational — these columns are refreshed by the SP crawler anyway. |
 | `create cql migrate session: ...` | The CQL keyspace doesn't exist (see step 1) or the CQL host/port/credentials are wrong. |
 | `read-only pebble open failed, copying index to temp space` (warning) | Expected on strictly read-only snapshots; the index is copied under `<dest>/.ribsdata-migrate.tmp` first. Needs free space for the pebble directory. |
 | Verification reports `groups differ` / index mismatches | Do not cut over. Re-run with `--verify-sample 1` to bound the damage, and check whether the source was modified during migration (was the old node really stopped?). |

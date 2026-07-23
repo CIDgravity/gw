@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,6 +181,13 @@ func TestMigrateGolden(t *testing.T) {
 		require.True(t, askOk)
 		require.EqualValues(t, 100000, askPrice)
 
+		// float ask values: out-of-range clamps to MaxInt64, in-range converts
+		var floatAsk, floatVerif int64
+		require.NoError(t, sqlDb.QueryRow(`select ask_price, ask_verif_price from providers where id = 1002`).
+			Scan(&floatAsk, &floatVerif))
+		require.EqualValues(t, int64(math.MaxInt64), floatAsk)
+		require.EqualValues(t, int64(1e18), floatVerif)
+
 		// offload bookkeeping for the offloaded group
 		var module, path string
 		require.NoError(t, sqlDb.QueryRow(`select module, path from external_path where group_id = $1`, golden.OffloadedGroup).
@@ -276,15 +284,9 @@ func TestMigrateGolden(t *testing.T) {
 	t.Run("redo-without-state", func(t *testing.T) {
 		require.NoError(t, os.Remove(filepath.Join(dest, stateFileName)))
 
-		// without force, refusing to touch non-empty tables
+		// a full redo clears the previously-migrated tables and does not
+		// duplicate anything (deals_archive has no primary key)
 		_, err := Run(ctx, opts)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "not empty")
-
-		// with force, a full redo is clean and does not duplicate anything
-		fopts := opts
-		fopts.ForceSQL = true
-		_, err = Run(ctx, fopts)
 		require.NoError(t, err)
 
 		report, err := Verify(ctx, opts, VerifyOptions{SampleEvery: 1})

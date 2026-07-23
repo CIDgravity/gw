@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -151,14 +152,13 @@ const sqlInsertChunk = 200 // rows per multi-row INSERT
 
 // migrateSQL copies all metadata tables from the old sqlite store.db into
 // the (already migrated-to-schema) Yugabyte SQL database.
-func migrateSQL(ctx context.Context, src *sql.DB, dst sqldb.Database, force bool) (map[string]int64, error) {
-	if force {
-		if err := truncateTargetTables(dst); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := checkTargetTablesEmpty(dst); err != nil {
+//
+// The target tables are truncated first: this phase only runs when the
+// state file records it as not-yet-done, so any rows found are leftovers of
+// an interrupted attempt (deals_archive has no primary key, so plain
+// re-inserting could silently duplicate rows).
+func migrateSQL(ctx context.Context, src *sql.DB, dst sqldb.Database) (map[string]int64, error) {
+	if err := truncateTargetTables(dst); err != nil {
 		return nil, err
 	}
 
@@ -179,31 +179,21 @@ func migrateSQL(ctx context.Context, src *sql.DB, dst sqldb.Database, force bool
 	return counts, nil
 }
 
-// checkTargetTablesEmpty refuses to migrate into tables that already hold
-// data: deals_archive has no primary key, so inserts into a non-empty table
-// could silently duplicate rows.
-func checkTargetTablesEmpty(dst sqldb.Database) error {
-	var nonEmpty []string
-	for _, spec := range tableSpecs {
-		var exists bool
-		if err := dst.QueryRow(fmt.Sprintf(`select exists (select 1 from %s)`, spec.name)).Scan(&exists); err != nil {
-			return xerrors.Errorf("checking table %s: %w", spec.name, err)
-		}
-		if exists {
-			nonEmpty = append(nonEmpty, spec.name)
-		}
-	}
-	if len(nonEmpty) > 0 {
-		return xerrors.Errorf("target tables not empty: %s (re-run with force to truncate them, or resume with the existing state file)", strings.Join(nonEmpty, ", "))
-	}
-	return nil
-}
-
 func truncateTargetTables(dst sqldb.Database) error {
 	// reverse order, groups last; offloads references groups so groups
 	// needs CASCADE anyway
 	for i := len(tableSpecs) - 1; i >= 0; i-- {
 		name := tableSpecs[i].name
+
+		var exists bool
+		if err := dst.QueryRow(fmt.Sprintf(`select exists (select 1 from %s)`, name)).Scan(&exists); err != nil {
+			return xerrors.Errorf("checking table %s: %w", name, err)
+		}
+		if !exists {
+			continue
+		}
+		log.Warnw("clearing non-empty target table", "table", name)
+
 		q := fmt.Sprintf(`truncate table %s`, name)
 		if name == "groups" {
 			q += " cascade"
@@ -252,46 +242,32 @@ func copyTable(ctx context.Context, src *sql.DB, dst sqldb.Database, spec tableS
 
 	ins := newChunkInserter(dst, spec, cols)
 
-	var total int64
+	var total, clamped int64
 	for rows.Next() {
-		// Every column scans as nullable: tables created with
-		// `create table ... as select` (deals_archive) carry no NOT NULL
-		// constraints, so even "required" columns can hold NULL there.
+		// Scan raw driver values: sqlite columns are dynamically typed, so
+		// an integer-declared column can hold NULL (tables created with
+		// `create table ... as select`, like deals_archive, carry no NOT
+		// NULL constraints) or even REAL values (old crawlers wrote some
+		// ask prices as floats).
 		holders := make([]interface{}, len(cols))
-		for i, c := range cols {
-			switch c.kind {
-			case kInt, kTimeUnix, kNullInt, kBool:
-				holders[i] = new(sql.NullInt64)
-			case kText, kNullText:
-				holders[i] = new(sql.NullString)
-			case kBlob:
-				holders[i] = new([]byte)
-			}
+		ptrs := make([]interface{}, len(cols))
+		for i := range holders {
+			ptrs[i] = &holders[i]
 		}
-		if err := rows.Scan(holders...); err != nil {
+		if err := rows.Scan(ptrs...); err != nil {
 			return total, xerrors.Errorf("scanning source row: %w", err)
 		}
 
 		args := make([]interface{}, len(cols))
 		for i, c := range cols {
-			switch c.kind {
-			case kInt, kNullInt:
-				args[i] = *holders[i].(*sql.NullInt64)
-			case kTimeUnix:
-				v := *holders[i].(*sql.NullInt64)
-				if v.Valid {
-					args[i] = time.Unix(v.Int64, 0).UTC()
-				}
-			case kBool:
-				v := *holders[i].(*sql.NullInt64)
-				if v.Valid {
-					args[i] = v.Int64 != 0
-				}
-			case kText, kNullText:
-				args[i] = *holders[i].(*sql.NullString)
-			case kBlob:
-				args[i] = *holders[i].(*[]byte)
+			v, wasClamped, err := convertValue(c.kind, holders[i])
+			if err != nil {
+				return total, xerrors.Errorf("column %s.%s: %w", spec.name, c.name, err)
 			}
+			if wasClamped {
+				clamped++
+			}
+			args[i] = v
 		}
 
 		if err := ins.add(ctx, args); err != nil {
@@ -307,7 +283,81 @@ func copyTable(ctx context.Context, src *sql.DB, dst sqldb.Database, spec tableS
 		return total, err
 	}
 
+	if clamped > 0 {
+		log.Warnw("values out of int64 range were clamped", "table", spec.name, "count", clamped)
+	}
+
 	return total, nil
+}
+
+// convertValue turns a raw sqlite driver value into the argument inserted
+// into the target column. nil passes through as NULL for every kind.
+// Integer kinds accept REAL values, clamping to the int64 range (some old
+// deployments hold absurd float ask prices like 1.23e20).
+func convertValue(kind colKind, v interface{}) (out interface{}, clamped bool, err error) {
+	if v == nil {
+		return nil, false, nil
+	}
+
+	switch kind {
+	case kInt, kNullInt:
+		return anyToInt64(v)
+
+	case kTimeUnix:
+		n, clamped, err := anyToInt64(v)
+		if err != nil || n == nil {
+			return nil, false, err
+		}
+		return time.Unix(n.(int64), 0).UTC(), clamped, nil
+
+	case kBool:
+		switch v := v.(type) {
+		case int64:
+			return v != 0, false, nil
+		case float64:
+			return v != 0, false, nil
+		case bool:
+			return v, false, nil
+		}
+
+	case kText, kNullText:
+		switch v := v.(type) {
+		case string:
+			return v, false, nil
+		case []byte:
+			return string(v), false, nil
+		}
+
+	case kBlob:
+		switch v := v.(type) {
+		case []byte:
+			// the driver may reuse this buffer; rows are buffered before
+			// insertion, so take a copy
+			return append([]byte{}, v...), false, nil
+		case string:
+			return []byte(v), false, nil
+		}
+	}
+
+	return nil, false, xerrors.Errorf("unsupported source value type %T", v)
+}
+
+func anyToInt64(v interface{}) (out interface{}, clamped bool, err error) {
+	switch v := v.(type) {
+	case int64:
+		return v, false, nil
+	case float64:
+		// float64(math.MaxInt64) is exactly 2^63, just past the max value;
+		// float64(math.MinInt64) is exactly -2^63, which still fits
+		if v >= float64(math.MaxInt64) {
+			return int64(math.MaxInt64), true, nil
+		}
+		if v < float64(math.MinInt64) {
+			return int64(math.MinInt64), true, nil
+		}
+		return int64(v), false, nil
+	}
+	return nil, false, xerrors.Errorf("unsupported source value type %T for integer column", v)
 }
 
 // chunkInserter accumulates rows and writes them with multi-row INSERTs.

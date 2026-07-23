@@ -24,7 +24,8 @@ RIBS_YUGABYTE_CQL_* environment variables; schema migrations are applied
 automatically on connect (the CQL keyspace must already exist).
 
 Progress is checkpointed in the destination directory: re-running the same
-command resumes an interrupted migration.`,
+command resumes an interrupted migration. Without the state file, the
+migrated SQL tables are cleared and recopied.`,
 	Flags: []cli.Flag{
 		&cli.StringFlag{
 			Name:     "source",
@@ -39,10 +40,6 @@ command resumes an interrupted migration.`,
 		&cli.BoolFlag{
 			Name:  "copy",
 			Usage: "copy file data instead of hardlinking",
-		},
-		&cli.BoolFlag{
-			Name:  "force-sql",
-			Usage: "truncate non-empty target SQL tables before copying",
 		},
 		&cli.IntFlag{
 			Name:  "workers",
@@ -96,7 +93,6 @@ command resumes an interrupted migration.`,
 			SQL:             sqlDB,
 			CQL:             cqlDB,
 			CopyFiles:       cctx.Bool("copy"),
-			ForceSQL:        cctx.Bool("force-sql"),
 			Workers:         cctx.Int("workers"),
 			BatchSize:       cctx.Int("batch-size"),
 			CheckpointEvery: cctx.Int64("checkpoint-every"),

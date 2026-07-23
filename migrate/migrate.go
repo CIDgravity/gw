@@ -48,9 +48,6 @@ type Options struct {
 
 	// CopyFiles disables hardlinking and always copies file data.
 	CopyFiles bool
-	// ForceSQL truncates the target SQL tables before copying instead of
-	// requiring them to be empty.
-	ForceSQL bool
 
 	// Workers is the number of concurrent CQL insert workers.
 	Workers int
@@ -138,7 +135,7 @@ func Run(ctx context.Context, opts Options) (*Summary, error) {
 			return nil, xerrors.Errorf("opening source sqlite: %w", err)
 		}
 
-		counts, err := migrateSQL(ctx, srcDB, opts.SQL, opts.ForceSQL)
+		counts, err := migrateSQL(ctx, srcDB, opts.SQL)
 		cerr := srcDB.Close()
 		if err != nil {
 			return nil, xerrors.Errorf("migrating sql metadata: %w", err)

@@ -442,22 +442,24 @@ func writeStoreDB(dir string, rng *rand.Rand, m *Manifest, heads map[int64]int64
 	}
 	m.ArchivedDeals = 2
 
-	// providers
+	// providers; sqlite is dynamically typed and real deployments hold REAL
+	// values in the integer ask columns (even beyond int64 range, e.g.
+	// 1.23e20 attoFIL asks), so provider 1002 reproduces that
 	providers := []struct {
-		id                int64
-		inMarket, pingOk  bool
-		boostDeals, askOk bool
-		askPrice          int64
+		id                 int64
+		inMarket, pingOk   bool
+		boostDeals, askOk  bool
+		askPrice, askVerif interface{}
 	}{
-		{1001, true, true, true, true, 100000},
-		{1002, true, false, false, false, 0},
-		{1003, false, false, false, false, 0},
+		{1001, true, true, true, true, int64(100000), int64(50000)},
+		{1002, true, false, false, false, float64(1.23e20), float64(1e18)},
+		{1003, false, false, false, false, int64(0), int64(0)},
 	}
 	for _, p := range providers {
 		_, err := db.Exec(`insert into providers (id, in_market, ping_ok, boost_deals, booster_http, booster_bitswap,
 			ask_ok, ask_price, ask_verif_price, ask_min_piece_size, ask_max_piece_size, addr_info_http)
 			values (?, ?, ?, ?, 0, 1, ?, ?, ?, 256, ?, ?)`,
-			p.id, p.inMarket, p.pingOk, p.boostDeals, p.askOk, p.askPrice, p.askPrice/2, int64(64<<30),
+			p.id, p.inMarket, p.pingOk, p.boostDeals, p.askOk, p.askPrice, p.askVerif, int64(64<<30),
 			fmt.Sprintf(`{"addr": "http://provider-%d.example.com"}`, p.id))
 		if err != nil {
 			return xerrors.Errorf("inserting provider %d: %w", p.id, err)

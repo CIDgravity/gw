@@ -1,11 +1,13 @@
 package migrate
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/migrate/goldenrepo"
 	"github.com/stretchr/testify/require"
@@ -246,4 +248,49 @@ func TestStateRoundtrip(t *testing.T) {
 	s2, err := loadState(dir)
 	require.NoError(t, err)
 	require.Equal(t, s, s2)
+}
+
+func TestConvertValue(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    colKind
+		in      interface{}
+		out     interface{}
+		clamped bool
+		err     bool
+	}{
+		{"null int", kInt, nil, nil, false, false},
+		{"int", kInt, int64(42), int64(42), false, false},
+		{"float in range", kNullInt, float64(1e18), int64(1e18), false, false},
+		{"float above int64", kInt, float64(1.23e20), int64(math.MaxInt64), true, false},
+		{"float below int64", kInt, float64(-1e20), int64(math.MinInt64), true, false},
+		{"bool from float", kBool, float64(1), true, false, false},
+		{"bool from int", kBool, int64(0), false, false, false},
+		{"time from int", kTimeUnix, int64(1700000000), time.Unix(1700000000, 0).UTC(), false, false},
+		{"text", kText, "hello", "hello", false, false},
+		{"text from bytes", kNullText, []byte("hi"), "hi", false, false},
+		{"blob", kBlob, []byte{1, 2}, []byte{1, 2}, false, false},
+		{"text into int", kInt, "nope", nil, false, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, clamped, err := convertValue(c.kind, c.in)
+			if c.err {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, c.out, out)
+			require.Equal(t, c.clamped, clamped)
+		})
+	}
+
+	// blob conversion must copy: the driver may reuse the buffer while the
+	// row is still queued for insertion
+	src := []byte{1, 2, 3}
+	out, _, err := convertValue(kBlob, src)
+	require.NoError(t, err)
+	src[0] = 9
+	require.Equal(t, []byte{1, 2, 3}, out)
 }
