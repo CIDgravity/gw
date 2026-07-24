@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"golang.org/x/xerrors"
@@ -250,10 +251,28 @@ func verifyTree(opts Options, report *VerifyReport) error {
 }
 
 func verifyIndex(ctx context.Context, pdb *pebble.DB, opts Options, sampleEvery int, report *VerifyReport) error {
+	log.Infow("verifying block index against CQL (rescans the source index)", "sampleEvery", sampleEvery)
+
 	var n int64
+	start := time.Now()
+	lastLog := start
 
 	st, err := scanTopIndex(pdb, nil, func(mh []byte, size int32, groups []int64) error {
 		n++
+		if time.Since(lastLog) > 30*time.Second {
+			frac := mhScanProgress(mh)
+			fields := []interface{}{
+				"scanned", n,
+				"checked", report.IndexChecked,
+				"progress", fmt.Sprintf("~%.1f%%", frac*100),
+			}
+			if frac > 0.001 {
+				eta := time.Duration(float64(time.Since(start)) * (1 - frac) / frac).Round(time.Second)
+				fields = append(fields, "eta", eta.String())
+			}
+			log.Infow("index verification progress", fields...)
+			lastLog = time.Now()
+		}
 		if (n-1)%int64(sampleEvery) != 0 {
 			return nil
 		}

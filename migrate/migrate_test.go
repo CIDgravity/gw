@@ -294,3 +294,24 @@ func TestConvertValue(t *testing.T) {
 	src[0] = 9
 	require.Equal(t, []byte{1, 2, 3}, out)
 }
+
+func TestMhScanProgress(t *testing.T) {
+	// sha2-256 multihash: 0x12 0x20 header then the digest; position comes
+	// from the leading digest bytes
+	mid := append([]byte{0x12, 0x20, 0x80, 0, 0, 0, 0, 0, 0, 0}, make([]byte, 24)...)
+	require.InDelta(t, 0.5, mhScanProgress(mid), 0.01)
+
+	low := append([]byte{0x12, 0x20}, make([]byte, 32)...)
+	require.InDelta(t, 0.0, mhScanProgress(low), 0.001)
+
+	high := append([]byte{0x12, 0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, make([]byte, 24)...)
+	require.InDelta(t, 1.0, mhScanProgress(high), 0.001)
+
+	// too short to carry a digest window
+	require.Zero(t, mhScanProgress([]byte{1, 2, 3}))
+	require.Zero(t, mhScanProgress(nil))
+
+	// progress increases with scan order
+	require.Less(t, mhScanProgress(low), mhScanProgress(mid))
+	require.Less(t, mhScanProgress(mid), mhScanProgress(high))
+}

@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -181,7 +182,9 @@ func migrateIndex(ctx context.Context, pdb *pebble.DB, cql cqldb.Database, state
 	}
 
 	var sinceCheckpoint int64
-	lastLog := time.Now()
+	start := time.Now()
+	lastLog := start
+	startFrac := mhScanProgress(startAt) // 0 on a fresh run
 
 	st, err := scanTopIndex(pdb, startAt, func(mh []byte, size int32, groups []int64) error {
 		if err := loader.err(); err != nil {
@@ -206,7 +209,18 @@ func migrateIndex(ctx context.Context, pdb *pebble.DB, cql cqldb.Database, state
 		}
 
 		if time.Since(lastLog) > 30*time.Second {
-			log.Infow("index migration progress", "entries", state.IndexEntries+sinceCheckpoint, "inserted", loader.inserted.Load())
+			frac := mhScanProgress(mh)
+			fields := []interface{}{
+				"entries", state.IndexEntries + sinceCheckpoint,
+				"inserted", loader.inserted.Load(),
+				"progress", fmt.Sprintf("~%.1f%%", frac*100),
+			}
+			// this run covers [startFrac, 1]; extrapolate the remainder
+			if done := frac - startFrac; done > 0.001 {
+				eta := time.Duration(float64(time.Since(start)) * (1 - frac) / done).Round(time.Second)
+				fields = append(fields, "eta", eta.String())
+			}
+			log.Infow("index migration progress", fields...)
 			lastLog = time.Now()
 		}
 

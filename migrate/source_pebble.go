@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -31,7 +32,7 @@ func openSourcePebble(sourceDir, tmpDir string) (*pebble.DB, error) {
 		return nil, xerrors.Errorf("source index.pebble: %w", err)
 	}
 
-	db, err := pebble.Open(p, &pebble.Options{ReadOnly: true})
+	db, err := pebble.Open(p, &pebble.Options{ReadOnly: true, Logger: pebbleLogAdapter{}})
 	if err == nil {
 		return db, nil
 	}
@@ -47,11 +48,35 @@ func openSourcePebble(sourceDir, tmpDir string) (*pebble.DB, error) {
 		return nil, xerrors.Errorf("copying pebble index (after read-only open failed with: %s): %w", openErr, err)
 	}
 
-	db, err = pebble.Open(cp, &pebble.Options{})
+	db, err = pebble.Open(cp, &pebble.Options{Logger: pebbleLogAdapter{}})
 	if err != nil {
 		return nil, xerrors.Errorf("opening pebble index copy: %w", err)
 	}
 	return db, nil
+}
+
+// pebbleLogAdapter routes pebble's internal chatter (WAL replay notes and
+// the like) to the debug log; on stderr it reads like errors to operators.
+type pebbleLogAdapter struct{}
+
+func (pebbleLogAdapter) Infof(format string, args ...interface{}) {
+	log.Debugf("pebble: "+format, args...)
+}
+
+func (pebbleLogAdapter) Fatalf(format string, args ...interface{}) {
+	log.Errorf("pebble: "+format, args...)
+}
+
+// mhScanProgress estimates how far through the index scan a multihash is.
+// The scan iterates in multihash order and digests are uniformly
+// distributed, so the leading digest bytes map position to a fraction. The
+// two-byte multihash header (hash code, length) is skipped; repositories
+// mixing several hash functions get a rougher estimate.
+func mhScanProgress(mh []byte) float64 {
+	if len(mh) < 10 {
+		return 0
+	}
+	return float64(binary.BigEndian.Uint64(mh[2:10])) / float64(math.MaxUint64)
 }
 
 func copyDir(src, dst string) error {

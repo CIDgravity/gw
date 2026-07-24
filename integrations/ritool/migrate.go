@@ -110,6 +110,8 @@ migrated SQL tables are cleared and recopied.`,
 			return nil
 		}
 
+		fmt.Printf("verifying migration (sampling every %d blocks; --skip-verify to skip)...\n", cctx.Int("verify-sample"))
+
 		report, err := migrate.Verify(cctx.Context, opts, migrate.VerifyOptions{
 			SampleEvery: cctx.Int("verify-sample"),
 		})
