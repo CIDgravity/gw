@@ -74,12 +74,18 @@ func (db *yugabyteCqlDb) ExecuteBatch(batch *gocql.Batch) error {
 }
 
 func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) {
+	log.Infow("connecting to yugabyte cql", "hosts", config.Hosts, "port", config.Port, "keyspace", config.Keyspace, "user", config.User)
+	start := time.Now()
+
+	// schema migrations run first; DDL is slow on yugabyte, initial table
+	// creation can take a while
 	err := retryCQLStartup("initialize yugabyte cql", func() error {
 		return runMigrations(config)
 	})
 	if err != nil {
 		return nil, err
 	}
+	log.Infow("cql schema up to date", "took", time.Since(start))
 
 	hosts := strings.Split(config.Hosts, ",")
 	cluster := gocql.NewCluster(hosts...)
@@ -111,6 +117,8 @@ func NewYugabyteCqlDb(config configuration.YugabyteCqlConfig) (Database, error) 
 	if err != nil {
 		return nil, fmt.Errorf("create cql session: %w", err)
 	}
+
+	log.Infow("yugabyte cql ready", "took", time.Since(start))
 
 	db := &yugabyteCqlDb{
 		session: session,

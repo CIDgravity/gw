@@ -54,6 +54,9 @@ func retryDBStartup(name string, fn func() error) error {
 }
 
 func NewYugabyteDB(config configuration.YugabyteSqlConfig) (*YugabyteDB, error) {
+	log.Infow("connecting to yugabyte sql", "host", config.Host, "port", config.Port, "db", config.Db, "user", config.User)
+	start := time.Now()
+
 	db, err := sql.Open("postgres", fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable", config.User, config.Pass, config.Host, config.Port, config.Db))
 	if err != nil {
 		return nil, fmt.Errorf("open yugabyte sql db: %w", err)
@@ -97,6 +100,7 @@ func NewYugabyteDB(config configuration.YugabyteSqlConfig) (*YugabyteDB, error) 
 		return nil, err
 	}
 
+	log.Infow("yugabyte sql ready, schema up to date", "took", time.Since(start))
 	return yugabyte, nil
 }
 

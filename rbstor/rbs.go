@@ -86,6 +86,7 @@ func Open(config *configuration.RibsConfig, db *RbsDB, idx iface.GroupIndex) (if
 		r.workerClosed = append(r.workerClosed, make(chan struct{}))
 	}
 
+	log.Infow("ribs storage open", "dataDir", root)
 	return r, nil
 }
 

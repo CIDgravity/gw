@@ -42,6 +42,7 @@ func NewCqlIndex(db cqldb.Database) (iface.GroupIndex, error) {
 const countHashRanges = 64
 
 func (ci *CqlIndex) initEntryCountEstimate(ctx context.Context) {
+	log.Infow("initializing index size estimate in background")
 	start := time.Now()
 
 	const hashSpace = 1 << 16 // YCQL partition_hash range: 0..65535

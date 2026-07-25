@@ -53,6 +53,11 @@ func (r *ribsDB) startDB() error {
 	r.dealSummaryCq = ributil.NewCachedQuery[iface2.DealSummary](1*time.Minute, r.dealSummary)
 	r.reachableCq = ributil.NewCachedQuery[[]iface2.ProviderMeta](1*time.Minute, r.reachableProviders)
 
+	// these scan the deals/providers tables and can take a while on large
+	// deployments; log so startup doesn't look hung
+	log.Infow("refreshing provider stats tables")
+	statsStart := time.Now()
+
 	if err := timeDBOp("refresh_bad_providers_new_reject", r.db, refreshViewTable("bad_providers_new_reject")); err != nil {
 		return err
 	}
@@ -65,6 +70,8 @@ func (r *ribsDB) startDB() error {
 	if err := timeDBOp("refresh_good_providers", r.db, refreshGoodProviders()); err != nil {
 		return err
 	}
+
+	log.Infow("provider stats tables ready", "took", time.Since(statsStart))
 
 	go func() {
 		for {

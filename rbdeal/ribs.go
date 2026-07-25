@@ -274,6 +274,7 @@ func Open(root string, opts ...OpenOption) (iface2.RIBS, error) {
 		return nil, xerrors.Errorf("open db: %w", err)
 	}
 
+	log.Infow("opening deal manager", "dataDir", root)
 	if err := db.startDB(); err != nil {
 		return nil, xerrors.Errorf("start db: %w", err)
 	}
