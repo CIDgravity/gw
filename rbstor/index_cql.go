@@ -27,13 +27,61 @@ func NewCqlIndex(db cqldb.Database) (iface.GroupIndex, error) {
 		db: db,
 	}
 
-	entries, err := index.queryEntryCount(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("initialize cql index size estimate: %w", err)
-	}
-	index.estimatedEntries.Store(entries)
+	// The entry count only feeds diagnostics (TopIndexStats). A full
+	// COUNT(*) over a large index exceeds the connection timeout (a
+	// migrated index easily holds tens of millions of rows), so it runs in
+	// the background and must never block or fail node startup.
+	go index.initEntryCountEstimate(context.Background())
 
 	return index, nil
+}
+
+// countHashRanges splits the entry count into partition_hash ranges so each
+// query touches a fraction of the table and completes within the connection
+// timeout regardless of index size.
+const countHashRanges = 64
+
+func (ci *CqlIndex) initEntryCountEstimate(ctx context.Context) {
+	start := time.Now()
+
+	const hashSpace = 1 << 16 // YCQL partition_hash range: 0..65535
+	step := hashSpace / countHashRanges
+
+	for lo := 0; lo < hashSpace; lo += step {
+		n, err := ci.countHashRange(ctx, lo, lo+step-1)
+		if err != nil {
+			log.Warnw("index size estimate initialization failed; index stats will under-report",
+				"error", err, "countedSoFar", ci.estimatedEntries.Load())
+			return
+		}
+		ci.estimatedEntries.Add(n)
+	}
+
+	log.Infow("index size estimate initialized", "entries", ci.estimatedEntries.Load(), "took", time.Since(start))
+}
+
+func (ci *CqlIndex) countHashRange(ctx context.Context, lo, hi int) (int64, error) {
+	statement := `SELECT COUNT(*) FROM MultihashToGroup WHERE partition_hash(Multihash) >= ? AND partition_hash(Multihash) <= ?`
+
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 5 * time.Second):
+			}
+		}
+
+		var n int64
+		iter := ci.db.Query(statement, lo, hi).WithContext(ctx).Iter()
+		iter.Scan(&n)
+		if err = iter.Close(); err == nil {
+			return n, nil
+		}
+	}
+
+	return 0, fmt.Errorf("counting index hash range [%d, %d]: %w", lo, hi, err)
 }
 
 func (ci *CqlIndex) executeBatchWithRetry(ctx context.Context, batch *gocql.Batch) error {
@@ -191,17 +239,6 @@ func (ci *CqlIndex) executeDropGroupBatch(ctx context.Context, mh []multihash.Mu
 func (ci *CqlIndex) EstimateSize(ctx context.Context) (int64, error) {
 	_ = ctx
 	return ci.estimatedEntries.Load(), nil
-}
-
-func (ci *CqlIndex) queryEntryCount(ctx context.Context) (int64, error) {
-	query := `SELECT COUNT(*) FROM MultihashToGroup`
-
-	iter := ci.db.Query(query).WithContext(ctx).Iter()
-
-	var entries int64
-	iter.Scan(&entries)
-	err := iter.Close()
-	return entries, err
 }
 
 func (ci *CqlIndex) Close() error {

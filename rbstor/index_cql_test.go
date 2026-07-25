@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
 	"github.com/CIDgravity/filecoin-gateway/database/cqldb"
@@ -192,4 +193,50 @@ func genMhashList(t testing.TB, count int) ([]multihash.Multihash, []int32) {
 		sizes[i] = int32(size.Int64())
 	}
 	return mhashes, sizes
+}
+
+// TestCqlIndexEstimateInit verifies the background entry-count estimate: a
+// freshly opened index must converge on the table's row count without
+// blocking construction (the count runs in partition_hash ranges so it also
+// works on tables far larger than one query timeout allows).
+func TestCqlIndexEstimateInit(t *testing.T) {
+	host := testHarness.GetYugabyteHost(t)
+	port := testHarness.GetYugabyteCqlPort(t)
+
+	db, err := cqldb.NewYugabyteCqlDb(configuration.YugabyteCqlConfig{
+		Hosts:           host,
+		Port:            port,
+		Keyspace:        "filecoingw_test",
+		Timeout:         30,
+		ConnectTimeout:  30,
+		SocketKeepalive: 30,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.Session().Query("TRUNCATE TABLE MultihashToGroup").Exec())
+
+	seed, err := NewCqlIndex(db)
+	require.NoError(t, err)
+	mhs, sizes := genMhashList(t, 500)
+	require.NoError(t, seed.AddGroup(context.Background(), mhs, sizes, iface.GroupKey(7)))
+
+	// a second instance knows nothing and must count what is there
+	idx, err := NewCqlIndex(db)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, db.Session().Query("TRUNCATE TABLE MultihashToGroup").Exec())
+	})
+
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		n, err := idx.EstimateSize(context.Background())
+		require.NoError(t, err)
+		if n == int64(len(mhs)) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("estimate did not converge: got %d, want %d", n, len(mhs))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

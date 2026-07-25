@@ -20,11 +20,12 @@ func mainRet() (exitCode int) {
 	mw := ributil.MemoryWatchdog()
 	defer mw()
 
+	// an invalid configuration must not boot a half-configured node
 	if err := configuration.LoadConfig(); err != nil {
-		fmt.Fprintln(os.Stderr, "Configuration load failed: %w", err)
-	} else {
-		fmt.Fprintln(os.Stderr, "Configuration loaded")
+		fmt.Fprintf(os.Stderr, "Configuration load failed: %s\n", err)
+		return 1
 	}
+	fmt.Fprintln(os.Stderr, "Configuration loaded")
 
 	exitCode = kubo.Start(kubo.BuildEnv(func(loader *loader.PluginLoader) error {
 		return loader.Load(kuboribs.Plugin)
