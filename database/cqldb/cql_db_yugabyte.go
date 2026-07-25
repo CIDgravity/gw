@@ -43,6 +43,8 @@ func retryCQLStartup(name string, fn func() error) error {
 		if attempt == cqlStartupMaxAttempts {
 			break
 		}
+		// this can otherwise sit here for minutes looking like a hang
+		log.Warnw("cql database not ready, retrying", "what", name, "attempt", attempt, "maxAttempts", cqlStartupMaxAttempts, "retryIn", backoff, "error", err)
 		time.Sleep(backoff)
 		if backoff < 15*time.Second {
 			backoff *= 2

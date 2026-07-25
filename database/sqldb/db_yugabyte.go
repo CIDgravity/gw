@@ -12,11 +12,14 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/yugabytedb"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	logging "github.com/ipfs/go-log/v2"
 	_ "github.com/lib/pq"
 )
 
 //go:embed migrations
 var migrationsfs embed.FS
+
+var log = logging.Logger("gw/db/sql")
 
 type YugabyteDB struct {
 	*sql.DB
@@ -36,6 +39,8 @@ func retryDBStartup(name string, fn func() error) error {
 		if attempt == dbStartupMaxAttempts {
 			break
 		}
+		// this can otherwise sit here for minutes looking like a hang
+		log.Warnw("sql database not ready, retrying", "what", name, "attempt", attempt, "maxAttempts", dbStartupMaxAttempts, "retryIn", backoff, "error", err)
 		time.Sleep(backoff)
 		if backoff < 15*time.Second {
 			backoff *= 2
