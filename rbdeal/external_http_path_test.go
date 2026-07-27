@@ -34,3 +34,22 @@ func TestLocalWebPreDealTransferCheckRejectsWrongSize(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), fmt.Sprintf("expected %d", 128))
 }
+
+func TestLocalWebGetGroupExternalURL(t *testing.T) {
+	cases := []struct {
+		base string
+		want string
+	}{
+		{"https://host.example.com", "https://host.example.com/1-abc.car"},
+		{"https://host.example.com/", "https://host.example.com/1-abc.car"},
+		{"https://host.example.com/cars", "https://host.example.com/cars/1-abc.car"},
+		{"https://host.example.com/cars/", "https://host.example.com/cars/1-abc.car"},
+	}
+
+	for _, c := range cases {
+		lwi := &LocalWebInfo{url: c.base}
+		got, err := lwi.GetGroupExternalURL(1, "1-abc.car")
+		require.NoError(t, err)
+		require.Equal(t, c.want, *got, "base %q", c.base)
+	}
+}

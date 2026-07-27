@@ -23,9 +23,11 @@ type LocalwebConfig struct {
 	// Defaults to <RIBS_DATA>/cardata.
 	Path string `envconfig:"EXTERNAL_LOCALWEB_PATH"`
 
-	// Url is the public URL where storage providers can fetch CAR files.
-	// Must be reachable from the internet if making deals with external SPs.
-	// Example: "https://myserver.example.com:8443/cars"
+	// Url is the public URL where storage providers can fetch CAR files;
+	// the randomized CAR filename is appended to it. Must be reachable from
+	// the internet if making deals with external SPs. A path prefix (e.g.
+	// "https://myserver.example.com/cars") is supported in reverse-proxy
+	// mode only — the built-in server serves CAR files at the host root.
 	Url string `envconfig:"EXTERNAL_LOCALWEB_URL"`
 
 	// BuiltinServer enables the built-in HTTP server for serving CAR files.
@@ -664,18 +666,26 @@ func validateLocalwebConfig(cfg LocalwebConfig) error {
 	if parsed.Hostname() == "" {
 		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must include a host")
 	}
-	if parsed.Path != "" && parsed.Path != "/" {
-		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include a path; use the host root and let RIBS append the randomized CAR filename")
-	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include query or fragment components")
 	}
 
+	// A path prefix (e.g. https://host/cars) only works in reverse-proxy
+	// mode: the built-in server serves CAR files at the host root and
+	// rejects multi-segment request paths.
+	hasPathPrefix := parsed.Path != "" && parsed.Path != "/"
+
 	switch parsed.Scheme {
 	case "https":
+		if cfg.ServerTLS && hasPathPrefix {
+			return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include a path in built-in autocert mode; URL path prefixes are only supported in reverse-proxy mode (EXTERNAL_LOCALWEB_SERVER_TLS=false)")
+		}
 		return nil
 	case "http":
 		if !cfg.ServerTLS && isLoopbackHostname(parsed.Hostname()) {
+			if hasPathPrefix {
+				return xerrors.Errorf("EXTERNAL_LOCALWEB_URL must not include a path when pointing at the built-in server; it serves CAR files at the host root")
+			}
 			return nil
 		}
 	}

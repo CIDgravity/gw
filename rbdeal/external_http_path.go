@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/CIDgravity/filecoin-gateway/configuration"
@@ -167,7 +168,9 @@ func (lwi *LocalWebInfo) EnsureExternalPush(gid iface.GroupKey, src CarSource) e
 }
 
 func (lwi *LocalWebInfo) GetGroupExternalURL(gid iface.GroupKey, lpath string) (*string, error) {
-	url := fmt.Sprintf("%s/%s", lwi.url, lpath)
+	// the configured URL may or may not carry a trailing slash (and may
+	// include a reverse-proxy path prefix)
+	url := strings.TrimSuffix(lwi.url, "/") + "/" + lpath
 	return &url, nil
 }
 
